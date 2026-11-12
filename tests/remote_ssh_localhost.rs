@@ -16,12 +16,16 @@
 mod common;
 
 use std::collections::HashMap;
-use std::sync::mpsc;
-use std::time::Duration;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
+use std::time::{Duration, Instant};
 
 use rozi::config::{RemoteConfig, RemoteHostConfig, RemoteInstallPolicy};
 use rozi::session::client::SessionClient;
 use rozi::session::protocol::{PROTOCOL_VERSION, ServerMessage};
+use rozi::session::remote::forward::{ForwardEvent, ForwardHost, ForwardSpec, start_forward};
 use rozi::session::remote::{connect_remote, parse_remote_target};
 
 use common::unique_session_name;
@@ -463,4 +467,154 @@ fn attaches_to_a_configured_real_remote() {
     std::thread::sleep(Duration::from_millis(300));
 
     let _ = rozi::session::remote::kill_remote_session(&target, &session, &config);
+}
+
+#[test]
+fn forwards_http_traffic_over_ssh_to_localhost_and_closes_on_drop() {
+    if !localhost_ssh_available() {
+        eprintln!("skipping: key-based ssh to localhost is not available");
+        return;
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture listener");
+    let remote_port = listener.local_addr().expect("fixture addr").port();
+    listener
+        .set_nonblocking(true)
+        .expect("set fixture nonblocking");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let worker_stop = stop.clone();
+    let server = std::thread::spawn(move || {
+        while !worker_stop.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                    let mut buf = [0_u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello");
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let target = parse_remote_target("ssh://localhost").expect("parse target");
+    let (tx, rx) = mpsc::channel();
+    let handle = start_forward(
+        ForwardSpec {
+            target,
+            connect_host: ForwardHost::Loopback.connect_host().to_string(),
+            remote_port,
+            local_port: 0,
+        },
+        pinned_config().unattended(),
+        false,
+        move |event| {
+            let _ = tx.send(event);
+        },
+    )
+    .expect("start forward");
+
+    let local_port = match rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(ForwardEvent::Ready { local_port }) => local_port,
+        Ok(ForwardEvent::Reconnecting { error } | ForwardEvent::Failed { error }) => {
+            stop.store(true, Ordering::Relaxed);
+            let _ = server.join();
+            panic!("port forward failed before ready: {error}");
+        }
+        Ok(ForwardEvent::AuthRequired { error }) => {
+            stop.store(true, Ordering::Relaxed);
+            let _ = server.join();
+            panic!("unexpected auth required over localhost ssh: {error}");
+        }
+        Err(err) => {
+            stop.store(true, Ordering::Relaxed);
+            let _ = server.join();
+            panic!("timed out waiting for forwarded port: {err}");
+        }
+    };
+
+    // Because the fixture already occupies `remote_port` on localhost, Rozi must select a distinct
+    // ephemeral local port rather than colliding.
+    assert_ne!(local_port, remote_port);
+
+    let mut client =
+        TcpStream::connect(("127.0.0.1", local_port)).expect("connect through ssh tunnel");
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("set client timeout");
+    client
+        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .expect("write HTTP request");
+    let mut response = String::new();
+    client
+        .read_to_string(&mut response)
+        .expect("read HTTP response");
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK"),
+        "unexpected response: {response:?}"
+    );
+    assert!(response.ends_with("hello"), "unexpected body: {response:?}");
+    drop(client);
+
+    drop(handle);
+    stop.store(true, Ordering::Relaxed);
+    let _ = server.join();
+
+    // Dropping ForwardHandle must terminate `ssh -N` and close the local listener.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if TcpStream::connect(("127.0.0.1", local_port)).is_err() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "local forwarded port {local_port} remained open after ForwardHandle drop"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[test]
+fn port_forward_reports_failure_when_ssh_port_is_unreachable() {
+    if !rozi::platform::command::program_exists("ssh") {
+        eprintln!("skipping: ssh executable is not installed");
+        return;
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("reserve closed port");
+    let closed_port = listener.local_addr().expect("closed addr").port();
+    drop(listener);
+
+    let target = parse_remote_target(&format!("ssh://127.0.0.1:{closed_port}")).expect("target");
+    let (tx, rx) = mpsc::channel();
+    let config = RemoteConfig {
+        connection_timeout_secs: 2,
+        ..pinned_config().unattended()
+    };
+    let handle = start_forward(
+        ForwardSpec {
+            target,
+            connect_host: ForwardHost::Loopback.connect_host().to_string(),
+            remote_port: 8080,
+            local_port: 0,
+        },
+        config,
+        false,
+        move |event| {
+            let _ = tx.send(event);
+        },
+    )
+    .expect("start forward worker");
+
+    match rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(ForwardEvent::Failed { error }) => {
+            assert!(!error.is_empty(), "expected non-empty failure reason");
+        }
+        other => panic!("expected ForwardEvent::Failed, got {other:?}"),
+    }
+    drop(handle);
 }

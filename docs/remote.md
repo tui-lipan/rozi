@@ -460,12 +460,25 @@ panes and published agents work there. The sidebar's [Projects tab](sidebar.md#p
 every host's sessions by these. Working directories below a checkout's root still need an attached
 session.
 
+## Port forwarding
+
+When you open an `http` or `https` link to `localhost`, `127.0.0.1`, `0.0.0.0`, or `::` from a
+remote session pane on your client, rozi opens an SSH local port forward (`127.0.0.1`) to that
+host's loopback port, keeps the same port number when free or picks an available local port
+otherwise, and opens the rewritten local URL. Link handlers placed on the session host keep the
+original URL without forwarding.
+
+Forwards belong to your client for that SSH host rather than to one session, so switching sessions
+keeps them running and later opens to the same host and port reuse the existing tunnel. Quitting
+rozi, disconnecting from the host (`Ctrl+X`), or forgetting the host closes its forwards.
+
 ## Disconnect from a host
 
 `Ctrl+W` disconnects one session attachment. `Ctrl+X` disconnects this client from the whole host:
 
 - Monitoring and its reconnect attempts stop, including on future launches.
 - Every attachment to that host closes, both current and background.
+- Every port forward to that host closes.
 - Named sessions on the host keep running, whichever client started them.
 - A temporary session this client created there and never used is closed, since nothing could
   reattach to it by name.

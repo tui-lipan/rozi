@@ -67,6 +67,9 @@ pub struct PendingLinkOpen {
 pub struct PortForwardEntry {
     pub key: ForwardKey,
     pub local_port: u16,
+    /// True once this forward has emitted its first `Ready`, locking `local_port` for the life of
+    /// the entry (including across `AuthRequired`/`Failed` restarts).
+    pub port_pinned: bool,
     pub state: ForwardState,
     pub generation: u64,
     pub handle: Option<ForwardHandle>,

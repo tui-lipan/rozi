@@ -270,27 +270,41 @@ pub(crate) fn open_forwarded_link(
         Ok(pending) => pending,
         Err(error) => return super::links::failed(ctx, error),
     };
-    if let Some(entry) = ctx.state.ports.get_mut(&request.key) {
+    let port_policy = if let Some(entry) = ctx.state.ports.get_mut(&request.key) {
         match entry.state {
             ForwardState::Ready => {
                 let local_port = entry.local_port;
                 return execute_resolved_open(ctx, pending, local_port);
             }
-            ForwardState::Starting => {
+            ForwardState::Starting | ForwardState::Reconnecting => {
                 entry.pending_opens.push(pending);
                 return Update::none();
             }
-            ForwardState::Reconnecting | ForwardState::AuthRequired | ForwardState::Failed => {}
+            ForwardState::AuthRequired | ForwardState::Failed => {
+                if entry.port_pinned {
+                    LocalPortPolicy::Pinned(entry.local_port)
+                } else {
+                    LocalPortPolicy::Unpinned
+                }
+            }
         }
-    }
+    } else {
+        LocalPortPolicy::Unpinned
+    };
 
-    start_forward_entry(ctx, request.key, None, true, Some(pending))
+    start_forward_entry(ctx, request.key, port_policy, true, Some(pending))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LocalPortPolicy {
+    Unpinned,
+    Pinned(u16),
 }
 
 pub(crate) fn start_forward_entry(
     ctx: &mut Context<AppRoot>,
     key: ForwardKey,
-    preferred_local: Option<u16>,
+    port_policy: LocalPortPolicy,
     interactive: bool,
     pending: Option<PendingLinkOpen>,
 ) -> Update {
@@ -302,12 +316,19 @@ pub(crate) fn start_forward_entry(
         );
         return Update::full();
     };
-    let local_port = match preferred_local_port(preferred_local.or(Some(key.remote_port))) {
-        Ok(port) => port,
-        Err(error) => {
-            crate::pane::pty_events::notify_error(ctx, "Could not forward port", error.to_string());
-            return Update::full();
-        }
+    let (local_port, pin_local_port) = match port_policy {
+        LocalPortPolicy::Unpinned => match preferred_local_port(Some(key.remote_port)) {
+            Ok(port) => (port, false),
+            Err(error) => {
+                crate::pane::pty_events::notify_error(
+                    ctx,
+                    "Could not forward port",
+                    error.to_string(),
+                );
+                return Update::full();
+            }
+        },
+        LocalPortPolicy::Pinned(port) => (port, true),
     };
     let generation = ctx.state.ports.mint_generation();
     let spec = ForwardSpec {
@@ -315,6 +336,7 @@ pub(crate) fn start_forward_entry(
         connect_host: key.remote_host.connect_host().to_string(),
         remote_port: key.remote_port,
         local_port,
+        pin_local_port,
     };
     let event_key = key.clone();
     let handle = match start_forward(
@@ -339,6 +361,7 @@ pub(crate) fn start_forward_entry(
     ctx.state.ports.insert(PortForwardEntry {
         key,
         local_port,
+        port_pinned: pin_local_port,
         state: ForwardState::Starting,
         generation,
         handle: Some(handle),
@@ -359,15 +382,17 @@ pub(crate) fn handle_event(
     }
     match event {
         ForwardEvent::Ready { local_port } => {
-            let pending = {
+            let (was_pinned, pending) = {
                 let entry = ctx.state.ports.get_mut(&key).expect("matched generation");
+                let was_pinned = entry.port_pinned;
                 entry.local_port = local_port;
+                entry.port_pinned = true;
                 entry.state = ForwardState::Ready;
                 entry.error = None;
-                std::mem::take(&mut entry.pending_opens)
+                (was_pinned, std::mem::take(&mut entry.pending_opens))
             };
             let mut update = Update::full();
-            if local_port != key.remote_port {
+            if !was_pinned && local_port != key.remote_port {
                 let host = ctx.state.remote_target_label(&key.target);
                 crate::pane::pty_events::notify_info(
                     ctx,
@@ -755,6 +780,7 @@ mod tests {
         backend.state_mut().ports.insert(PortForwardEntry {
             key: key_workbox.clone(),
             local_port: 5173,
+            port_pinned: false,
             state: ForwardState::Starting,
             generation: gen1,
             handle: Some(ForwardHandle::dormant()),
@@ -765,6 +791,7 @@ mod tests {
         backend.state_mut().ports.insert(PortForwardEntry {
             key: key_prod.clone(),
             local_port: 49200,
+            port_pinned: true,
             state: ForwardState::Ready,
             generation: gen_prod,
             handle: Some(ForwardHandle::dormant()),
@@ -880,6 +907,7 @@ mod tests {
         backend.state_mut().ports.insert(PortForwardEntry {
             key: key_workbox.clone(),
             local_port: 5173,
+            port_pinned: false,
             state: ForwardState::Starting,
             generation: gen1,
             handle: Some(ForwardHandle::dormant()),
@@ -985,6 +1013,7 @@ mod tests {
         backend.state_mut().ports.insert(PortForwardEntry {
             key: key_localhost.clone(),
             local_port: 5173,
+            port_pinned: false,
             state: ForwardState::Starting,
             generation: gen_localhost,
             handle: Some(ForwardHandle::dormant()),
@@ -995,6 +1024,7 @@ mod tests {
         backend.state_mut().ports.insert(PortForwardEntry {
             key: key_ipv4.clone(),
             local_port: 5173,
+            port_pinned: false,
             state: ForwardState::Starting,
             generation: gen_ipv4,
             handle: Some(ForwardHandle::dormant()),
@@ -1092,6 +1122,7 @@ mod tests {
         backend.state_mut().ports.insert(PortForwardEntry {
             key: key_workbox.clone(),
             local_port: 5173,
+            port_pinned: false,
             state: ForwardState::Starting,
             generation: gen1,
             handle: Some(ForwardHandle::dormant()),
@@ -1184,6 +1215,7 @@ mod tests {
         backend.state_mut().ports.insert(PortForwardEntry {
             key: key_workbox.clone(),
             local_port: 5173,
+            port_pinned: false,
             state: ForwardState::Starting,
             generation: gen2,
             handle: Some(ForwardHandle::dormant()),
@@ -1246,6 +1278,228 @@ mod tests {
         assert!(
             !out.exists(),
             "delayed handler must cancel when its originating session no longer exists"
+        );
+    }
+
+    #[test]
+    fn reconnecting_forward_queues_click_and_preserves_pinned_port() {
+        crate::test_support::on_large_stack(check_reconnecting_forward_queues_click);
+    }
+
+    fn check_reconnecting_forward_queues_click() {
+        crate::test_support::isolate_user_dirs();
+
+        let scratch = tempfile::tempdir().expect("tempdir");
+        let out = scratch.path().join("opened-url");
+        let mut backend = TestBackend::new(AppRoot::default());
+        let workbox = RemoteTarget::Alias("workbox".into());
+        let source = backend.state().current().workspaces[0].panes[0].id;
+        let key_workbox = ForwardKey {
+            target: workbox.clone(),
+            remote_host: ForwardHost::Localhost,
+            remote_port: 5173,
+        };
+
+        let gen1 = backend.state_mut().ports.mint_generation();
+        backend.state_mut().ports.insert(PortForwardEntry {
+            key: key_workbox.clone(),
+            local_port: 49184,
+            port_pinned: true,
+            state: ForwardState::Ready,
+            generation: gen1,
+            handle: Some(ForwardHandle::dormant()),
+            error: None,
+            pending_opens: Vec::new(),
+        });
+
+        let state = backend.state_mut();
+        state.current_mut().remote_host = Some("workbox".into());
+        state.current_mut().remote_target = Some(workbox);
+        state.config.link_handlers = vec![crate::config::LinkHandler {
+            schemes: vec!["http".into()],
+            files: Vec::new(),
+            action: LinkAction::Inline(UserCommandAction::Exec {
+                command: format!("printf '%s\\n' \"$ROZI_URL\" > '{}'", out.display()),
+            }),
+        }];
+
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::Event {
+                key: key_workbox.clone(),
+                generation: gen1,
+                event: ForwardEvent::Reconnecting {
+                    error: "connection reset".into(),
+                },
+            }))
+            .unwrap();
+        assert_eq!(
+            backend.state().ports.get(&key_workbox).unwrap().state,
+            ForwardState::Reconnecting
+        );
+
+        backend
+            .dispatch(crate::Msg::PaneLinkActivate(
+                source,
+                TerminalLinkKind::Url,
+                "http://localhost:5173/reconnected".into(),
+            ))
+            .unwrap();
+
+        let entry = backend.state().ports.get(&key_workbox).unwrap();
+        assert_eq!(entry.generation, gen1);
+        assert_eq!(entry.local_port, 49184);
+        assert!(entry.port_pinned);
+        assert_eq!(entry.state, ForwardState::Reconnecting);
+        assert_eq!(entry.pending_opens.len(), 1);
+
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::Event {
+                key: key_workbox.clone(),
+                generation: gen1,
+                event: ForwardEvent::Ready { local_port: 49184 },
+            }))
+            .unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let opened = loop {
+            backend.pump().unwrap();
+            if let Ok(text) = std::fs::read_to_string(&out)
+                && !text.is_empty()
+            {
+                break text;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for queued link to open after reconnect"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert_eq!(opened.trim(), "http://localhost:49184/reconnected");
+        let entry = backend.state().ports.get(&key_workbox).unwrap();
+        assert_eq!(entry.state, ForwardState::Ready);
+        assert_eq!(entry.local_port, 49184);
+        assert!(entry.pending_opens.is_empty());
+    }
+
+    #[test]
+    fn retrying_post_ready_auth_required_preserves_pinned_port_when_occupied() {
+        crate::test_support::on_large_stack(check_retrying_post_ready_auth_required);
+    }
+
+    fn check_retrying_post_ready_auth_required() {
+        crate::test_support::isolate_user_dirs();
+
+        let occupied_listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("bind occupied port");
+        let occupied_port = occupied_listener.local_addr().expect("local addr").port();
+
+        let scratch = tempfile::tempdir().expect("tempdir");
+        let out = scratch.path().join("should-not-open");
+        let mut backend = TestBackend::new(AppRoot::default());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while backend.state().command_link.is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for TestBackend command_link"
+            );
+            backend.pump().unwrap();
+            std::thread::yield_now();
+        }
+
+        let workbox = RemoteTarget::Alias("workbox".into());
+        let source = backend.state().current().workspaces[0].panes[0].id;
+        let key_workbox = ForwardKey {
+            target: workbox.clone(),
+            remote_host: ForwardHost::Localhost,
+            remote_port: 5173,
+        };
+
+        let gen1 = backend.state_mut().ports.mint_generation();
+        backend.state_mut().ports.insert(PortForwardEntry {
+            key: key_workbox.clone(),
+            local_port: occupied_port,
+            port_pinned: true,
+            state: ForwardState::Ready,
+            generation: gen1,
+            handle: Some(ForwardHandle::dormant()),
+            error: None,
+            pending_opens: Vec::new(),
+        });
+
+        let state = backend.state_mut();
+        state.current_mut().remote_host = Some("workbox".into());
+        state.current_mut().remote_target = Some(workbox);
+        state.config.link_handlers = vec![crate::config::LinkHandler {
+            schemes: vec!["http".into()],
+            files: Vec::new(),
+            action: LinkAction::Inline(UserCommandAction::Exec {
+                command: format!("printf '%s\\n' \"$ROZI_URL\" > '{}'", out.display()),
+            }),
+        }];
+
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::Event {
+                key: key_workbox.clone(),
+                generation: gen1,
+                event: ForwardEvent::AuthRequired {
+                    error: "Permission denied".into(),
+                },
+            }))
+            .unwrap();
+        let entry = backend.state().ports.get(&key_workbox).unwrap();
+        assert_eq!(entry.state, ForwardState::AuthRequired);
+        assert_eq!(entry.local_port, occupied_port);
+        assert!(entry.port_pinned);
+
+        backend
+            .dispatch(crate::Msg::PaneLinkActivate(
+                source,
+                TerminalLinkKind::Url,
+                "http://localhost:5173/retry".into(),
+            ))
+            .unwrap();
+
+        let restarted = backend.state().ports.get(&key_workbox).unwrap();
+        assert_ne!(restarted.generation, gen1);
+        assert_eq!(restarted.local_port, occupied_port);
+        assert!(restarted.port_pinned);
+        assert!(
+            matches!(
+                restarted.state,
+                ForwardState::Starting | ForwardState::Failed
+            ),
+            "unexpected initial state after restart: {:?}",
+            restarted.state
+        );
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            backend.pump().unwrap();
+            let entry = backend.state().ports.get(&key_workbox).unwrap();
+            if entry.state != ForwardState::Starting {
+                assert_eq!(entry.state, ForwardState::Failed);
+                assert_eq!(entry.local_port, occupied_port);
+                assert!(entry.port_pinned);
+                assert!(entry.pending_opens.is_empty());
+                assert!(
+                    entry
+                        .error
+                        .as_deref()
+                        .is_some_and(|msg| msg.contains(&occupied_port.to_string())),
+                    "unexpected error: {:?}",
+                    entry.error
+                );
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for pinned restart bind conflict failure"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            !out.exists(),
+            "pinned restart must never emit Ready or open on a different local port"
         );
     }
 }

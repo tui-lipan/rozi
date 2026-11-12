@@ -114,6 +114,9 @@ pub struct ForwardSpec {
     pub connect_host: String,
     pub remote_port: u16,
     pub local_port: u16,
+    /// Refuse remapping `local_port` on bind conflicts even before the first `Ready`
+    /// (for example when restarting a forward whose local endpoint was already published).
+    pub pin_local_port: bool,
 }
 
 /// Lifecycle notifications emitted by a [`ForwardHandle`] worker.
@@ -269,6 +272,12 @@ pub fn start_forward(
             "remote port must be non-zero",
         ));
     }
+    if spec.pin_local_port && spec.local_port == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "pinned local port must be non-zero",
+        ));
+    }
     if spec.local_port == 0 {
         spec.local_port = preferred_local_port(Some(spec.remote_port))?;
     }
@@ -317,6 +326,7 @@ fn run_forward_loop_with(
     mut run_attempt: impl FnMut(&ForwardSpec, &RemoteConfig, &StopSignal, &dyn Fn()) -> AttemptOutcome,
 ) {
     let has_been_ready = std::cell::Cell::new(false);
+    let port_pinned = std::cell::Cell::new(spec.pin_local_port);
     let mut reconnect_attempt: u32 = 0;
     let mut bind_retries: u32 = 0;
 
@@ -325,12 +335,13 @@ fn run_forward_loop_with(
             return;
         }
         // Check local port availability before spawning ssh:
-        // - Before the first Ready, a bind conflict can still remap to a fresh ephemeral port.
-        // - Once Ready has been emitted, the local port is pinned for the tunnel's lifetime so
-        //   existing URLs/tabs never silently point at a different service or port. Checking here
+        // - While unpinned before the first Ready, a bind conflict can remap to a fresh ephemeral
+        //   port.
+        // - Once pinned (either from a prior session or after Ready), the local port stays fixed
+        //   so existing URLs/tabs never silently point at a different service or port. Checking here
         //   also avoids mistaking a thief's listener for ssh during its handshake.
         if let Err(error) = TcpListener::bind(("127.0.0.1", spec.local_port)) {
-            if !has_been_ready.get()
+            if !port_pinned.get()
                 && bind_retries < MAX_BIND_RETRIES
                 && let Ok(next_port) = preferred_local_port(None)
             {
@@ -363,6 +374,7 @@ fn run_forward_loop_with(
 
         let on_ready = || {
             has_been_ready.set(true);
+            port_pinned.set(true);
             report(ForwardEvent::Ready {
                 local_port: spec.local_port,
             });
@@ -371,6 +383,7 @@ fn run_forward_loop_with(
             AttemptOutcome::Stopped => return,
             AttemptOutcome::ReadyThenExited(stderr) => {
                 has_been_ready.set(true);
+                port_pinned.set(true);
                 reconnect_attempt = 0;
                 bind_retries = 0;
                 if handle_disconnect(
@@ -388,7 +401,7 @@ fn run_forward_loop_with(
                 stderr,
                 spawn_not_found,
             } => {
-                if !has_been_ready.get()
+                if !port_pinned.get()
                     && !spawn_not_found
                     && is_local_bind_race(&stderr)
                     && bind_retries < MAX_BIND_RETRIES
@@ -663,6 +676,7 @@ mod tests {
             connect_host: "127.0.0.1".into(),
             remote_port: 5173,
             local_port: 49184,
+            pin_local_port: false,
         };
         let command = build_forward_command(&spec, &config);
         let args: Vec<String> = command
@@ -763,6 +777,7 @@ mod tests {
             connect_host: "127.0.0.1".into(),
             remote_port: 5173,
             local_port: initial_port,
+            pin_local_port: false,
         };
 
         let events = std::sync::Mutex::new(Vec::new());
@@ -835,5 +850,86 @@ mod tests {
             events.last(),
             Some(&ForwardEvent::Ready { local_port: pinned })
         );
+    }
+
+    #[test]
+    fn pinned_pre_ready_forward_allows_interactive_auth_and_refuses_remapping() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind occupied port");
+        let occupied_port = listener.local_addr().expect("local addr").port();
+
+        let target = RemoteTarget::Alias("workbox".into());
+        let config = RemoteConfig {
+            batch_mode: false,
+            ..RemoteConfig::default()
+        };
+
+        // Even while still pre-Ready and interactive, a pinned port must not remap on bind races
+        // or pre-spawn bind conflicts, nor silently force BatchMode on the initial attempt.
+        let attempts = std::cell::Cell::new(0u32);
+        let race_port = {
+            let probe = TcpListener::bind("127.0.0.1:0").expect("bind free probe port");
+            probe.local_addr().expect("probe addr").port()
+        };
+        let events = std::sync::Mutex::new(Vec::new());
+        let stop = StopSignal::default();
+        run_forward_loop_with(
+            ForwardSpec {
+                target: target.clone(),
+                connect_host: "127.0.0.1".into(),
+                remote_port: 5173,
+                local_port: race_port,
+                pin_local_port: true,
+            },
+            config.clone(),
+            true,
+            &stop,
+            &|event| events.lock().unwrap().push(event),
+            |_| Duration::ZERO,
+            |spec, attempt_config, _stop, _on_ready| {
+                attempts.set(attempts.get() + 1);
+                assert_eq!(spec.local_port, race_port);
+                assert!(
+                    !attempt_config.batch_mode,
+                    "pinned restart from AuthRequired must keep interactive auth on first attempt"
+                );
+                AttemptOutcome::ExitedBeforeReady {
+                    stderr: "Address already in use".into(),
+                    spawn_not_found: false,
+                }
+            },
+        );
+        assert_eq!(attempts.get(), 1);
+        let race_events = events.into_inner().unwrap();
+        assert!(matches!(
+            race_events.as_slice(),
+            [ForwardEvent::Failed { .. }]
+        ));
+
+        let occupied_attempts = std::cell::Cell::new(0u32);
+        let occupied_events = std::sync::Mutex::new(Vec::new());
+        run_forward_loop_with(
+            ForwardSpec {
+                target,
+                connect_host: "127.0.0.1".into(),
+                remote_port: 5173,
+                local_port: occupied_port,
+                pin_local_port: true,
+            },
+            config,
+            true,
+            &stop,
+            &|event| occupied_events.lock().unwrap().push(event),
+            |_| Duration::ZERO,
+            |_spec, _attempt_config, _stop, _on_ready| {
+                occupied_attempts.set(occupied_attempts.get() + 1);
+                AttemptOutcome::Stopped
+            },
+        );
+        assert_eq!(occupied_attempts.get(), 0);
+        let occupied_events = occupied_events.into_inner().unwrap();
+        assert!(matches!(
+            occupied_events.as_slice(),
+            [ForwardEvent::Failed { error }] if error.contains(&occupied_port.to_string())
+        ));
     }
 }

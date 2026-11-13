@@ -2860,8 +2860,8 @@ pub struct ControlResponse {
     /// older Rozi versions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<ControlErrorCode>,
-    /// Absent when the command has no result. A result that is itself `null`, such as an agent
-    /// with no retained response, stays `Some(Value::Null)` so it survives every relay.
+    /// The command's result. Absent when the command has none; a `null` result, such as an agent
+    /// with no retained response, is `null`.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

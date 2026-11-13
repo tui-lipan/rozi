@@ -5197,7 +5197,9 @@
           ],
           "description": "Stable failure category for scripts. Absent on successful replies and on replies from\nolder Rozi versions."
         },
-        "data": true,
+        "data": {
+          "description": "The command's result. Absent when the command has none; a `null` result, such as an agent\nwith no retained response, is `null`."
+        },
         "error": {
           "type": [
             "string",

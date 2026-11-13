@@ -3142,11 +3142,7 @@ mod tests {
             let probe_one = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
             let free_port_one = probe_one.local_addr().unwrap().port();
             drop(probe_one);
-            // Keep this port below the usual ephemeral ranges. The test releases and rebinds
-            // it, and macOS can otherwise assign it to an unrelated outgoing connection.
-            let racing_listener = (1024..32768)
-                .find_map(|port| std::net::TcpListener::bind(("127.0.0.1", port)).ok())
-                .expect("a free non-ephemeral test port");
+            let racing_listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
             let raced_port = racing_listener.local_addr().unwrap().port();
 
             let mut backend = TestBackend::new(AppRoot::default());
@@ -3335,8 +3331,22 @@ mod tests {
             // Free the raced port, close the form, retry the failed entry, and confirm the
             // recovered queued activation still opens on Ready.
             drop(racing_listener);
-            if let Err(error) = crate::session::remote::forward::exact_local_port(raced_port) {
-                panic!("port {raced_port} is still taken after its listener closed: {error:?}");
+            // A concurrent PTY fork can retain the listener until exec, even after our handle
+            // closes. Wait for that child to release it before exercising RetrySelected.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                match crate::session::remote::forward::exact_local_port(raced_port) {
+                    Ok(_) => break,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::AddrInUse
+                            && std::time::Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => panic!(
+                        "port {raced_port} is still taken after its listener closed: {error:?}"
+                    ),
+                }
             }
             backend
                 .dispatch(crate::Msg::Ports(PortMsg::CloseAddForm))

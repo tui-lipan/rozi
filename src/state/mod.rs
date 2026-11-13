@@ -24,6 +24,7 @@ mod keybindings;
 mod mode;
 mod pane;
 mod pickers;
+mod ports;
 pub(crate) mod projects;
 mod relaunch;
 mod remote;
@@ -53,6 +54,7 @@ pub use keybindings::*;
 pub use mode::*;
 pub use pane::*;
 pub use pickers::*;
+pub use ports::*;
 pub use relaunch::*;
 pub use remote::*;
 pub use search::*;
@@ -264,10 +266,8 @@ pub struct State {
     /// Where the once-a-second ticks read the wall clock's phase from; see
     /// [`crate::app::WallAnchor`].
     pub wall_anchor: Cell<Option<crate::app::WallAnchor>>,
-    /// Shared half-period phase for urgent alert borders and inactive workspace markers.
-    pub alert_pulse_phase: bool,
-    /// Phase for calm alerts (a finished agent), flipped once per full urgent cycle so it breathes
-    /// `anim::ALERT_PULSE_CALM_FACTOR` times slower off the same tick chain.
+    /// The recording dot's off half of its blink, at the calm rate: flipped once per full urgent
+    /// cycle of the tick chain. Alert borders, tints and tabs read registry pulses instead.
     pub alert_pulse_calm_phase: bool,
     /// Whether one delayed alert-pulse tick is already queued.
     pub alert_pulse_armed: bool,
@@ -358,6 +358,7 @@ pub struct State {
     pub show_session_picker: bool,
     pub session_picker: Option<SessionPickerState>,
     pub remote_picker: Option<RemotePickerState>,
+    pub ports_overlay: Option<PortsOverlayState>,
     /// The global Agents view, listing every agent this client knows about across every machine it
     /// is connected to. Holds no rows of its own: they are a pure projection of live pane state and
     /// the host monitors' latest snapshots, rebuilt each frame so a poll cannot leave it stale.
@@ -373,6 +374,8 @@ pub struct State {
     pub pending_agent_jump: Option<PendingAgentJump>,
     /// Live remote-host monitors, caches, and discovery. Overlay pickers stay on this struct.
     pub remote: RemoteRuntimeState,
+    /// Client-global SSH port forwards, independent of session attachments.
+    pub ports: PortForwardRuntimeState,
     pub collaboration: Option<CollaborationState>,
     /// Raised when an attach lands on a session another client is actively controlling, so
     /// following is something the user chooses rather than something that happens to them.
@@ -709,7 +712,6 @@ impl State {
             last_scratch_rect: Cell::new(None),
             last_clock_text: RefCell::new(None),
             wall_anchor: Cell::new(None),
-            alert_pulse_phase: false,
             alert_pulse_calm_phase: false,
             alert_pulse_armed: false,
             alert_pulse_armed_at: std::time::Duration::ZERO,
@@ -770,6 +772,8 @@ impl State {
             sidebar_streams: SidebarStreams::default(),
             pending_agent_jump: None,
             remote: RemoteRuntimeState::default(),
+            ports: PortForwardRuntimeState::default(),
+            ports_overlay: None,
             collaboration: None,
             follow_prompt: None,
             askpass: None,
@@ -1363,6 +1367,7 @@ impl State {
                 self.remote_picker.is_some() && !self.defer_startup_picker,
                 "remote-picker",
             ),
+            (self.ports_overlay.is_some(), "ports"),
             (
                 self.show_session_picker && !self.defer_startup_picker,
                 "session-picker",

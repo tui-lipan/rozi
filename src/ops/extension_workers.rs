@@ -186,6 +186,11 @@ pub(crate) fn gate(command: &ControlCommand) -> Gate {
         ControlCommand::ExtensionRuntimeStatus => {
             Gate::Denied("the runtime status describes every placed process of this client")
         }
+        ControlCommand::PortsList
+        | ControlCommand::PortsForward { .. }
+        | ControlCommand::PortsClose { .. } => {
+            Gate::Denied("port forwards belong to this client, not one extension")
+        }
         ControlCommand::Invoke { .. }
         | ControlCommand::InvocationList
         | ControlCommand::InvocationCancel { .. }

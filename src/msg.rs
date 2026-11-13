@@ -1098,4 +1098,6 @@ pub enum Msg {
         epoch: u64,
         stopped: crate::control::RecordingStopped,
     },
+    /// Client-owned SSH port-forwarding events and overlay actions.
+    Ports(crate::ops::ports::PortMsg),
 }

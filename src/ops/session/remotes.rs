@@ -343,6 +343,7 @@ pub(crate) fn forget_host(ctx: &mut Context<AppRoot>) -> Update {
         .remote
         .added_hosts
         .retain(|entry| entry != &target);
+    crate::ops::ports::close_target(&mut ctx.state, &target);
     forget_reconnect_host(ctx, &target);
     crate::session::forget_saved_host(&target);
     crate::session::forget_recent_remote(&target);

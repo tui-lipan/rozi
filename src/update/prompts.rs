@@ -520,6 +520,15 @@ fn close_or_advance_askpass(ctx: &mut Context<AppRoot>) -> Update {
         crate::ops::focus::request_release_notes_focus(ctx);
     } else if ctx.state.remote_picker.is_some() {
         crate::ops::focus::request_remote_picker_focus(ctx);
+    } else if ctx
+        .state
+        .ports_overlay
+        .as_ref()
+        .is_some_and(|overlay| overlay.form.is_some())
+    {
+        crate::ops::focus::request_port_form_focus(ctx);
+    } else if ctx.state.ports_overlay.is_some() {
+        crate::ops::focus::request_ports_overlay_focus(ctx);
     } else if ctx.state.show_session_picker {
         crate::ops::focus::request_session_picker_focus(ctx);
     } else if ctx.state.agent_picker.is_some() {

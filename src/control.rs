@@ -116,6 +116,9 @@ impl ControlCommand {
             | Self::AgentRead { .. }
             | Self::Metrics
             | Self::ExtensionRuntimeStatus
+            | Self::PortsList
+            | Self::PortsForward { .. }
+            | Self::PortsClose { .. }
             | Self::ExtensionsDeploy { .. }
             | Self::ExtensionsUndeploy { .. }
             | Self::ExtensionsStatus
@@ -495,6 +498,26 @@ pub enum ControlCommand {
     /// them: where each runs, under which generation and bundle, and why one that is not running
     /// is unavailable.
     ExtensionRuntimeStatus,
+    /// List active and failed client-owned SSH port forwards in the running UI.
+    PortsList,
+    /// Open or reuse a client-owned SSH local port forward in the running UI.
+    PortsForward {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        remote: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        host: Option<String>,
+        port: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        local_port: Option<u16>,
+    },
+    /// Close a client-owned SSH local port forward in the running UI.
+    PortsClose {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        remote: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        host: Option<String>,
+        port: u16,
+    },
     /// Upload a chunk of an extension bundle to a session server. `offset` is the byte in the
     /// canonical archive this chunk starts at; `last` finishes the upload and verifies it. A chunk
     /// that does not continue where the stored upload ended is refused rather than guessed at.
@@ -928,7 +951,27 @@ pub enum ControlCommand {
     Unknown,
 }
 
+/// Wire command name and sample builder for commands refused on the session wire.
+pub type ClientOnlyWireSpec = (&'static str, fn() -> ControlCommand);
+
 impl ControlCommand {
+    /// Commands added after session generation 52 that belong exclusively to a running UI client
+    /// and are refused before any session-wire send.
+    pub const CLIENT_ONLY_WIRE_NAMES: &[ClientOnlyWireSpec] = &[
+        ("ports-list", || Self::PortsList),
+        ("ports-forward", || Self::PortsForward {
+            remote: None,
+            host: None,
+            port: 5173,
+            local_port: None,
+        }),
+        ("ports-close", || Self::PortsClose {
+            remote: None,
+            host: None,
+            port: 5173,
+        }),
+    ];
+
     /// Make a `record-start` or `record-ui-start` path absolute against `base`, the directory it was typed in. The
     /// session server takes only absolute paths, since its own working directory means nothing to
     /// the caller.
@@ -1931,6 +1974,53 @@ pub struct ExtensionDeploymentUpload {
 pub struct ExtensionUndeployReport {
     pub extension: String,
     pub removed: bool,
+}
+
+/// Lifecycle state of a client-owned SSH port forward.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum PortForwardStatus {
+    Starting,
+    Ready,
+    Reconnecting,
+    AuthRequired,
+    Failed,
+}
+
+/// One client-owned SSH port forward reported by `ports-list` and `ports-forward`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PortForwardInfo {
+    /// Target host specification (`alias` or `ssh://[user@]host[:port]`).
+    pub target: String,
+    /// Human-readable target label shown in the UI.
+    pub target_label: String,
+    /// Remote host forwarded on the far end (`localhost` for remote loopback, or explicit host).
+    pub remote_host: String,
+    /// Destination TCP port on the remote host.
+    pub remote_port: u16,
+    /// Local loopback TCP port on `127.0.0.1`, if reserved or listening.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_port: Option<u16>,
+    pub state: PortForwardStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// `ports-list`: active and failed client-owned port forwards.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PortForwardListPayload(pub Vec<PortForwardInfo>);
+
+/// `ports-close`: whether a matching forward was closed.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PortForwardClosed {
+    pub removed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forward: Option<PortForwardInfo>,
 }
 
 /// `extension-runtime-status`: what this client runs where.

@@ -11,6 +11,7 @@ mod agents;
 mod context;
 mod extensions;
 mod layout;
+mod ports;
 mod record;
 mod sessions;
 mod skill;
@@ -26,6 +27,9 @@ pub(crate) use extensions::print_help as print_extensions_help;
 pub(crate) use extensions::print_install_help as print_extensions_install_help;
 pub(crate) use extensions::print_remove_help as print_extensions_remove_help;
 pub(crate) use extensions::print_update_help as print_extensions_update_help;
+#[cfg(test)]
+pub(super) use ports::HELP_SECTIONS as PORTS_HELP_SECTIONS;
+pub(crate) use ports::print_help as print_ports_help;
 #[cfg(test)]
 pub(super) use record::HELP_SECTIONS as RECORD_HELP_SECTIONS;
 pub(crate) use record::print_help as print_record_help;
@@ -250,6 +254,7 @@ pub(crate) enum ParsedCli {
     SessionsHelp,
     Worktrees(WorktreesCli),
     WorktreesHelp,
+    PortsHelp,
     ExtensionsHelp,
     ExtensionsCheckHelp,
     ExtensionsInstallHelp,
@@ -403,7 +408,7 @@ fn help_namespace_index(args: &[String]) -> Option<usize> {
         if !arg.starts_with('-') {
             return matches!(
                 arg.as_str(),
-                "agents" | "sessions" | "worktrees" | "extensions" | "skill" | "record"
+                "agents" | "sessions" | "worktrees" | "ports" | "extensions" | "skill" | "record"
             )
             .then_some(index);
         }
@@ -429,7 +434,7 @@ fn help_option_values(option: &str, next: Option<&str>) -> usize {
         | "--remote-serve-existing" => 1,
         "--server-start" | "--fresh-server-start" => 2,
         "--remote" => usize::from(next.is_some_and(|value| {
-            !value.starts_with('-') && !matches!(value, "sessions" | "worktrees")
+            !value.starts_with('-') && !matches!(value, "sessions" | "worktrees" | "ports")
         })),
         _ => 0,
     }
@@ -570,6 +575,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             "--here" => cli.here = true,
             "context" => return context::parse(&mut iter, cli, socket),
             "worktrees" => return worktrees::parse(&mut iter, &mut cli),
+            "ports" => return ports::parse(&mut iter, &mut cli, socket),
             "extensions" => return extensions::parse(&mut iter, cli),
             "--server" => {
                 if cli.remote.is_some() {
@@ -4651,6 +4657,7 @@ mod tests {
                 "agents",
                 "sessions",
                 "worktrees",
+                "ports",
                 "extensions",
                 "skill",
             ] {

@@ -417,9 +417,9 @@ impl Pane {
         let reported_by =
             |record: &tui_lipan::ProgramStatusRecord,
              agent: &crate::session::protocol::AgentIdentity| {
-                snapshot
-                    .app_for(record)
-                    .is_some_and(|app| program_status_names_agent(app, agent))
+                snapshot.app_for(record).is_some_and(|app| {
+                    crate::agent_detection::program_status_names_agent(app, &agent.id)
+                })
             };
         let rows = &self.terminal.published_rows;
         for occupant in &mut occupants {
@@ -676,15 +676,6 @@ impl Failure {
                 && self.sessions.is_empty()
                 && other.sessions.is_empty())
     }
-}
-
-/// Whether an OSC 7501 `app` names `agent`: its definition ID, or a name the agent catalog knows it
-/// by (`claude-code` for `claude`).
-fn program_status_names_agent(app: &str, agent: &crate::session::protocol::AgentIdentity) -> bool {
-    agent.id.eq_ignore_ascii_case(app)
-        || crate::agent_detection::AgentCatalog::shared_builtin()
-            .by_name(app)
-            .is_some_and(|definition| definition.id() == agent.id)
 }
 
 #[cfg(test)]

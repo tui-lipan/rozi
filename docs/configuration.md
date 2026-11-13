@@ -692,6 +692,13 @@ See [Sessions](sessions.md).
 | `ssh_args` | array of strings | `[]` | Extra SSH arguments. |
 | `binary_path` | string | none | Absolute path to rozi on the remote host. Skips probing and installation. |
 
+### `[remote.ports]`
+
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `auto_forward_links` | bool | `true` | Automatically forward `http` and `https` loopback links opened from remote session panes onto the client. |
+| `prefer_same_port` | bool | `true` | When no local port is requested, try binding the remote port number on `127.0.0.1` before falling back to an ephemeral port. When `false`, always pick an ephemeral port unless a local port is specified. |
+
 See [Remote sessions](remote.md).
 
 ## `[scratchpad]`

@@ -925,6 +925,103 @@ pub(super) fn format_extension_undeploy_text(
     }
 }
 
+fn port_status_label(status: control::PortForwardStatus) -> (&'static str, OutputTone) {
+    match status {
+        control::PortForwardStatus::Ready => ("ready", OutputTone::Success),
+        control::PortForwardStatus::Starting => ("starting", OutputTone::Warning),
+        control::PortForwardStatus::Reconnecting => ("reconnecting", OutputTone::Warning),
+        control::PortForwardStatus::AuthRequired => ("auth-required", OutputTone::Warning),
+        control::PortForwardStatus::Failed => ("failed", OutputTone::Error),
+    }
+}
+
+pub(super) fn format_ports_list_text(
+    data: Option<&serde_json::Value>,
+    styles: OutputStyles,
+) -> String {
+    let forwards: Vec<control::PortForwardInfo> = data
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default();
+    if forwards.is_empty() {
+        return format!(
+            "{}\n",
+            styles.paint("No active port forwards.", OutputTone::Muted)
+        );
+    }
+
+    let columns = ["TARGET", "REMOTE", "LOCAL", "STATE", "ERROR"];
+    let rows = forwards
+        .iter()
+        .map(|entry| {
+            let remote = format!("{}:{}", entry.remote_host, entry.remote_port);
+            let local = entry
+                .local_port
+                .map_or_else(|| "—".to_string(), |port| format!("127.0.0.1:{port}"));
+            let (state_text, tone) = port_status_label(entry.state);
+            let error = entry.error.as_deref().unwrap_or("—");
+            vec![
+                TableCell::new(&entry.target_label, OutputTone::Accent),
+                TableCell::plain(remote),
+                TableCell::plain(local),
+                TableCell::new(state_text, tone),
+                TableCell::plain(error),
+            ]
+        })
+        .collect::<Vec<_>>();
+    format_table(&columns, &rows, styles)
+}
+
+pub(super) fn format_port_forward_text(
+    data: Option<&serde_json::Value>,
+    styles: OutputStyles,
+) -> String {
+    let forward: Option<control::PortForwardInfo> = data
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok());
+    let Some(forward) = forward else {
+        return format!("{}\n", styles.paint("OK", OutputTone::Success));
+    };
+    let (state_text, tone) = port_status_label(forward.state);
+    let local = forward
+        .local_port
+        .map_or_else(|| "—".to_string(), |port| format!("127.0.0.1:{port}"));
+    format!(
+        "{}  {} · {}:{} -> {local} · {}\n",
+        styles.paint("Forward", OutputTone::Muted),
+        styles.paint(&forward.target_label, OutputTone::Accent),
+        forward.remote_host,
+        forward.remote_port,
+        styles.paint(state_text, tone),
+    )
+}
+
+pub(super) fn format_port_close_text(
+    data: Option<&serde_json::Value>,
+    styles: OutputStyles,
+) -> String {
+    let report: Option<control::PortForwardClosed> = data
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok());
+    match report {
+        Some(control::PortForwardClosed {
+            removed: true,
+            forward: Some(forward),
+        }) => format!(
+            "{} {} · {}:{}\n",
+            styles.paint("Closed forward", OutputTone::Success),
+            styles.paint(&forward.target_label, OutputTone::Accent),
+            forward.remote_host,
+            forward.remote_port,
+        ),
+        Some(control::PortForwardClosed { removed: false, .. }) => format!(
+            "{}\n",
+            styles.paint("No matching port forward.", OutputTone::Muted)
+        ),
+        _ => format!("{}\n", styles.paint("OK", OutputTone::Success)),
+    }
+}
+
 pub(super) fn format_metrics_text(
     data: Option<&serde_json::Value>,
     styles: OutputStyles,
@@ -1192,6 +1289,9 @@ pub(super) fn format_control_text(
         control::ControlCommand::ExtensionRuntimeStatus => {
             format_extension_runtime_text(data, styles)
         }
+        control::ControlCommand::PortsList => format_ports_list_text(data, styles),
+        control::ControlCommand::PortsForward { .. } => format_port_forward_text(data, styles),
+        control::ControlCommand::PortsClose { .. } => format_port_close_text(data, styles),
         control::ControlCommand::ExtensionsStatus => {
             format_extension_deployments_text(data, styles)
         }
@@ -1933,5 +2033,44 @@ mod tests {
         assert_ne!(dark_key, light_key);
         assert_eq!(dark_status, Some(dark.status.success));
         assert_eq!(light_status, Some(light.status.success));
+    }
+
+    #[test]
+    fn port_control_commands_render_human_tables_and_acknowledgements() {
+        let listed = serde_json::json!({
+            "ok": true,
+            "data": [{
+                "target": "workbox",
+                "target_label": "workbox",
+                "remote_host": "localhost",
+                "remote_port": 5173,
+                "local_port": 5173,
+                "state": "ready",
+            }]
+        });
+        let table = format_control_text(
+            &control::ControlCommand::PortsList,
+            &listed,
+            OutputStyles::plain(),
+        );
+        assert!(table.contains("TARGET"));
+        assert!(table.contains("workbox"));
+        assert!(table.contains("127.0.0.1:5173"));
+        assert!(table.contains("ready"));
+
+        let closed = serde_json::json!({
+            "ok": true,
+            "data": {"removed": false}
+        });
+        let closed_text = format_control_text(
+            &control::ControlCommand::PortsClose {
+                remote: None,
+                host: None,
+                port: 5173,
+            },
+            &closed,
+            OutputStyles::plain(),
+        );
+        assert!(closed_text.contains("No matching port forward"));
     }
 }

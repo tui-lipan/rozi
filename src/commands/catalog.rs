@@ -497,6 +497,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::OpenPorts,
+        label: "Ports…",
+        category: "Session",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::OpenAgentPicker,
         label: "Agents…",
         category: "Session",

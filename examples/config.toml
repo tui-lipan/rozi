@@ -437,6 +437,12 @@
 # Unattended CLI commands always refuse prompts.
 #batch_mode = false
 
+[remote.ports]
+# Automatically forward http/https loopback links opened from a remote pane.
+#auto_forward_links = true
+# Try the remote port number on 127.0.0.1 first when no local port is specified.
+#prefer_same_port = true
+
 [scratchpad]
 # The dropdown scratchpad. Its shell stays alive while hidden.
 # Program to run instead of the normal shell. No default.

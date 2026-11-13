@@ -886,7 +886,9 @@ impl SessionServer {
                 pane.agent.reset_detection();
                 pane.agent.retained_resume = None;
                 pane.runtime.detected_agent = None;
-                if let Some(integration) = pane.runtime.integration.take() {
+                if let Some(integration) = pane.runtime.integration.take()
+                    && !super::runtime::is_program_report(&integration)
+                {
                     pane.agent.retire_integration(integration.integration);
                 }
                 pane.agent.clear_row_reports();

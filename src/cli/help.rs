@@ -194,6 +194,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "worktrees list|create|open|remove",
                 "Manage Git checkouts and their sessions",
             ),
+            row(
+                "ports list | forward | close",
+                "Manage client SSH port forwards",
+            ),
         ],
     },
     HelpSection {
@@ -621,8 +625,8 @@ pub(crate) fn print_version() {
 mod tests {
     use super::*;
     use crate::cli::args::{
-        AGENTS_HELP_SECTIONS, EXTENSIONS_HELP_SECTIONS, ParsedCli, RECORD_HELP_SECTIONS,
-        SESSIONS_HELP_SECTIONS, WORKTREES_HELP_SECTIONS, parse_cli_args,
+        AGENTS_HELP_SECTIONS, EXTENSIONS_HELP_SECTIONS, PORTS_HELP_SECTIONS, ParsedCli,
+        RECORD_HELP_SECTIONS, SESSIONS_HELP_SECTIONS, WORKTREES_HELP_SECTIONS, parse_cli_args,
     };
     use crate::cli::skill::SKILL_HELP_SECTIONS;
 
@@ -724,6 +728,7 @@ mod tests {
             ("record", RECORD_HELP_SECTIONS),
             ("sessions", SESSIONS_HELP_SECTIONS),
             ("worktrees", WORKTREES_HELP_SECTIONS),
+            ("ports", PORTS_HELP_SECTIONS),
             ("extensions", EXTENSIONS_HELP_SECTIONS),
         ] {
             let mut namespace_help = format!("rozi {name}\n");

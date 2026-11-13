@@ -318,11 +318,6 @@ pub(crate) fn pane_frame_chrome(
             )
     });
     let alert_calm = alert.is_some_and(|(state, _)| state.is_calm());
-    let alert_phase = if alert_calm {
-        ctx.state.alert_pulse_calm_phase
-    } else {
-        ctx.state.alert_pulse_phase
-    };
     // Another client carrying the pane, or a drag from another application over it: either way the
     // border says this pane is where a drag lands.
     let carried_by_other_client = !matches!(kind, PaneKind::Scratch | PaneKind::Popup)
@@ -340,7 +335,7 @@ pub(crate) fn pane_frame_chrome(
     // tint's is. The chain's turns never retarget it, so it cannot lag them, fall out of step with
     // the tint, or depart from whatever colour it happened to hold when it started alerting.
     let breath = alert.filter(|_| alert_pulses).and_then(|(_, color)| {
-        animation::alert_border_pulse(ctx, alert_calm).map(|amount| {
+        animation::alert_chrome_pulse(ctx, alert_calm).map(|amount| {
             ColorTransform::tint(
                 crate::ops::theme::pane_frame_alert_trough(theme, color),
                 amount,
@@ -350,8 +345,6 @@ pub(crate) fn pane_frame_chrome(
     let frame_fg_target = pane_frame_foreground_target(
         theme,
         alert,
-        alert_pulses && breath.is_none(),
-        alert_phase,
         carried_by_other_client,
         focused,
         ctx.state.config.pane.highlight_focused_border,
@@ -601,16 +594,12 @@ fn pane_alert_pulses(
 fn pane_frame_foreground_target(
     theme: &Theme,
     alert: Option<(crate::state::PaneAlert, BadgeColor)>,
-    alert_pulses: bool,
-    alert_phase: bool,
     carried_by_other_client: bool,
     focused: bool,
     highlight_focused_border: bool,
 ) -> Color {
     match alert {
-        Some((_, color)) => {
-            crate::ops::theme::pane_frame_alert_color(theme, color, alert_pulses, alert_phase)
-        }
+        Some((_, color)) => crate::ops::theme::pane_frame_alert_foreground(theme, color),
         None if carried_by_other_client => theme.status.info,
         None => crate::ops::theme::pane_frame_foreground(theme, focused, highlight_focused_border),
     }
@@ -2692,7 +2681,7 @@ mod tests {
     }
 
     #[test]
-    fn static_alert_borders_stay_at_peak_while_tab_pulse_uses_the_shared_phase() {
+    fn alert_borders_pulse_only_in_pulse_mode_with_motion_on() {
         let theme = crate::state::ThemePreset::OneDark.theme();
         let mut config = PaneConfig {
             alert_border: AlertMode::Static,
@@ -2705,10 +2694,6 @@ mod tests {
             true,
             crate::layout::anim::WindowAnimationConfig::default(),
         ));
-        assert_eq!(
-            crate::ops::theme::pane_frame_alert_color(&theme, BadgeColor::Error, false, true),
-            crate::ops::theme::pane_frame_alert_foreground(&theme, BadgeColor::Error)
-        );
         config.alert_border = AlertMode::Pulse;
         let mut animations = crate::layout::anim::WindowAnimationConfig::default();
         assert!(pane_alert_pulses(
@@ -2726,10 +2711,6 @@ mod tests {
             true,
             animations,
         ));
-        assert_eq!(
-            crate::ops::theme::pane_frame_alert_color(&theme, BadgeColor::Error, false, true),
-            crate::ops::theme::pane_frame_alert_foreground(&theme, BadgeColor::Error)
-        );
     }
 
     #[test]
@@ -2737,15 +2718,15 @@ mod tests {
         let theme = crate::state::ThemePreset::OneDark.theme();
         let alert = Some((PaneAlert::Blocked, BadgeColor::Error));
         assert_eq!(
-            pane_frame_foreground_target(&theme, alert, false, false, true, true, true),
+            pane_frame_foreground_target(&theme, alert, true, true, true),
             crate::ops::theme::pane_frame_alert_foreground(&theme, BadgeColor::Error)
         );
         assert_eq!(
-            pane_frame_foreground_target(&theme, None, false, false, true, true, true),
+            pane_frame_foreground_target(&theme, None, true, true, true),
             theme.status.info
         );
         assert_eq!(
-            pane_frame_foreground_target(&theme, None, false, false, false, true, true),
+            pane_frame_foreground_target(&theme, None, false, true, true),
             crate::ops::theme::pane_frame_foreground(&theme, true, true)
         );
     }

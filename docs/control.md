@@ -285,6 +285,9 @@ attached.
 | `extensions status [--json] [--session <NAME>]` | Report where the UI runs [placed extension processes](writing-extensions.md#run-on-the-session-host); with `--session`, report the extensions that session holds. | no |
 | `extensions deploy <ID> --session <NAME> [--remote HOST]` | Store a verified copy of an installed extension in a session, which keeps it across detach and restart. | — |
 | `extensions undeploy <ID> --session <NAME> [--remote HOST]` | Remove a session's copy of an extension. | — |
+| `ports list [--format text\|json]` | List active and failed client-owned SSH port forwards in the running UI. | no |
+| `ports forward <PORT> [--remote HOST] [--host HOST] [--local-port PORT] [--format text\|json]` | Open or reuse a client-owned SSH port forward onto `127.0.0.1` in the running UI. | no |
+| `ports close <PORT> [--remote HOST] [--host HOST] [--format text\|json]` | Close a client-owned SSH port forward in the running UI. | no |
 | `api describe` | Print the API versions and capabilities of the installed binary. | — |
 | `api schema` | Print the [JSON Schema](#json-schema) of the installed binary's control API. | — |
 | `api commands` | List the installed binary's control commands. | — |

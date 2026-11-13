@@ -1648,6 +1648,92 @@
           "type": "object"
         },
         {
+          "description": "List active and failed client-owned SSH port forwards in the running UI.",
+          "properties": {
+            "cmd": {
+              "const": "ports-list",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Open or reuse a client-owned SSH local port forward in the running UI.",
+          "properties": {
+            "cmd": {
+              "const": "ports-forward",
+              "type": "string"
+            },
+            "host": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "local_port": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "port": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "remote": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "port"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Close a client-owned SSH local port forward in the running UI.",
+          "properties": {
+            "cmd": {
+              "const": "ports-close",
+              "type": "string"
+            },
+            "host": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "port": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "remote": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "port"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Upload a chunk of an extension bundle to a session server. `offset` is the byte in the\ncanonical archive this chunk starts at; `last` finishes the upload and verifies it. A chunk\nthat does not continue where the stored upload ended is refused rather than guessed at.",
           "properties": {
             "cmd": {
@@ -3533,6 +3619,92 @@
           },
           "required": [
             "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "List active and failed client-owned SSH port forwards in the running UI.",
+          "properties": {
+            "cmd": {
+              "const": "ports-list",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Open or reuse a client-owned SSH local port forward in the running UI.",
+          "properties": {
+            "cmd": {
+              "const": "ports-forward",
+              "type": "string"
+            },
+            "host": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "local_port": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "port": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "remote": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "port"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Close a client-owned SSH local port forward in the running UI.",
+          "properties": {
+            "cmd": {
+              "const": "ports-close",
+              "type": "string"
+            },
+            "host": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "port": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "remote": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "port"
           ],
           "type": "object"
         },
@@ -6595,6 +6767,97 @@
         "state"
       ],
       "type": "object"
+    },
+    "PortForwardClosed": {
+      "description": "`ports-close`: whether a matching forward was closed.",
+      "properties": {
+        "forward": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PortForwardInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "removed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "removed"
+      ],
+      "type": "object"
+    },
+    "PortForwardInfo": {
+      "description": "One client-owned SSH port forward reported by `ports-list` and `ports-forward`.",
+      "properties": {
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "local_port": {
+          "description": "Local loopback TCP port on `127.0.0.1`, if reserved or listening.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "remote_host": {
+          "description": "Remote host forwarded on the far end (`localhost` for remote loopback, or explicit host).",
+          "type": "string"
+        },
+        "remote_port": {
+          "description": "Destination TCP port on the remote host.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/$defs/PortForwardStatus"
+        },
+        "target": {
+          "description": "Target host specification (`alias` or `ssh://[user@]host[:port]`).",
+          "type": "string"
+        },
+        "target_label": {
+          "description": "Human-readable target label shown in the UI.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "target_label",
+        "remote_host",
+        "remote_port",
+        "state"
+      ],
+      "type": "object"
+    },
+    "PortForwardListPayload": {
+      "description": "`ports-list`: active and failed client-owned port forwards.",
+      "items": {
+        "$ref": "#/$defs/PortForwardInfo"
+      },
+      "type": "array"
+    },
+    "PortForwardStatus": {
+      "description": "Lifecycle state of a client-owned SSH port forward.",
+      "enum": [
+        "starting",
+        "ready",
+        "reconnecting",
+        "auth-required",
+        "failed"
+      ],
+      "type": "string"
     },
     "PublishedAgentResponse": {
       "description": "One response for a row owned by an open agent publisher. Sent beside, never inside, rows.",

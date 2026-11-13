@@ -185,28 +185,7 @@ fn opencode_plugin_lifecycle_passes_without_a_live_ui() {
     let root = repository_root().join("plugins/opencode");
     let output = Command::new("node")
         .arg("--test")
-        .arg(root.join("rozi-agent-state.test.mjs"))
         .arg(root.join("v2.test.mjs"))
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "stdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-#[test]
-fn codex_plugin_lifecycle_passes_without_a_live_ui() {
-    let python = Command::new("python").arg("--version").output();
-    if !python.is_ok_and(|output| output.status.success()) {
-        return;
-    }
-    let output = Command::new("python")
-        .args(["-m", "unittest", "discover", "-s"])
-        .arg(repository_root().join("plugins/codex/tests"))
-        .env("PYTHONDONTWRITEBYTECODE", "1")
         .output()
         .unwrap();
     assert!(

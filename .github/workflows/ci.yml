@@ -135,14 +135,14 @@ jobs:
       - name: Lint
         run: cross clippy --locked --all-targets --target x86_64-unknown-netbsd -- -D warnings
 
-  # Keep a direct Node check for the OpenCode plugins. The Cargo contracts suite also runs these
+  # Keep a direct Node check for the OpenCode plugin. The Cargo contracts suite also runs these
   # tests when Node is available, covering the V2 publish bridge on the primary CI platforms.
   agent-plugins:
     name: agent plugins
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Test the OpenCode plugins
+      - name: Test the OpenCode plugin
         run: node --test plugins/opencode/*.test.mjs
 
   # crates.io is the last release step and the only one that cannot be retried from the same tag,

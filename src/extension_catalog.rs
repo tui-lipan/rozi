@@ -109,6 +109,7 @@ impl CatalogEntry {
             self.repository.as_str(),
             "tui-lipan/claude-rozi-sessions"
                 | "tui-lipan/codex-rozi-sessions"
+                | "tui-lipan/rozi-finder"
                 | "tui-lipan/rozi-terminal-browser"
                 | "tui-lipan/vim-rozi-navigator"
         )

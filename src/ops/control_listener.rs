@@ -685,6 +685,7 @@ pub(crate) fn serve_connection(
         actions,
         tabs,
         tab,
+        report_query,
     } = &request.command
     {
         let id = next_pick_id();
@@ -697,6 +698,7 @@ pub(crate) fn serve_connection(
             actions: actions.clone(),
             tabs: tabs.clone(),
             tab: tab.clone(),
+            report_query: *report_query,
             extension: request.extension.clone(),
             worker,
             sender,

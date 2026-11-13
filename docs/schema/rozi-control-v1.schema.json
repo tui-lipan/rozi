@@ -3083,6 +3083,10 @@
                 "null"
               ]
             },
+            "report_query": {
+              "description": "Report the filter text as `{\"query\":…}` each time it changes, so the caller can send\nrows for it: the way past the row limit for a list too long to send whole.",
+              "type": "boolean"
+            },
             "tab": {
               "description": "Id of the tab to open on. Omitted or unknown opens the first.",
               "type": [
@@ -5057,6 +5061,10 @@
                 "string",
                 "null"
               ]
+            },
+            "report_query": {
+              "description": "Report the filter text as `{\"query\":…}` each time it changes, so the caller can send\nrows for it: the way past the row limit for a list too long to send whole.",
+              "type": "boolean"
             },
             "tab": {
               "description": "Id of the tab to open on. Omitted or unknown opens the first.",

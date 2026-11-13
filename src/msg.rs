@@ -738,6 +738,7 @@ pub enum Msg {
         actions: Vec<crate::control::pick::PickAction>,
         tabs: Vec<crate::control::pick::PickTab>,
         tab: Option<String>,
+        report_query: bool,
         extension: Option<crate::control::ExtensionProvenance>,
         worker: Option<crate::control::WorkerId>,
         sender: crate::state::PickReply,

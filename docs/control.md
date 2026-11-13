@@ -349,6 +349,7 @@ to a UI or session:
     "pane-control",
     "pane-reveal",
     "pick-prompt-from-query",
+    "pick-query-events",
     "prompt",
     "publish-kind",
     "published-activity",
@@ -412,6 +413,9 @@ need it.
 
 `pick-prompt-from-query` means a picker action's prompt honors `from_query`. An older binary
 ignores it and starts the prompt from `value`.
+
+`pick-query-events` means a picker honors `report_query` and reports its search text. An older
+binary ignores it and reports nothing.
 
 `prompt` means the UI answers [`prompt`](#prompts). An older binary refuses it as an unknown
 command.
@@ -1176,6 +1180,10 @@ first shown:
 ```
 
 Selections and actions from a tabbed picker carry the tab: `{"selected":"main","tab":"branches"}`.
+
+A list longer than the picker's 512 rows can follow the search field: with `"report_query":true`,
+JSON mode prints `{"query":"…"}` each time the text changes, and the producer sends the rows that
+match it.
 See [Picker protocol](control-protocol.md#picker-stream).
 
 ## Prompts

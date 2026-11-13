@@ -28,6 +28,7 @@ pub(crate) struct PickOpen {
     pub actions: Vec<crate::control::pick::PickAction>,
     pub tabs: Vec<PickTab>,
     pub tab: Option<String>,
+    pub report_query: bool,
     pub extension: Option<crate::control::ExtensionProvenance>,
 }
 
@@ -69,6 +70,7 @@ pub(crate) fn open_pick_stream(
         actions,
         tabs,
         tab,
+        report_query,
         extension,
     } = open;
     if extension.as_ref().is_some_and(|provenance| {
@@ -120,6 +122,7 @@ pub(crate) fn open_pick_stream(
         pages,
         active,
         standalone: false,
+        report_query,
         reply: sender,
     });
     ctx.state.show_pick = true;
@@ -160,6 +163,7 @@ pub(crate) fn open_prompt_stream(
         }],
         tabs: Vec::new(),
         tab: None,
+        report_query: false,
         extension,
     };
     let update = open_pick_stream(ctx, open, sender, ack);
@@ -330,6 +334,10 @@ pub(crate) fn query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update
     let Some(pick) = ctx.state.pick.as_mut() else {
         return Update::none();
     };
+    if pick.report_query && pick.page().query != query {
+        let payload = with_tab(pick, serde_json::json!({ "query": query }));
+        pick.reply.event(&payload);
+    }
     pick.page_mut().query = query;
     let is_empty = pick.page().query.trim().is_empty();
     let disarmed = pick.pending_action.take().is_some();
@@ -583,6 +591,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx,
                     ack: ack_tx,
                     worker: None,
@@ -637,6 +646,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx,
                     ack: ack_tx,
                     worker: None,
@@ -676,6 +686,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx,
                     ack: ack_tx,
                     worker: None,
@@ -724,6 +735,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx,
                     ack: ack_tx,
                     worker: None,
@@ -756,6 +768,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx1,
                     ack: ack_tx1,
                     worker: None,
@@ -776,6 +789,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx2,
                     ack: ack_tx2,
                     worker: None,
@@ -805,6 +819,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx,
                     ack: ack_tx,
                     worker: None,
@@ -851,6 +866,7 @@ mod tests {
                 extension: None,
                 tabs: Vec::new(),
                 tab: None,
+                report_query: false,
                 sender: tx,
                 ack: ack_tx,
                 worker: None,
@@ -1201,6 +1217,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx,
                     ack: ack_tx,
                     worker: None,
@@ -1305,6 +1322,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx,
                     ack: ack_tx,
                     worker: None,
@@ -1360,6 +1378,7 @@ mod tests {
                     extension: Some(provenance),
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx,
                     ack: ack_tx,
                     worker: None,
@@ -1385,6 +1404,7 @@ mod tests {
             let (ack_tx, ack_rx) = mpsc::channel();
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
+                    report_query: false,
                     id: 7,
                     width: None,
                     actions: Vec::new(),
@@ -1434,6 +1454,16 @@ mod tests {
         tab: Option<&str>,
         actions: Vec<crate::control::pick::PickAction>,
     ) -> crate::state::PickReplyReceiver {
+        open_reporting(backend, tabs, tab, actions, false)
+    }
+
+    fn open_reporting(
+        backend: &mut TestBackend<crate::AppRoot>,
+        tabs: Vec<crate::control::pick::PickTab>,
+        tab: Option<&str>,
+        actions: Vec<crate::control::pick::PickAction>,
+        report_query: bool,
+    ) -> crate::state::PickReplyReceiver {
         let (tx, rx) = crate::state::PickReply::channel();
         let (ack_tx, ack_rx) = mpsc::channel();
         backend
@@ -1446,6 +1476,7 @@ mod tests {
                 actions,
                 tabs,
                 tab: tab.map(str::to_string),
+                report_query,
                 extension: None,
                 sender: tx,
                 ack: ack_tx,
@@ -1568,6 +1599,45 @@ mod tests {
             let page = backend.state().pick.as_ref().unwrap().page();
             assert_eq!(page.restore_query, "de", "the filter was not brought back");
             assert_eq!(page.selected, 1, "the highlight was not brought back");
+        });
+    }
+
+    /// A caller that asked for the filter text hears each change with the tab it was typed on,
+    /// and nothing when a page is rebuilt around text it has already heard.
+    #[test]
+    fn a_reporting_picker_sends_each_filter_change_once() {
+        with_backend(|backend| {
+            let rx = open_reporting(
+                backend,
+                vec![tab("files", None), tab("dirs", None)],
+                None,
+                Vec::new(),
+                true,
+            );
+            for query in ["sr", "sr", "src"] {
+                backend
+                    .dispatch(crate::Msg::PickQueryChanged(query.into()))
+                    .unwrap();
+            }
+            assert_eq!(
+                rx.try_recv().unwrap().trim(),
+                r#"{"query":"sr","tab":"files"}"#
+            );
+            assert_eq!(
+                rx.try_recv().unwrap().trim(),
+                r#"{"query":"src","tab":"files"}"#
+            );
+            assert!(rx.try_recv().is_none());
+
+            backend.dispatch(crate::Msg::PickTabSelected(1)).unwrap();
+            assert_eq!(rx.try_recv().unwrap().trim(), r#"{"tab":"dirs"}"#);
+            backend
+                .dispatch(crate::Msg::PickQueryChanged("".into()))
+                .unwrap();
+            assert!(
+                rx.try_recv().is_none(),
+                "an untouched tab reported its empty filter"
+            );
         });
     }
 

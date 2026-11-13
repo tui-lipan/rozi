@@ -379,7 +379,7 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
     // snapshot the producer wrote straight after it along with it.
     let mut stdin = BufReader::new(std::io::stdin().lock());
     let mut opening_rows = None;
-    let (title, placeholder, empty, width, actions, tabs, tab) = if command.json {
+    let (title, placeholder, empty, width, actions, tabs, tab, report_query) = if command.json {
         let first_line = read_socket_line(&mut stdin)?;
         let spec: serde_json::Value =
             serde_json::from_str(first_line.trim()).unwrap_or(serde_json::Value::Null);
@@ -416,6 +416,7 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
                 .unwrap_or_default(),
             tabs,
             tab,
+            spec.get("report_query").and_then(|v| v.as_bool()) == Some(true),
         )
     } else {
         (
@@ -426,6 +427,7 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
             Vec::new(),
             Vec::new(),
             None,
+            false,
         )
     };
 
@@ -437,6 +439,7 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
         actions,
         tabs,
         tab,
+        report_query,
     });
     writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
 

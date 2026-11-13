@@ -858,6 +858,7 @@ the open picker shows a prompt.
 | `actions` | none | Extra key bindings; see [Actions](#actions). |
 | `tabs` | none | Pages under one title; see [Tabs](#tabs). |
 | `tab` | first tab | Tab to open on. |
+| `report_query` | `false` | Report the search text as it changes; see [Search text](#search-text). |
 
 ### Send rows
 
@@ -899,7 +900,7 @@ An action writes an object and keeps the picker open, unless the action declared
 {"action":"new","input":"feat/api","selected":"main"}
 ```
 
-Lines that keep the picker open — actions and tab switches — are queued for the client. If the
+Lines that keep the picker open — actions, tab switches, and search text — are queued for the client. If the
 client stops reading and 64 are waiting, later ones are dropped. The final line — a selection, a
 cancellation, or a closing action — is never dropped and always arrives last.
 
@@ -972,6 +973,21 @@ closing, so the client can fill a tab when it is first shown:
 {"action":"delete","selected":"old","tab":"branches"}
 {"selected":"main","tab":"branches"}
 ```
+
+### Search text
+
+rozi filters the rows it holds, which is every row of a list within the 512-row limit. For a longer
+list, set `report_query` and send the rows that match what is typed. rozi then writes the search
+text each time it changes, without closing, with the tab in a tabbed picker:
+
+```json
+{"query":"api"}
+{"query":"api","tab":"files"}
+```
+
+Answer with a row snapshot holding the best matches. rozi still filters and ranks the rows it holds
+against the current text, so a snapshot that arrives after more typing never shows a row that no
+longer matches. An empty `query` means the field was cleared.
 
 ### CLI bridge
 

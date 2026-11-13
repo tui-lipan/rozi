@@ -1460,6 +1460,8 @@ pub struct PickState {
     /// Opened by `prompt`: there is no picker under the prompt to return to, so submitting or
     /// cancelling it ends the stream.
     pub standalone: bool,
+    /// The caller asked for the filter text, to send rows that match it.
+    pub report_query: bool,
     pub reply: PickReply,
 }
 

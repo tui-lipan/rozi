@@ -27,6 +27,7 @@ pub(crate) mod ports;
 pub(crate) mod preferences;
 pub(crate) mod profile;
 pub(crate) mod published_rows;
+pub(crate) mod pull_requests;
 pub(crate) mod recording;
 pub(crate) mod relaunch;
 pub(crate) mod release_notes;

@@ -94,6 +94,12 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         } => hosts::apply(ctx, target, generation, rows, agents, projects),
         Msg::Ports(msg) => ports::handle(ctx, msg),
         Msg::LocalAgentMetadata(snapshot) => local_agents::apply(ctx, snapshot),
+        Msg::PullRequests {
+            target,
+            generation,
+            repositories,
+        } => crate::ops::pull_requests::apply(ctx, target, generation, repositories),
+        Msg::PullRequestTick => crate::ops::pull_requests::tick(ctx),
         Msg::ClosePopup => panes::close_popup(ctx),
         Msg::FrameworkFocusEnteredPane(pane) => {
             crate::input::routing::framework_focus_entered_pane(ctx, pane)
@@ -1283,6 +1289,8 @@ fn post_update_sync(
     }
     // Repairs: the worktree refresh tick, kept alive while something needs it.
     crate::ops::worktrees::ensure_tick(ctx);
+    // Repairs: the pull request tick, kept alive while an agent view that shows them is open.
+    crate::ops::pull_requests::ensure_tick(ctx);
     // Repairs: the directory command-backed sidebar tabs poll, after the focused pane's cwd moves.
     sidebar::sync_command_cwd(ctx);
     // Stream producers follow their tab: dropped when a reload removes it, told when it is shown.

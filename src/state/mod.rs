@@ -26,6 +26,7 @@ mod pane;
 mod pickers;
 mod ports;
 pub(crate) mod projects;
+mod pull_requests;
 mod relaunch;
 mod remote;
 mod search;
@@ -55,6 +56,7 @@ pub use mode::*;
 pub use pane::*;
 pub use pickers::*;
 pub use ports::*;
+pub use pull_requests::*;
 pub use relaunch::*;
 pub use remote::*;
 pub use search::*;
@@ -369,6 +371,8 @@ pub struct State {
     /// Latest metadata from running local session servers. The current session's live panes win
     /// over their copy here; `None` means no successful local sweep has arrived.
     pub local_agent_snapshot: Option<crate::session::discovery::LocalAgentSnapshot>,
+    /// The pull requests of the checkouts agents work in, while a view that shows them is open.
+    pub agent_pull_requests: AgentPullRequests,
     /// Which finished agent runs this client has looked at, for every agent it knows about.
     pub agent_attention: AgentAttention,
     /// Rows programs publish to stream tabs, by tab and producer.
@@ -773,6 +777,7 @@ impl State {
             remote_picker: None,
             agent_picker: None,
             local_agent_snapshot: None,
+            agent_pull_requests: AgentPullRequests::default(),
             agent_attention: AgentAttention::default(),
             sidebar_streams: SidebarStreams::default(),
             pending_agent_jump: None,

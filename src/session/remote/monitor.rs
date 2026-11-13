@@ -3,9 +3,12 @@ use std::io::{self, Read, Write};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::RemoteTarget;
+use crate::git::pull_requests::WorktreeStatuses;
 use crate::platform::ipc::IpcConnection;
 use crate::session::discovery::DiscoveredSession;
 
@@ -25,7 +28,11 @@ const CAPABILITIES: &[&str] = &[
     "health-check",
     crate::session::protocol::Capability::AgentSummaries.as_str(),
     crate::session::protocol::Capability::ProjectSummaries.as_str(),
+    PULL_REQUESTS,
 ];
+/// The host answers `p` with the pull requests of the repositories the client names. See
+/// [`crate::git::pull_requests::Lookup`].
+const PULL_REQUESTS: &str = "pull-requests";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Hello {
@@ -77,11 +84,27 @@ struct Snapshot {
     projects: Vec<crate::session::protocol::ProjectSummary>,
 }
 
+/// Which repositories' pull requests the client wants, by any checkout's path on the host.
+#[derive(Serialize, Deserialize)]
+struct PullRequestQuery {
+    repositories: Vec<String>,
+}
+
+/// What the host has found so far for the repositories last asked about, keyed as they were named.
+/// A repository not looked up yet is absent.
+#[derive(Serialize, Deserialize)]
+struct PullRequestReply {
+    repositories: BTreeMap<String, WorktreeStatuses>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct HostSnapshot {
     pub rows: Vec<DiscoveredSession>,
     pub agents: Vec<crate::session::protocol::AgentSummary>,
     pub projects: Vec<crate::session::protocol::ProjectSummary>,
+    /// The pull requests of the repositories [`Monitor::want_pull_requests`] names, as far as the
+    /// host has looked them up. Empty while nothing is wanted or the host cannot say.
+    pub pull_requests: BTreeMap<String, WorktreeStatuses>,
 }
 
 fn write_message(writer: &mut impl Write, value: &impl Serialize) -> io::Result<()> {
@@ -120,10 +143,26 @@ pub(crate) fn serve(reader: &mut impl Read, writer: &mut impl Write) -> io::Resu
     let include_projects =
         hello.supports(crate::session::protocol::Capability::ProjectSummaries.as_str());
     write_message(writer, &Hello::current())?;
+    // Started by the first question about pull requests and stopped with the channel, so a client
+    // that never asks costs nothing.
+    let mut pull_requests: Option<crate::git::pull_requests::Lookup> = None;
     loop {
         let mut request = [0];
         if reader.read(&mut request)? == 0 {
             return Ok(());
+        }
+        if request[0] == b'p' {
+            let query: PullRequestQuery = read_message(reader)?;
+            let lookup = pull_requests
+                .get_or_insert_with(|| crate::git::pull_requests::Lookup::start(|_| {}));
+            lookup.want(query.repositories);
+            write_message(
+                writer,
+                &PullRequestReply {
+                    repositories: lookup.results(),
+                },
+            )?;
+            continue;
         }
         if request[0] != b'?' {
             return Err(io::Error::other("unknown host metadata request"));
@@ -169,6 +208,15 @@ pub(crate) struct Monitor {
     pub generation: u64,
     stop: mpsc::Sender<()>,
     connection: Arc<Mutex<Option<IpcConnection>>>,
+    pull_requests: Arc<Mutex<Vec<String>>>,
+}
+
+impl Monitor {
+    /// Ask the host, from the next poll on, for the pull requests of these repositories, named by
+    /// any of their checkouts' paths there. An empty list stops the host looking anything up.
+    pub(crate) fn want_pull_requests(&self, repositories: Vec<String>) {
+        *self.pull_requests.lock().unwrap() = repositories;
+    }
 }
 
 #[cfg(test)]
@@ -180,6 +228,7 @@ impl Monitor {
             generation,
             stop,
             connection: Arc::new(Mutex::new(None)),
+            pull_requests: Arc::default(),
         }
     }
 }
@@ -220,7 +269,18 @@ fn snapshot(connection: &mut IpcConnection, target: &RemoteTarget) -> io::Result
         rows,
         agents: snapshot.agents,
         projects,
+        pull_requests: BTreeMap::new(),
     })
+}
+
+fn pull_requests(
+    connection: &mut (impl Read + Write),
+    repositories: Vec<String>,
+) -> io::Result<BTreeMap<String, WorktreeStatuses>> {
+    connection.write_all(b"p")?;
+    write_message(connection, &PullRequestQuery { repositories })?;
+    let reply: PullRequestReply = read_message(connection)?;
+    Ok(reply.repositories)
 }
 
 fn retry_delay(attempt: u32) -> Duration {
@@ -235,11 +295,13 @@ pub(crate) fn start(
 ) -> Monitor {
     let (stop, stopped) = mpsc::channel();
     let shared = Arc::new(Mutex::new(None));
+    let wanted = Arc::new(Mutex::new(Vec::new()));
     let monitor = Monitor {
         target: target.clone(),
         generation,
         stop,
         connection: shared.clone(),
+        pull_requests: wanted.clone(),
     };
     std::thread::spawn(move || {
         let mut attempt = 0;
@@ -247,7 +309,15 @@ pub(crate) fn start(
             if stopped.try_recv() != Err(mpsc::TryRecvError::Empty) {
                 break;
             }
-            let result = watch(&target, &config, &shared, &stopped, &report, &mut attempt);
+            let result = watch(
+                &target,
+                &config,
+                &shared,
+                &wanted,
+                &stopped,
+                &report,
+                &mut attempt,
+            );
             shared.lock().unwrap().take();
             let Err(error) = result else { break };
             let unsupported = matches!(
@@ -276,6 +346,7 @@ fn watch(
     target: &RemoteTarget,
     config: &crate::config::RemoteConfig,
     shared: &Mutex<Option<IpcConnection>>,
+    wanted: &Mutex<Vec<String>>,
     stopped: &mpsc::Receiver<()>,
     report: &impl Fn(Result<HostSnapshot, String>),
     attempt: &mut u32,
@@ -285,15 +356,26 @@ fn watch(
     if stopped.try_recv() != Err(mpsc::TryRecvError::Empty) {
         return Ok(());
     }
-    if let Err(error) = handshake(&mut connection) {
-        super::binary::invalidate(target, config);
-        let _ = connection.shutdown(std::net::Shutdown::Both);
-        let detail = stderr.join().unwrap_or_default();
-        return Err(handshake_error(error, &detail));
-    }
+    let peer = match handshake(&mut connection) {
+        Ok(peer) => peer,
+        Err(error) => {
+            super::binary::invalidate(target, config);
+            let _ = connection.shutdown(std::net::Shutdown::Both);
+            let detail = stderr.join().unwrap_or_default();
+            return Err(handshake_error(error, &detail));
+        }
+    };
+    let answers_pull_requests = peer.supports(PULL_REQUESTS);
+    // Whether the host was last asked about any repository, so it is told once when that stops.
+    let mut asked = false;
     let mut previous = None;
     loop {
-        let rows = snapshot(&mut connection, target)?;
+        let mut rows = snapshot(&mut connection, target)?;
+        let repositories = wanted.lock().unwrap().clone();
+        if answers_pull_requests && (asked || !repositories.is_empty()) {
+            asked = !repositories.is_empty();
+            rows.pull_requests = pull_requests(&mut connection, repositories)?;
+        }
         *attempt = 0;
         if previous.as_ref() != Some(&rows) {
             report(Ok(rows.clone()));
@@ -305,10 +387,11 @@ fn watch(
     }
 }
 
-fn handshake(connection: &mut (impl Read + Write)) -> io::Result<()> {
+fn handshake(connection: &mut (impl Read + Write)) -> io::Result<Hello> {
     write_message(connection, &Hello::current())?;
     let hello: Hello = read_message(connection)?;
-    hello.validate()
+    hello.validate()?;
+    Ok(hello)
 }
 
 fn handshake_error(error: io::Error, detail: &str) -> io::Error {
@@ -515,6 +598,53 @@ mod tests {
         }
     }
 
+    /// A client asks the host's watch channel about pull requests between snapshots: the host
+    /// answers as its lookups complete and stops looking once asked about nothing.
+    #[test]
+    fn the_host_answers_pull_request_queries_on_the_watch_channel() {
+        struct Channel(std::io::PipeReader, std::io::PipeWriter);
+        impl Read for Channel {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                self.0.read(buf)
+            }
+        }
+        impl Write for Channel {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.1.write(buf)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                self.1.flush()
+            }
+        }
+        let (mut host_in, client_out) = std::io::pipe().unwrap();
+        let (client_in, mut host_out) = std::io::pipe().unwrap();
+        let host = std::thread::spawn(move || serve(&mut host_in, &mut host_out));
+        let mut client = Channel(client_in, client_out);
+        let peer = handshake(&mut client).unwrap();
+        assert!(peer.supports(PULL_REQUESTS));
+
+        // Not a repository, so the lookup reports status unavailable: an answer all the same.
+        let directory = tempfile::tempdir().unwrap();
+        let repository = directory.path().to_string_lossy().into_owned();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let answer = loop {
+            let answer = pull_requests(&mut client, vec![repository.clone()]).unwrap();
+            if let Some(statuses) = answer.get(&repository) {
+                break statuses.clone();
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the host never answered"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(answer.unavailable && answer.checkouts.is_empty());
+        assert!(pull_requests(&mut client, Vec::new()).unwrap().is_empty());
+
+        drop(client);
+        host.join().unwrap().unwrap();
+    }
+
     #[test]
     fn dropping_monitor_interrupts_a_silent_channel_and_retry_wait() {
         let (_input, writer) = std::io::pipe().unwrap();
@@ -532,6 +662,7 @@ mod tests {
             generation: 1,
             stop,
             connection: Arc::new(Mutex::new(Some(connection))),
+            pull_requests: Arc::default(),
         };
         let blocked = std::thread::spawn(move || {
             let mut byte = [0];

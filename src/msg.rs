@@ -490,6 +490,16 @@ pub enum Msg {
         generation: u64,
         rows: std::result::Result<Vec<crate::session::discovery::DiscoveredSession>, String>,
     },
+    /// What a host's pull request lookups found, by the repository path each was asked about:
+    /// this machine's with no target, another's from its monitor of `generation`.
+    PullRequests {
+        target: Option<crate::session::remote::RemoteTarget>,
+        generation: Option<u64>,
+        repositories:
+            std::collections::BTreeMap<String, crate::git::pull_requests::WorktreeStatuses>,
+    },
+    /// Re-reads which repositories' pull requests the open agent views need.
+    PullRequestTick,
     /// A changed read-only sweep of this machine's running session servers.
     LocalAgentMetadata(Option<crate::session::discovery::LocalAgentSnapshot>),
     CloseSessionPicker,

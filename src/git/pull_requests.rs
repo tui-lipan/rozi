@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -33,6 +34,10 @@ pub struct PullRequestStatus {
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct WorktreeStatuses {
     pub checkouts: BTreeMap<String, PullRequestStatus>,
+    /// The branch each checkout in `checkouts` had when its pull request was found, by the same
+    /// path. Lets a reader drop a result its checkout has since switched away from.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub branches: BTreeMap<String, String>,
     pub unavailable: bool,
     pub error: Option<String>,
     pub retryable: bool,
@@ -53,17 +58,26 @@ struct CacheEntry {
 
 impl StatusCache {
     pub fn get(&mut self, cwd: &Path, refresh: bool) -> WorktreeStatuses {
-        self.lookup(cwd, refresh)
+        self.get_with(cwd, refresh, fetch)
+    }
+
+    fn get_with(
+        &mut self,
+        cwd: &Path,
+        refresh: bool,
+        fetch: impl FnOnce(
+            &Path,
+            &[worktrees::WorktreeInfo],
+            &BTreeMap<&str, Head<'_>>,
+        ) -> Result<WorktreeStatuses, String>,
+    ) -> WorktreeStatuses {
+        self.lookup_with(cwd, refresh, fetch)
             .unwrap_or_else(|error| WorktreeStatuses {
                 unavailable: true,
                 retryable: transient_error(&error),
                 error: Some(error),
                 ..Default::default()
             })
-    }
-
-    fn lookup(&mut self, cwd: &Path, refresh: bool) -> Result<WorktreeStatuses, String> {
-        self.lookup_with(cwd, refresh, fetch)
     }
 
     fn lookup_with(
@@ -139,6 +153,199 @@ impl StatusCache {
         );
         self.entries.truncate(8);
         Ok(value)
+    }
+}
+
+/// How often a repository someone is looking at is read again. Its GitHub status is cached for a
+/// minute by [`StatusCache`]; this bounds only the local Git reads that decide whether that cache
+/// still describes the checkouts.
+const LOOKUP_REFRESH: Duration = Duration::from_secs(15);
+
+/// The pull requests of the repositories a viewer has on screen, kept current on this host.
+///
+/// Asking never waits on GitHub: [`Self::want`] says which repositories matter now and
+/// [`Self::results`] answers with what the last lookups found, while a worker of its own refreshes
+/// them in the background. Nothing is fetched for a repository nobody asked about, and nothing at
+/// all once the wanted set is empty. Dropping it stops the worker.
+pub(crate) struct Lookup {
+    shared: Arc<LookupShared>,
+}
+
+struct LookupShared {
+    state: Mutex<LookupState>,
+    wake: Condvar,
+}
+
+#[derive(Default)]
+struct LookupState {
+    wanted: Vec<String>,
+    /// Counts changes to `wanted`, so the worker hears of one even when nothing is due.
+    generation: u64,
+    results: BTreeMap<String, WorktreeStatuses>,
+    stopped: bool,
+}
+
+/// Where a [`Lookup`] reads repositories from.
+trait Source: Send + 'static {
+    /// Lets go of whatever it keeps for repositories no longer in `wanted`.
+    fn forget_unwanted(&mut self, wanted: &[String]);
+    fn fetch(&mut self, repository: &Path) -> WorktreeStatuses;
+}
+
+/// The worker's next job: the repositories due a lookup, and the whole wanted set.
+struct Due {
+    repositories: Vec<String>,
+    wanted: Vec<String>,
+}
+
+impl Lookup {
+    /// `on_change` hears every repository's latest statuses whenever one of them changed.
+    pub(crate) fn start(
+        on_change: impl Fn(BTreeMap<String, WorktreeStatuses>) + Send + 'static,
+    ) -> Self {
+        Self::start_with(RepositoryCaches::default(), on_change)
+    }
+
+    fn start_with(
+        mut source: impl Source,
+        on_change: impl Fn(BTreeMap<String, WorktreeStatuses>) + Send + 'static,
+    ) -> Self {
+        let shared = Arc::new(LookupShared {
+            state: Mutex::new(LookupState::default()),
+            wake: Condvar::new(),
+        });
+        let worker = Arc::clone(&shared);
+        let spawned = std::thread::Builder::new()
+            .name("rozi-pull-requests".into())
+            .spawn(move || {
+                let mut refreshed: BTreeMap<String, Instant> = BTreeMap::new();
+                let mut generation = 0;
+                while let Some(due) = worker.next_due(&mut refreshed, &mut generation) {
+                    source.forget_unwanted(&due.wanted);
+                    let mut changed = false;
+                    for repository in due.repositories {
+                        let statuses = source.fetch(Path::new(&repository));
+                        refreshed.insert(repository.clone(), Instant::now());
+                        let mut state = worker.state.lock().unwrap();
+                        if state.wanted.contains(&repository)
+                            && state.results.get(&repository) != Some(&statuses)
+                        {
+                            state.results.insert(repository, statuses);
+                            changed = true;
+                        }
+                    }
+                    if changed {
+                        on_change(worker.state.lock().unwrap().results.clone());
+                    }
+                }
+            });
+        if spawned.is_err() {
+            shared.state.lock().unwrap().stopped = true;
+        }
+        Self { shared }
+    }
+
+    /// The repositories, by any checkout's path, whose pull requests matter now. An empty set stops
+    /// all lookups until one is wanted again.
+    pub(crate) fn want(&self, mut repositories: Vec<String>) {
+        repositories.sort();
+        repositories.dedup();
+        let mut state = self.shared.state.lock().unwrap();
+        if state.wanted != repositories {
+            state
+                .results
+                .retain(|repository, _| repositories.contains(repository));
+            state.wanted = repositories;
+            state.generation = state.generation.wrapping_add(1);
+            self.shared.wake.notify_all();
+        }
+    }
+
+    /// The latest statuses of the wanted repositories that have been looked up.
+    pub(crate) fn results(&self) -> BTreeMap<String, WorktreeStatuses> {
+        self.shared.state.lock().unwrap().results.clone()
+    }
+}
+
+impl LookupShared {
+    /// Waits until a wanted repository is due or the wanted set has changed since `generation`.
+    /// `None` once stopped.
+    fn next_due(
+        &self,
+        refreshed: &mut BTreeMap<String, Instant>,
+        generation: &mut u64,
+    ) -> Option<Due> {
+        let mut state = self.state.lock().unwrap();
+        loop {
+            if state.stopped {
+                return None;
+            }
+            refreshed.retain(|repository, _| state.wanted.contains(repository));
+            let repositories: Vec<String> = state
+                .wanted
+                .iter()
+                .filter(|repository| {
+                    refreshed
+                        .get(*repository)
+                        .is_none_or(|at| at.elapsed() >= LOOKUP_REFRESH)
+                })
+                .cloned()
+                .collect();
+            if !repositories.is_empty() || state.generation != *generation {
+                *generation = state.generation;
+                return Some(Due {
+                    repositories,
+                    wanted: state.wanted.clone(),
+                });
+            }
+            let wait = refreshed
+                .values()
+                .map(|at| LOOKUP_REFRESH.saturating_sub(at.elapsed()))
+                .min()
+                .unwrap_or(LOOKUP_REFRESH);
+            state = self.wake.wait_timeout(state, wait).unwrap().0;
+        }
+    }
+}
+
+/// A [`StatusCache`] for each wanted repository. One shared cache keeps eight repositories, which
+/// suits a server answering whichever repository its panes are in, but a lookup that refreshes every
+/// repository it watches in turn would evict each one just before reading it again, and so ask
+/// GitHub on every pass once it watches more than eight.
+#[derive(Default)]
+struct RepositoryCaches(BTreeMap<String, StatusCache>);
+
+impl RepositoryCaches {
+    fn get(
+        &mut self,
+        repository: &Path,
+        fetch: impl FnOnce(
+            &Path,
+            &[worktrees::WorktreeInfo],
+            &BTreeMap<&str, Head<'_>>,
+        ) -> Result<WorktreeStatuses, String>,
+    ) -> WorktreeStatuses {
+        self.0
+            .entry(repository.to_string_lossy().into_owned())
+            .or_default()
+            .get_with(repository, false, fetch)
+    }
+}
+
+impl Source for RepositoryCaches {
+    fn forget_unwanted(&mut self, wanted: &[String]) {
+        self.0.retain(|repository, _| wanted.contains(repository));
+    }
+
+    fn fetch(&mut self, repository: &Path) -> WorktreeStatuses {
+        self.get(repository, fetch)
+    }
+}
+
+impl Drop for Lookup {
+    fn drop(&mut self) {
+        self.shared.state.lock().unwrap().stopped = true;
+        self.shared.wake.notify_all();
     }
 }
 
@@ -329,6 +536,9 @@ fn fetch(
                 .filter(|tree| tree.branch.as_deref() == Some(branch))
             {
                 result.checkouts.insert(tree.path.clone(), status.clone());
+                result
+                    .branches
+                    .insert(tree.path.clone(), branch.to_string());
             }
         }
     }
@@ -463,6 +673,86 @@ fn parse_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Watching more repositories than one shared cache holds must not evict each before its next
+    /// read: a second pass over nine unchanged repositories asks GitHub about none of them.
+    #[test]
+    fn watching_many_repositories_reuses_each_ones_cached_status() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        let repositories: Vec<_> = (0..9).map(|_| tempfile::tempdir().unwrap()).collect();
+        for repository in &repositories {
+            command::checked(
+                repository.path(),
+                &["init".into(), "-q".into()],
+                command::WORKTREE_LIST_TIMEOUT,
+            )
+            .unwrap();
+        }
+        let mut caches = RepositoryCaches::default();
+        let fetches = std::cell::Cell::new(0);
+        for _ in 0..2 {
+            for repository in &repositories {
+                caches.get(repository.path(), |_, _, _| {
+                    fetches.set(fetches.get() + 1);
+                    Ok(WorktreeStatuses::default())
+                });
+            }
+        }
+        assert_eq!(fetches.get(), 9);
+    }
+
+    /// A host looks up only what a viewer still has on screen, and forgets the rest.
+    #[test]
+    fn a_lookup_answers_only_for_the_repositories_still_wanted() {
+        /// Reports each fetch, and what it keeps after being told what is still wanted.
+        struct Recorder {
+            fetched: std::sync::mpsc::Sender<PathBuf>,
+            kept: std::sync::mpsc::Sender<Vec<String>>,
+        }
+        impl Source for Recorder {
+            fn forget_unwanted(&mut self, wanted: &[String]) {
+                self.kept.send(wanted.to_vec()).unwrap();
+            }
+            fn fetch(&mut self, repository: &Path) -> WorktreeStatuses {
+                self.fetched.send(repository.to_path_buf()).unwrap();
+                WorktreeStatuses::default()
+            }
+        }
+        let (fetched, fetches) = std::sync::mpsc::channel();
+        let (kept, keeps) = std::sync::mpsc::channel();
+        let (changed, changes) = std::sync::mpsc::channel();
+        let lookup = Lookup::start_with(Recorder { fetched, kept }, move |results| {
+            changed.send(results).unwrap()
+        });
+        let wait = Duration::from_secs(5);
+        lookup.want(vec!["/a".into()]);
+        assert_eq!(fetches.recv_timeout(wait).unwrap(), PathBuf::from("/a"));
+        let first = changes.recv_timeout(wait).unwrap();
+        assert_eq!(first.keys().collect::<Vec<_>>(), ["/a"]);
+
+        lookup.want(vec!["/b".into()]);
+        assert!(
+            !lookup.results().contains_key("/a"),
+            "`/a` is no longer wanted"
+        );
+        assert_eq!(fetches.recv_timeout(wait).unwrap(), PathBuf::from("/b"));
+        let second = changes.recv_timeout(wait).unwrap();
+        assert_eq!(second.keys().collect::<Vec<_>>(), ["/b"]);
+
+        lookup.want(Vec::new());
+        assert!(lookup.results().is_empty());
+        // The source lets go of everything as soon as nothing is wanted, not at its next fetch.
+        let deadline = Instant::now() + wait;
+        while keeps.recv_timeout(wait).unwrap() != Vec::<String>::new() {
+            assert!(Instant::now() < deadline, "the source kept `/b`");
+        }
+        assert!(
+            fetches.recv_timeout(Duration::from_millis(200)).is_err(),
+            "nothing is looked up while nothing is wanted"
+        );
+    }
 
     fn parse_status(pr: &serde_json::Value, head: Option<&str>) -> Option<PullRequestStatus> {
         super::parse_status(

@@ -192,13 +192,13 @@ arrow keys, or a click, and type to filter.
 Each row leads with the agent's task when it names one, or else its terminal title, followed by the
 agent's name. The glyph shows the agent's state. The right side adds, in order, the state with how
 long it has held or what its run took, such as `Working 4m00s`, the reason an agent gave for waiting
-or failing, **Current** on the agent you are in, the session it runs in, and the project and branch
-it works in. The session appears only on **All** once agents run outside the session you are in: the
+or failing, the pull request of its branch with its [work status](worktrees.md#read-work-status),
+such as `#395 Failed`, **Current** on the agent you are in, the session it runs in, and the project and branch it works in. The session appears only on **All** once agents run outside the session you are in: the
 session name for local agents and `session@host` for remote agents. A run its program keeps in the
 background has an italic task.
 
-Search matches all of it — the task, the agent, the session, the host, the project and branch, and
-the reason — so typing a branch or a host name narrows the list to the agents there.
+Search matches all of it — the task, the agent, the session, the host, the project and branch, the
+pull request number, and the reason — so typing a branch or a host name narrows the list to the agents there.
 
 `Enter` goes to the highlighted agent. In the session on screen, it moves focus to the agent's pane;
 on the agent you are in, it only closes Agents. Anywhere else, rozi attaches to that session first

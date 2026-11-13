@@ -8880,6 +8880,13 @@
     "WorktreeStatuses": {
       "description": "Keyed by the host's checkout path. An error means status is unavailable, not that no PR exists.",
       "properties": {
+        "branches": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The branch each checkout in `checkouts` had when its pull request was found, by the same\npath. Lets a reader drop a result its checkout has since switched away from.",
+          "type": "object"
+        },
         "checkouts": {
           "additionalProperties": {
             "$ref": "#/$defs/PullRequestStatus"

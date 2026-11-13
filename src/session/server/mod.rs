@@ -561,6 +561,10 @@ pub struct AgentScratch {
     /// The conversation this pane would resume, kept when the published rows that named it were
     /// withdrawn because their window left the session. See [`RetainedResume`].
     pub retained_resume: Option<RetainedResume>,
+    /// Which OSC 7501 reports the agent running now made, rather than one launched here before it.
+    /// Survives [`Self::reset_detection`](super::AgentScratch::reset_detection) with
+    /// [`Self::launches`], since the screen and its records outlive the program behind them.
+    pub program_fence: runtime::ProgramFence,
 }
 
 /// A native conversation a pane's agent rows named, outliving those rows.

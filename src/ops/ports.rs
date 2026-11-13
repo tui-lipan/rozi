@@ -2819,6 +2819,17 @@ mod tests {
                 .unwrap();
             form.remote_port.set_text("5173");
             form.local_port.set_text(free_port.to_string());
+            // A concurrent PTY fork can hold the dropped probe until exec; the Exact request
+            // needs the port free.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while let Err(error) = crate::session::remote::forward::exact_local_port(free_port) {
+                assert!(
+                    error.kind() == std::io::ErrorKind::AddrInUse
+                        && std::time::Instant::now() < deadline,
+                    "port {free_port} is still taken after its probe closed: {error:?}"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
             backend
                 .dispatch(crate::Msg::Ports(PortMsg::SubmitAddForm))
                 .unwrap();

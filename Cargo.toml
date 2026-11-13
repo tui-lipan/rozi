@@ -94,9 +94,9 @@ exclude = [
 # 0.40.2: `Context::skip_cursor_trail`, so a workspace or session switch draws no trail.
 # 0.41.0: `CursorTrailSettle`, and a cursor jump along one line trails at once.
 # 0.43.1: path links (`Terminal::link_paths`, `TerminalLinkKind`) and bare file-name hints.
-# Unreleased (see `[patch.crates-io]` below): the experimental libghostty-vt engine
+# 0.44.0: the experimental libghostty-vt engine
 # (`terminal-ghostty`, `TerminalScreen::with_engine`, `compress_idle`).
-tui-lipan = { version = "0.43.1", features = [
+tui-lipan = { version = "0.44.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",
@@ -302,9 +302,3 @@ opt-level = 3
 
 [profile.dev.package.curve25519-dalek]
 opt-level = 3
-
-# TEMPORARY - remove before merging. The libghostty-vt engine (tui-lipan #447) is merged on
-# tui-lipan's main but in no release yet. Replace this with the released version requirement above
-# and drop `allow-git` from deny.toml once it ships.
-[patch.crates-io]
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "ff24038c730d4bd3fcc9a9afbd1d6f7429a636e3" }

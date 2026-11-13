@@ -3948,8 +3948,9 @@ checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
 name = "tui-lipan"
-version = "0.43.1"
-source = "git+https://github.com/tui-lipan/tui-lipan?rev=ff24038c730d4bd3fcc9a9afbd1d6f7429a636e3#ff24038c730d4bd3fcc9a9afbd1d6f7429a636e3"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65fe8eb2d9cd3294cdfb8d4c79700584bf90f13f0be9e3a00124a1453601772c"
 dependencies = [
  "ab_glyph_rasterizer",
  "alacritty_terminal",
@@ -4004,7 +4005,8 @@ checksum = "2b004e9d5e056aae8594f8c654e0b2567103d1aed19b100e0702bdc211f86af4"
 [[package]]
 name = "tui-lipan-ghostty-vt-sys"
 version = "0.3.1"
-source = "git+https://github.com/tui-lipan/tui-lipan?rev=ff24038c730d4bd3fcc9a9afbd1d6f7429a636e3#ff24038c730d4bd3fcc9a9afbd1d6f7429a636e3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf819ba838a2e40ad366e385e217464b1c9200bd9e7d7b76aa619be573f060bb"
 dependencies = [
  "pkg-config",
  "sha2 0.11.1",
@@ -4013,8 +4015,9 @@ dependencies = [
 
 [[package]]
 name = "tui-lipan-macro"
-version = "0.43.1"
-source = "git+https://github.com/tui-lipan/tui-lipan?rev=ff24038c730d4bd3fcc9a9afbd1d6f7429a636e3#ff24038c730d4bd3fcc9a9afbd1d6f7429a636e3"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a92c00ec9474ecffc1299a18995a2ebb125e9cbc5bc1eae5957623c8cdf41922"
 dependencies = [
  "prettyplease",
  "proc-macro-crate",

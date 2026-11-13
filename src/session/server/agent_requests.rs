@@ -19,6 +19,8 @@ const MAX_DEPTH: usize = 8;
 const MAX_PER_ROOT: usize = 64;
 const MAX_QUEUED_PER_TARGET: usize = 16;
 const MAX_RESOLVED_BYTES: usize = 16 * MAX_RESPONSE_BYTES;
+/// Answered requests whose delivery slots prevent ordinary retention eviction.
+const MAX_PROTECTED_BYTES: usize = 16 * MAX_RESPONSE_BYTES;
 /// With `MAX_LIVE`, keeps the list of every request within one session frame.
 const MAX_RESOLVED: usize = 1024;
 /// Unresolved requests and answered requests whose delivery turn has not ended.
@@ -207,6 +209,32 @@ impl AgentRequestStore {
         Ok(())
     }
 
+    /// Refuse an answer that would exceed the storage protected by unfinished delivery turns.
+    fn admit_reply(
+        &self,
+        request: &AgentRequestInfo,
+        text: &str,
+    ) -> std::result::Result<(), ControlResponse> {
+        if self.answering(&request.to) != Some(request.id.as_str()) {
+            return Ok(());
+        }
+        let protected_bytes: usize = self
+            .requests
+            .iter()
+            .filter(|stored| {
+                stored.info.state.is_resolved()
+                    && self.answering(&stored.info.to) == Some(stored.info.id.as_str())
+            })
+            .map(|stored| request_bytes(&stored.info))
+            .sum();
+        if protected_bytes + request_bytes(request) + text.len() > MAX_PROTECTED_BYTES {
+            return Err(conflict(
+                "reply would exceed the session's 16 MiB budget for unfinished delivery turns",
+            ));
+        }
+        Ok(())
+    }
+
     /// Whether `request` is `ancestor` or descends from it.
     fn descends_from(&self, request: &AgentRequestInfo, ancestor: &str) -> bool {
         let mut current = Some(request);
@@ -280,7 +308,7 @@ impl AgentRequestStore {
                 .filter(|stored| stored.info.state.is_resolved())
         };
         let mut resolved_count = resolved().count();
-        let mut resolved_bytes: usize = resolved().map(stored_bytes).sum();
+        let mut resolved_bytes: usize = resolved().map(|stored| request_bytes(&stored.info)).sum();
         while resolved_bytes > MAX_RESOLVED_BYTES || resolved_count > MAX_RESOLVED {
             let Some(index) = self.requests.iter().position(|stored| {
                 stored.info.state.is_resolved()
@@ -288,16 +316,15 @@ impl AgentRequestStore {
             }) else {
                 break;
             };
-            resolved_bytes -= stored_bytes(&self.requests.remove(index));
+            resolved_bytes -= request_bytes(&self.requests.remove(index).info);
             resolved_count -= 1;
         }
     }
 }
 
-fn stored_bytes(stored: &StoredRequest) -> usize {
-    stored.info.prompt.len()
-        + stored
-            .info
+fn request_bytes(info: &AgentRequestInfo) -> usize {
+    info.prompt.len()
+        + info
             .response
             .as_ref()
             .map_or(0, |response| response.content.text.len())
@@ -416,6 +443,9 @@ impl SessionServer {
         }
         if let Err((_, message)) = super::responses::validate_payload(&payload) {
             return invalid(message);
+        }
+        if let Err(response) = self.agent_requests.admit_reply(request, &payload.text) {
+            return response;
         }
         // Kept on the request alone: `agent-cli` must not reach a peer through `agent-response`,
         // which a client without the request capability may send.

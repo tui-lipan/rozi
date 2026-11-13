@@ -330,10 +330,9 @@ fn an_await_answers_once_and_never_holds_up_its_request() {
     assert_eq!(code(refused), Some(ControlErrorCode::Conflict));
 }
 
-#[test]
-fn answered_requests_hold_admission_capacity_until_their_delivery_turn_ends() {
+fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
     let mut store = AgentRequestStore::default();
-    for pane in 0..MAX_LIVE {
+    for pane in 0..count {
         let to = protocol::AgentRef::for_test(pane as PaneId, 1, None);
         let id = format!("request-{pane}");
         store.requests.push(StoredRequest {
@@ -364,6 +363,12 @@ fn answered_requests_hold_admission_capacity_until_their_delivery_turn_ends() {
             },
         );
     }
+    store
+}
+
+#[test]
+fn answered_requests_hold_admission_capacity_until_their_delivery_turn_ends() {
+    let mut store = answered_requests_with_slots(MAX_LIVE);
     let target = protocol::AgentRef::for_test(MAX_LIVE as PaneId, 1, None);
     store.prune();
     assert_eq!(
@@ -381,4 +386,44 @@ fn answered_requests_hold_admission_capacity_until_their_delivery_turn_ends() {
         code(store.admit(&target, None).unwrap_err()),
         Some(ControlErrorCode::Conflict)
     );
+}
+
+#[test]
+fn protected_answers_cannot_exceed_the_session_storage_budget() {
+    let mut store = answered_requests_with_slots(16);
+    let response = AgentResponse {
+        response_id: 1,
+        content: AgentResponsePayload {
+            text: "x".repeat(MAX_RESPONSE_BYTES),
+            turn_id: None,
+            source: AgentResponseSource::AgentCli,
+            fidelity: AgentResponseFidelity::Semantic,
+            complete: true,
+            truncated: false,
+        },
+    };
+    for stored in &mut store.requests[..15] {
+        stored.info.response = Some(response.clone());
+    }
+    store.requests[15].info.state = AgentRequestState::Active;
+    store.requests[15].info.prompt = "p".repeat(512);
+    let request = store.requests[15].info.clone();
+    // Fifteen 1 MiB answers, sixteen metadata allowances, and the 512-byte prompt leave this room.
+    assert!(store.admit_reply(&request, &"x".repeat(1_039_872)).is_ok());
+    assert_eq!(
+        code(
+            store
+                .admit_reply(&request, &"x".repeat(1_039_873))
+                .unwrap_err()
+        ),
+        Some(ControlErrorCode::Conflict)
+    );
+
+    // An answer without a delivery slot is evictable and needs no protected capacity.
+    let slot = store.slots.remove(&request.to).unwrap();
+    assert!(store.admit_reply(&request, &response.content.text).is_ok());
+    store.slots.insert(request.to.clone(), slot);
+    // Retaining an old answer after releasing its slot frees protected capacity.
+    store.slots.remove(&store.requests[0].info.to);
+    assert!(store.admit_reply(&request, &response.content.text).is_ok());
 }

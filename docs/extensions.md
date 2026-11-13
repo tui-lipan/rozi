@@ -63,7 +63,7 @@ Discover reads an index of those repositories, published at
 [`tui-lipan/rozi-extension-index`](https://github.com/tui-lipan/rozi-extension-index). The index
 records each repository's metadata at an exact default-branch commit. It is not a package registry:
 it hosts no packages and resolves no dependencies. rozi marks its author's Claude Code sessions,
-Codex threads, Terminal browser, and Vim and Neovim navigator extensions as **trusted**. Their
+Codex threads, Finder, Terminal browser, and Vim and Neovim navigator extensions as **trusted**. Their
 reports show "Trusted · Maintained by the rozi author". Other entries show "Not audited; inspect
 source before installing". Installing from Discover clones the repository at the indexed commit;
 from then on it is an ordinary Git installation that updates from its remote.

@@ -352,7 +352,8 @@ A running session keeps the value it started with; restart it to apply a change.
 
 ### Reopen an agent conversation
 
-An agent that reports a native session reference (`rozi agents report --native-session`), and whose
+An agent that reports a native session reference (`rozi agents report --native-session`, or the
+`native_session` of the active row its publisher marks), and whose
 definition declares `[agents.resume]`, restores into its previous conversation instead of starting a
 new one.
 

@@ -216,17 +216,16 @@ fn shutdown_existing_named_session(
 
     let graceful_error = match graceful {
         Ok(()) => {
-            // Delete while the old server is still live. Its shutdown path also forgets the
-            // snapshot, and no same-name replacement can start until this server retires its
-            // endpoint.
-            let snapshot_error = ending.forget_session(name);
             // Keep the authenticated connection open until the server retires so Shutdown remains
             // associated with a live attached client throughout delivery. Dropping immediately
             // makes the final control frame race the peer-EOF teardown under load.
             let retirement = wait_for_retirement(endpoint, server_pid)?;
             drop(stream);
             return match retirement {
-                Retirement::Retired => snapshot_error.map_or(Ok(StoppedForRestart::Stopped), Err),
+                // The server deletes its own state before retiring. A second deletion here
+                // could remove a replacement's state; doing it before retirement races the
+                // server's directory deletion on Windows.
+                Retirement::Retired => Ok(StoppedForRestart::Stopped),
                 Retirement::Recreated => Err(recreated_server_error(name)),
                 Retirement::TimedOut => Err(retirement_timeout_error(name)),
             };

@@ -3275,6 +3275,30 @@ mod tests {
         assert_ne!(first, second, "a relaunch is a new incarnation");
     }
 
+    /// An agent relaunched in the pane is a new incarnation even when the run before it never
+    /// reported over OSC 7501, and the new one reports before the server has seen it start.
+    #[test]
+    fn a_relaunched_agent_reporting_at_once_is_a_new_incarnation() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        let incarnation =
+            |server: &SessionServer| server.agent_records(None, 7)[0].reference.incarnation;
+        let before = incarnation(&server);
+
+        let pane = server.panes.get_mut(&7).unwrap();
+        pane.agent.launches += 1;
+        pane.screen_mut().set_program_status_enabled(true);
+        pane.screen_mut()
+            .process_bytes(b"\x1b]7501;state=working:app=claude-code\x07");
+        server.sync_pane_runtime(None, 7, 1);
+
+        assert_eq!(
+            protocol::agent_signature(&server.panes[&7].runtime)[0].2,
+            protocol::AgentState::Working
+        );
+        assert_ne!(incarnation(&server), before);
+    }
+
     /// A pane with no UI finds its server by instance, then asks by name. A request naming another
     /// instance reached a server that took the name in between, and must not touch its panes.
     #[test]

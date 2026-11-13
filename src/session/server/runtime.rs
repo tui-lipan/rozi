@@ -412,8 +412,6 @@ pub struct ProgramFence {
     floor: u64,
     /// The newest report order seen.
     seen: u64,
-    /// The launch the pane's report from OSC 7501 was last built for.
-    reported: u64,
 }
 
 impl ProgramFence {
@@ -474,21 +472,21 @@ fn program_report(
     .then_some(record.msg.as_deref())
     .flatten()
     .and_then(|msg| clean_text(msg, PANE_STATUS_REASON_MAX_LEN));
-    let earlier = pane
+    // A launch the pane-level reference has not caught up with is another process: a new
+    // incarnation, whatever its name. Detection renews the reference itself only while nothing
+    // reports for the pane, and from here on this report does.
+    let relaunched = pane.agent.reference_launch != pane.agent.launches;
+    let previous = pane
         .runtime
         .integration
         .as_deref()
-        .filter(|report| is_program_report(report));
-    // A report built for an earlier launch speaks for another process: this one is a new
-    // incarnation, whatever its name.
-    let relaunched = earlier.is_some() && fence.reported != fence.launch;
-    let previous = earlier
-        .filter(|report| !relaunched && report.identity.id == detected.agent.id)
+        .filter(|report| {
+            !relaunched && is_program_report(report) && report.identity.id == detected.agent.id
+        })
         .cloned();
     if relaunched {
         pane.agent.references.remove(&None);
     }
-    pane.agent.program_fence.reported = fence.launch;
     let reference = previous.as_ref().map_or_else(
         || {
             pane.agent

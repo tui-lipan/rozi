@@ -418,11 +418,13 @@ error colors. Override or turn off those colors with the `blocked` and `error` k
 [`[pane.alert]`](configuration.md#pane-alert). Interacting with the pane clears its attention mark.
 `working`, `done`, and progress updates never notify.
 
-A program status report is not an agent, even when it says `app=codex` or `app=claude-code`: it
-does not change agent detection, keep-awake, or conversation restore. When the report names an
-agent rozi found in that pane, such as `app=claude-code` from Claude Code, it describes that agent
-instead of adding a row of its own: the agent's row shows the report's message as what it is doing,
-and its title names the run. With one row per conversation, as an extension like
-claude-rozi-sessions publishes, the report describes the conversation on screen. Reports from other
-programs in the same pane keep their own row. A report left behind after the agent exits is an
-activity named after the agent.
+A report never makes a pane an agent, even when it says `app=codex` or `app=claude-code`. When it
+names an agent rozi found in that pane, such as `app=claude-code` from Claude Code, it is that
+agent's own word on its state, and rozi takes it over what it reads on the screen: it decides when
+the agent is working, blocked, done, or failed, what `rozi agents wait` sees, and when the machine
+stays awake. The agent's row shows the report's message as what it is doing, and its title names the
+run, instead of a row of its own. With one row per conversation, as an extension like
+claude-rozi-sessions publishes, the report speaks for the conversation on screen. An agent's
+[hook reports](agents.md#report-state-from-agent-hooks) outrank it. Reports from other programs in
+the same pane keep their own row. A report left behind after the agent exits is an activity named
+after the agent.

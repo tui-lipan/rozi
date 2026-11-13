@@ -12,6 +12,9 @@ connected hosts. The [Activity tab](sidebar.md#activity) lists things that are n
 a build that sets `rozi status`, and lists the session's agents too when its **Agents** setting is
 on; see [Activities and agents](control-protocol.md#activities-and-agents).
 
+An agent that reports its own state over [OSC 7501](terminal.md#program-status), as Claude Code
+does, is shown in that state rather than in the one rozi reads on its screen.
+
 rozi ships definitions for common agent CLIs in
 [`src/agent_detection/builtin.toml`](../src/agent_detection/builtin.toml). Add an `[[agents]]` entry
 to `config.toml` when rozi does not recognize a tool, or override a built-in when its screen rules do

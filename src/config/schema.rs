@@ -1482,6 +1482,7 @@ pub struct Config {
     pub logging: LoggingConfig,
     pub capture: CaptureConfig,
     pub recording: RecordingConfig,
+    pub experimental: ExperimentalConfig,
     pub workbar: WorkbarConfig,
     /// `[keys]` action and named-command entries as written. The source of truth for anything that
     /// edits bindings; see [`crate::config::BindingExpr`].
@@ -1576,6 +1577,13 @@ impl Default for LoggingConfig {
             max_bytes: DEFAULT_LOG_MAX_BYTES,
         }
     }
+}
+
+/// `[experimental]`: unstable switches.
+#[derive(Clone, Debug, Default)]
+pub struct ExperimentalConfig {
+    /// Read once at process start ([`crate::pane::engine::install`]); a reload does not switch it.
+    pub terminal_engine: crate::pane::engine::TerminalEngine,
 }
 
 /// `[capture]`: where the Screenshot pane and Screenshot UI actions write, and at what size.
@@ -2635,6 +2643,7 @@ impl Default for Config {
             logging: LoggingConfig::default(),
             capture: CaptureConfig::default(),
             recording: RecordingConfig::default(),
+            experimental: ExperimentalConfig::default(),
             workbar: WorkbarConfig::default(),
             key_sources: HashMap::new(),
             key_overrides: HashMap::new(),

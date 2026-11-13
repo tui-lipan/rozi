@@ -10,6 +10,8 @@ pub use crate::extension_installation::{ExtensionInstallOutcome, ExtensionUpdate
 
 #[derive(Clone)]
 pub enum Msg {
+    #[cfg(feature = "ghostty-engine")]
+    IdleCompressionTick,
     CommandLinkReady(CommandLink<Msg>),
     /// Capture the UI after the invoking picker has finished closing.
     UiScreenshotFrameReady,

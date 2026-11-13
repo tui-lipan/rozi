@@ -733,6 +733,12 @@
 #restart = "on-failure"
 #env = { RUST_LOG = "info" }
 
+[experimental]
+# Unstable switches; they may change or go away in any release.
+# The terminal emulator behind every pane: "alacritty" or "ghostty". Read when rozi or a session
+# starts; a running session keeps its engine until it restarts.
+#terminal_engine = "alacritty"
+
 # Rebind built-in actions, or define new commands. Binding forms:
 #   "b"              bare key - replaces the default and follows the [input] scheme
 #   "scheme:ctrl-t"  a modified key that still expands through the [input] scheme

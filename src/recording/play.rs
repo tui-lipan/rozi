@@ -154,13 +154,12 @@ impl<R: BufRead> Playback<R> {
 mod tests {
     use super::*;
     use crate::recording::{EndReason, Recorder, RecorderOptions, RecordingHeader};
-    use tui_lipan::prelude::*;
 
     /// A recording showing `a` from 0, `b` from 1s, marked `m` at 0.6s, and ending at 10s.
     fn recording() -> Vec<u8> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("play.rozirec");
-        let mut screen = TerminalScreen::new(2, 10, 0);
+        let mut screen = crate::pane::engine::screen(2, 10, 0);
         let palette =
             crate::pane::spans::span_frame(&screen.capture_frame(), screen.palette(), false)
                 .unwrap()

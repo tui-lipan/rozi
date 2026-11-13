@@ -522,6 +522,11 @@ impl SessionServer {
                 if owner.is_none() && matches!(&event, TerminalPtyEvent::Output(_)) {
                     self.note_history_output(id, generation);
                 }
+                #[cfg(feature = "ghostty-engine")]
+                if matches!(&event, TerminalPtyEvent::Output(_)) {
+                    self.idle_compression
+                        .note_output((owner, id), std::time::Instant::now());
+                }
                 let prepared = self.media.take_ready((owner, id, generation));
                 let pane = self.pane_mut(owner, id)?;
                 if pane.generation != generation {

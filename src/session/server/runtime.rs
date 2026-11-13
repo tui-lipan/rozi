@@ -3181,7 +3181,7 @@ mod tests {
             palette: WirePalette::from(TerminalColorPalette::default()),
             pty: None,
             pty_resize_pending: false,
-            terminal: TerminalScreen::new(24, 80, 100),
+            terminal: crate::pane::engine::screen(24, 80, 100),
             content_generation: 0,
             output_sequence: 0,
             output_coalesce_epoch: 0,
@@ -5141,7 +5141,7 @@ mod tests {
         let mut pane = make_pane();
         pane.env.push(("ROZI_AGENT".into(), "codex".into()));
         // Preserve the tall capture so its logo remains among the last non-empty footer lines.
-        pane.terminal = TerminalScreen::new(100, 160, 100);
+        pane.terminal = crate::pane::engine::screen(100, 160, 100);
         pane.terminal.process_bytes(
             case["screen"]
                 .as_str()

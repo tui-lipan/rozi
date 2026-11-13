@@ -834,7 +834,7 @@ mod tests {
 
     /// A frame showing `text`, painted `ms` after the recording's first.
     fn painted(backend: &TestBackend<AppRoot>, ms: u64, text: &str) -> Msg {
-        let mut screen = TerminalScreen::new(4, 20, 0);
+        let mut screen = crate::pane::engine::screen(4, 20, 0);
         screen.process_bytes(text.as_bytes());
         Msg::UiRecordingFrame(PaintedFrame {
             frame: Arc::new(screen.capture_frame()),

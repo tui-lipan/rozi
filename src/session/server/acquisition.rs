@@ -286,7 +286,7 @@ mod tests {
         fs::write(source.path(), [1, 2, 3, 255]).unwrap();
         let name = base64::engine::general_purpose::STANDARD
             .encode(source.path().to_string_lossy().as_bytes());
-        let mut screen = tui_lipan::prelude::TerminalScreen::new(5, 20, 100);
+        let mut screen = crate::pane::engine::screen(5, 20, 100);
         screen.set_image_file_storage_enabled(true);
         screen.set_output_transaction_recording(true);
         screen.set_image_relay_policy(tui_lipan::GraphicsRelayPolicy::NamedAsFiles);
@@ -383,7 +383,7 @@ mod queue_tests {
         fs::write(source.path(), [1, 2, 3, 255]).unwrap();
         let name = base64::engine::general_purpose::STANDARD
             .encode(source.path().to_string_lossy().as_bytes());
-        let mut screen = tui_lipan::prelude::TerminalScreen::new(5, 20, 100);
+        let mut screen = crate::pane::engine::screen(5, 20, 100);
         screen.set_image_file_storage_enabled(true);
         screen.set_output_transaction_recording(true);
         screen.set_image_relay_policy(tui_lipan::GraphicsRelayPolicy::NamedAsFiles);
@@ -450,7 +450,7 @@ mod queue_tests {
         drop(transaction);
         assert!(imported_path.exists());
         let (bytes, media) = store.take_owned_for_generation(7, 2).unwrap();
-        let mut client = tui_lipan::prelude::TerminalScreen::new(5, 20, 100);
+        let mut client = crate::pane::engine::screen(5, 20, 100);
         client.set_image_file_storage_enabled(true);
         let prepared = client
             .prepare_immutable_media_input(Arc::from(bytes), media)

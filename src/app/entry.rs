@@ -459,6 +459,7 @@ pub fn run() -> Result<()> {
     apply_config_path(cli.config_path.clone());
 
     let mut plan = StartupPlan::resolve(&cli, config::load_config());
+    crate::pane::engine::install(plan.config.experimental.terminal_engine);
     if let Some(id) = resume {
         plan.session = super::relaunch::resume_session(&id, &mut plan.messages);
     }

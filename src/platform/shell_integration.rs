@@ -367,7 +367,7 @@ mod tests {
         ] {
             let key = executable_marker_key(script);
             let sequence = format!("\x1b]133;C;{key}=profile-agent\x1b\\");
-            let mut screen = tui_lipan::prelude::TerminalScreen::new(5, 20, 100);
+            let mut screen = crate::pane::engine::screen(5, 20, 100);
             screen.process_bytes(sequence.as_bytes());
 
             assert_eq!(

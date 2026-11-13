@@ -811,7 +811,7 @@ mod tests {
         std::fs::write(source.path(), [seed, 2, 3, 255]).unwrap();
         let name = base64::engine::general_purpose::STANDARD
             .encode(source.path().to_string_lossy().as_bytes());
-        let mut server = tui_lipan::prelude::TerminalScreen::new(5, 20, 100);
+        let mut server = crate::pane::engine::screen(5, 20, 100);
         server.set_image_file_storage_enabled(true);
         server.set_output_transaction_recording(true);
         server.set_image_relay_policy(tui_lipan::GraphicsRelayPolicy::NamedAsFiles);

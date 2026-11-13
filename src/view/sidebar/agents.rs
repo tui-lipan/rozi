@@ -1589,7 +1589,7 @@ mod tests {
         osc.terminal.detected_agent = None;
         osc.agents.clear();
         osc.terminal.finished_unseen = true;
-        let mut screen = TerminalScreen::new(24, 80, 100);
+        let mut screen = crate::pane::engine::screen(24, 80, 100);
         screen.set_program_status_enabled(true);
         screen.process_bytes(b"\x1b]7501;state=idle\x07");
         osc.terminal.program_status = screen.program_status_snapshot();
@@ -1616,7 +1616,7 @@ mod tests {
     fn osc_activity_coexists_with_agent_and_generic_status() {
         let mut pane = pane(1, Some("working"), false);
         let before = pane.agent_runtimes();
-        let mut screen = TerminalScreen::new(24, 80, 100);
+        let mut screen = crate::pane::engine::screen(24, 80, 100);
         screen.set_program_status_enabled(true);
         screen.process_bytes(b"\x1b]7501;state=working:app=claude-code\x07\x1b]7501;state=error:id=build:app=cargo:msg=ZmFpbGVk:progress=20\x07");
         pane.terminal.program_status = screen.program_status_snapshot();
@@ -1669,7 +1669,7 @@ mod tests {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().session_name = Some("dev".into());
         let mut claude = pane(1, None, false);
-        let mut screen = TerminalScreen::new(24, 80, 100);
+        let mut screen = crate::pane::engine::screen(24, 80, 100);
         screen.set_program_status_enabled(true);
         // title "Fix login", msg "Bash"
         screen.process_bytes(
@@ -1702,7 +1702,7 @@ mod tests {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().session_name = Some("dev".into());
         let mut claude = pane(1, None, false);
-        let mut screen = TerminalScreen::new(24, 80, 100);
+        let mut screen = crate::pane::engine::screen(24, 80, 100);
         screen.set_program_status_enabled(true);
         // msg "Bash"
         screen.process_bytes(b"\x1b]7501;state=working:app=claude-code:msg=QmFzaA==\x07");
@@ -1747,7 +1747,7 @@ mod tests {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().session_name = Some("dev".into());
         let mut claude = pane(1, None, false);
-        let mut screen = TerminalScreen::new(24, 80, 100);
+        let mut screen = crate::pane::engine::screen(24, 80, 100);
         screen.set_program_status_enabled(true);
         // msg "Bash"
         screen.process_bytes(b"\x1b]7501;state=working:app=claude-code:msg=QmFzaA==\x07");
@@ -1773,7 +1773,7 @@ mod tests {
         let mut exited = pane(1, None, false);
         exited.terminal.detected_agent = None;
         exited.agents.clear();
-        let mut screen = TerminalScreen::new(24, 80, 100);
+        let mut screen = crate::pane::engine::screen(24, 80, 100);
         screen.set_program_status_enabled(true);
         screen.process_bytes(b"\x1b]7501;state=done:app=claude-code\x07");
         exited.terminal.program_status = screen.program_status_snapshot();

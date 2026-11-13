@@ -97,7 +97,7 @@ exclude = [
 # 0.44.0: the experimental libghostty-vt engine
 # (`terminal-ghostty`, `TerminalScreen::with_engine`, `compress_idle`).
 # 0.44.1: a history read returns a scroll-up the application answered late.
-tui-lipan = { version = "0.44.1", features = [
+tui-lipan = { version = "0.44.2", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

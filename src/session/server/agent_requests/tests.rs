@@ -329,3 +329,56 @@ fn an_await_answers_once_and_never_holds_up_its_request() {
         .unwrap();
     assert_eq!(code(refused), Some(ControlErrorCode::Conflict));
 }
+
+#[test]
+fn answered_requests_hold_admission_capacity_until_their_delivery_turn_ends() {
+    let mut store = AgentRequestStore::default();
+    for pane in 0..MAX_LIVE {
+        let to = protocol::AgentRef::for_test(pane as PaneId, 1, None);
+        let id = format!("request-{pane}");
+        store.requests.push(StoredRequest {
+            info: AgentRequestInfo {
+                id: id.clone(),
+                root: id.clone(),
+                parent: None,
+                from: None,
+                from_native_session: None,
+                to: to.clone(),
+                to_native_session: None,
+                prompt: String::new(),
+                state: AgentRequestState::Answered,
+                reason: None,
+                response: None,
+                created_at_unix_ms: 0,
+                updated_at_unix_ms: 0,
+            },
+            depth: 1,
+        });
+        store.slots.insert(
+            to,
+            DeliverySlot {
+                request: id,
+                tracker: AgentTurnTracker::new(true, Some(protocol::AgentState::Idle), false, None),
+                delivered: Instant::now(),
+                departed: true,
+            },
+        );
+    }
+    let target = protocol::AgentRef::for_test(MAX_LIVE as PaneId, 1, None);
+    store.prune();
+    assert_eq!(
+        code(store.admit(&target, None).unwrap_err()),
+        Some(ControlErrorCode::Conflict)
+    );
+
+    // A retained answer stops consuming live capacity only after its delivery slot is released.
+    let first = store.requests[0].info.to.clone();
+    store.slots.remove(&first);
+    assert!(store.admit(&target, None).is_ok());
+    // Unresolved requests consume the same capacity even without a delivery slot.
+    store.requests[0].info.state = AgentRequestState::Queued;
+    assert_eq!(
+        code(store.admit(&target, None).unwrap_err()),
+        Some(ControlErrorCode::Conflict)
+    );
+}

@@ -467,7 +467,9 @@ the requests to or from you without their text, which `agents request <ID>` show
 
 These commands always go to the session server of the pane they run in; from outside rozi, pass
 `--session`, and the request has no asker. A prompt is limited to 64 KiB, an agent to 16 queued
-requests, a chain to 8 levels and 64 requests, and a session to 1024 unanswered requests. Requests do not survive a session restart.
+requests, a chain to 8 levels and 64 requests, and a session to 1024 live requests. A request
+counts as live until it is resolved and its delivery turn has ended. Requests do not survive a
+session restart.
 
 ### Report state from agent hooks
 

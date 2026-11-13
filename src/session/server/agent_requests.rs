@@ -19,10 +19,10 @@ const MAX_DEPTH: usize = 8;
 const MAX_PER_ROOT: usize = 64;
 const MAX_QUEUED_PER_TARGET: usize = 16;
 const MAX_RESOLVED_BYTES: usize = 16 * MAX_RESPONSE_BYTES;
-/// With `MAX_UNRESOLVED`, keeps the list of every request within one session frame.
+/// With `MAX_LIVE`, keeps the list of every request within one session frame.
 const MAX_RESOLVED: usize = 1024;
-/// Queued and active requests in the whole session.
-const MAX_UNRESOLVED: usize = 1024;
+/// Unresolved requests and answered requests whose delivery turn has not ended.
+const MAX_LIVE: usize = 1024;
 /// How long a target must have been stopped, with nobody typing into its pane, before a request is
 /// typed into it.
 const QUIET_WINDOW: Duration = Duration::from_secs(2);
@@ -163,15 +163,16 @@ impl AgentRequestStore {
                 message,
             ))
         };
-        let unresolved = self
+        let live = self
             .requests
             .iter()
-            .filter(|stored| !stored.info.state.is_resolved())
+            .filter(|stored| {
+                !stored.info.state.is_resolved()
+                    || self.answering(&stored.info.to) == Some(stored.info.id.as_str())
+            })
             .count();
-        if unresolved >= MAX_UNRESOLVED {
-            return refuse(format!(
-                "{unresolved} requests are already waiting in this session"
-            ));
+        if live >= MAX_LIVE {
+            return refuse(format!("{live} requests are still live in this session"));
         }
         let queued = self
             .requests

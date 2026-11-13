@@ -23,32 +23,6 @@ not match the version you run.
 **Focus next blocked pane** jumps to the next pane waiting for input, across workspaces. The command
 palette lists it only while a pane other than the focused one is blocked.
 
-## Integrate Codex hooks
-
-The [Codex plugin](../plugins/codex/README.md) reports activity directly from Codex's hooks,
-including approval waits, questions, response completion, interrupted turns, and the thread ID
-used by [native resume](sessions.md#reopen-an-agent-conversation).
-
-Install it with the Codex CLI:
-
-```sh
-codex plugin marketplace add tui-lipan/rozi
-codex plugin add rozi@rozi
-```
-
-Restart Codex inside a rozi pane and trust the plugin's hooks when Codex asks you to review
-them. The plugin needs Python 3.10 or newer available as `python3`; no rozi extension is needed. It
-also reports from remote panes and from sessions with no window attached, as long as the pane's
-host runs the same rozi version.
-
-The plugin reports only for a Codex client started with `codex --no-daemon`. By default Codex runs
-its threads in a shared background server whose hooks cannot reach rozi. For those clients, use the
-[codex-rozi-sessions](#codex-threads) extension.
-
-The plugin reports one activity for the thread on screen. After `/resume`, the pane picks up the
-resumed thread once you send it a prompt. See the plugin README for the event mapping, checkout
-installation, and verification steps.
-
 ## Add an agent
 
 Start with a process match:
@@ -566,9 +540,9 @@ running. Install it from the **Discover** tab of **Extensions…**, or with
 
 A pane whose client has only one thread gets that thread's row while it is on screen, which is
 also how rozi resumes it when it [restores the session](sessions.md#reopen-an-agent-conversation).
-The extension covers local panes on Linux and macOS whose Codex client uses the background server,
-which is Codex's default; the [Codex hook plugin](#integrate-codex-hooks) does not report for
-them.
+The extension covers Linux and macOS panes, local and remote, whose Codex client uses the
+background server, which is Codex's default. A client started with `codex --no-daemon` keeps its
+threads to itself, so its pane lists no rows and restoring it starts Codex afresh.
 
 Add the thread ID to the pane title once so the extension can tell threads with the same name
 apart: in Codex, run `/title`, select `thread-id`, and save. Without it, `rozi agents read` and

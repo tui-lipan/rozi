@@ -117,7 +117,7 @@ pub(crate) struct GlobalAgentRow {
     /// whose paths belong to a machine rozi has no channel to.
     pub pull_request_source: Option<PullRequestSource>,
     /// The pull request of the branch checked out where the agent works, once its host has said.
-    pub pull_request: Option<crate::git::pull_requests::PullRequestStatus>,
+    pub pull_request: Option<crate::state::AgentPullRequest>,
 }
 
 /// A repository whose pull requests a host can look up, named by that host's path for it.
@@ -134,7 +134,7 @@ fn pull_request_of(
     checkout: Option<&AgentCheckout>,
 ) -> (
     Option<PullRequestSource>,
-    Option<crate::git::pull_requests::PullRequestStatus>,
+    Option<crate::state::AgentPullRequest>,
 ) {
     let Some(checkout) = checkout else {
         return (None, None);
@@ -958,10 +958,29 @@ mod tests {
                 repository: "/src/rozi".into(),
             })
         );
-        assert_eq!(rows[0].pull_request.as_ref().map(|pr| pr.number), Some(7));
+        let found = rows[0].pull_request.clone().unwrap();
+        assert_eq!(
+            crate::view::vocabulary::pull_request_badge(&found),
+            "#7 Failed"
+        );
         let aliases = rows[0].search_aliases(&state);
         assert!(aliases.contains(&"rozi (fix-ssh)".to_string()));
         assert!(aliases.contains(&"#7".to_string()));
+
+        // A failed lookup keeps what the one before it found, which may no longer be true.
+        for statuses in state
+            .agent_pull_requests
+            .hosts
+            .values_mut()
+            .flat_map(|repositories| repositories.values_mut())
+        {
+            statuses.unavailable = true;
+        }
+        let stale = global_agent_rows(&state)[0].pull_request.clone().unwrap();
+        assert_eq!(
+            crate::view::vocabulary::pull_request_badge(&stale),
+            "#7 Failed · Stale"
+        );
     }
 
     /// Two untitled runs of one program in one session and checkout read the same, so each is

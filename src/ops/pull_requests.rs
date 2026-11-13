@@ -55,6 +55,9 @@ pub(crate) fn tick(ctx: &mut Context<AppRoot>) -> Update {
     if !visible(&ctx.state) {
         ctx.state.agent_pull_requests.tick_armed = false;
         want(ctx, HashMap::new());
+        // Unwatched, a checkout can move to another branch, so what the hosts said no longer
+        // describes it. Reopening waits for fresh answers rather than showing these.
+        ctx.state.agent_pull_requests.hosts.clear();
         return Update::none();
     }
     let wanted = wanted(&ctx.state);
@@ -113,4 +116,31 @@ pub(crate) fn apply(
     }
     hosts.insert(target, repositories);
     Update::full()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A checkout can change branch while nothing watches it, so reopening an agent view must not
+    /// show the pull request the host found for the branch it had before.
+    #[test]
+    fn closing_the_agent_views_forgets_what_the_hosts_said() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            let state = backend.state_mut();
+            state.sidebar.shown = [false, false];
+            state.agent_picker = Some(crate::state::AgentPickerState::new(None));
+            state.agent_pull_requests.hosts.insert(
+                None,
+                [("/src/rozi".into(), WorktreeStatuses::default())].into(),
+            );
+            backend.dispatch(Msg::PullRequestTick).unwrap();
+            assert!(!backend.state().agent_pull_requests.hosts.is_empty());
+
+            backend.state_mut().agent_picker = None;
+            backend.dispatch(Msg::PullRequestTick).unwrap();
+            assert!(backend.state().agent_pull_requests.hosts.is_empty());
+        });
+    }
 }

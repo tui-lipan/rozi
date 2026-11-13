@@ -643,15 +643,32 @@ pub(crate) fn work_status_style(theme: &Theme, status: WorkStatus) -> Style {
 }
 
 /// A pull request beside an agent, whose checkout the row already names: `#395 Failed`. The number
-/// and its status read as one fact, as a state and its time do.
-pub(crate) fn pull_request_badge(
-    pull_request: &crate::git::pull_requests::PullRequestStatus,
-) -> String {
-    format!(
+/// and its status read as one fact, as a state and its time do. `Stale` follows when the host's last
+/// lookup failed, as it does in Worktrees.
+pub(crate) fn pull_request_badge(pull_request: &crate::state::AgentPullRequest) -> String {
+    let badge = format!(
         "#{} {}",
         pull_request.number,
         work_status_label(pull_request.status)
-    )
+    );
+    if pull_request.stale {
+        fields([badge.as_str(), "Stale"])
+    } else {
+        badge
+    }
+}
+
+/// An agent's pull request in its status's colour, or muted when stale: a colour would claim the
+/// status is current.
+pub(crate) fn agent_pull_request_style(
+    theme: &Theme,
+    pull_request: &crate::state::AgentPullRequest,
+) -> Style {
+    if pull_request.stale {
+        fg_only(&theme.muted)
+    } else {
+        work_status_style(theme, pull_request.status)
+    }
 }
 
 /// A checkout's pull request — `#114 · Passed`, then `Stale` when the last lookup failed and this

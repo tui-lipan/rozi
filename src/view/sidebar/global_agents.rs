@@ -45,7 +45,7 @@ struct Checkout<'a> {
     repository: Option<&'a str>,
     branch: Option<&'a str>,
     /// The pull request of `branch`, as the first of its agents to know it says.
-    pull_request: Option<&'a crate::git::pull_requests::PullRequestStatus>,
+    pull_request: Option<&'a crate::state::AgentPullRequest>,
     /// The repository's name, disambiguated against the host's other repositories.
     label: String,
     agents: Vec<&'a GlobalAgentRow>,
@@ -357,7 +357,7 @@ impl Layout<'_> {
         &self,
         label: String,
         note: Option<String>,
-        pull_request: Option<&crate::git::pull_requests::PullRequestStatus>,
+        pull_request: Option<&crate::state::AgentPullRequest>,
         kind: Label,
         agents: &[&GlobalAgentRow],
         key: TreeExpansionKey,
@@ -378,12 +378,12 @@ impl Layout<'_> {
             status_counts(agents, theme)
         };
         let mut parts: Vec<(String, Style)> = note.into_iter().map(|note| (note, dim)).collect();
-        // The branch's pull request by its number alone, its status in its colour: the tab is too
-        // narrow for the word, which the Agents view and Worktrees spell out.
+        // The branch's pull request by its number alone, its status in its colour, muted when stale:
+        // the tab is too narrow for the words, which the Agents view and Worktrees spell out.
         parts.extend(pull_request.map(|pull_request| {
             (
                 format!("#{}", pull_request.number),
-                crate::view::vocabulary::work_status_style(theme, pull_request.status),
+                crate::view::vocabulary::agent_pull_request_style(theme, pull_request),
             )
         }));
         if !parts.is_empty() && !counts.is_empty() {

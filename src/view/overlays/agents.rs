@@ -284,7 +284,7 @@ enum Field {
     /// Why the agent is in its state, and for how long.
     State(String),
     /// The pull request of the branch it works on, with the status that colours it.
-    PullRequest(String, crate::git::pull_requests::WorkStatus),
+    PullRequest(String, crate::state::AgentPullRequest),
     /// The agent on screen.
     Current,
     /// Where it runs, for a row outside the session on screen.
@@ -328,7 +328,7 @@ fn fields(entry: &PickerRow, show_session: bool) -> Vec<Field> {
     fields.extend(row.pull_request.as_ref().map(|pull_request| {
         Field::PullRequest(
             crate::view::vocabulary::pull_request_badge(pull_request),
-            pull_request.status,
+            pull_request.clone(),
         )
     }));
     // The header names the session on screen, so the agent on screen says it is current in place
@@ -362,8 +362,8 @@ fn description_spans(
         }
         let style = match field {
             Field::State(_) => Style::new().fg(state_color),
-            Field::PullRequest(_, status) => {
-                crate::view::vocabulary::work_status_style(theme, status)
+            Field::PullRequest(_, ref pull_request) => {
+                crate::view::vocabulary::agent_pull_request_style(theme, pull_request)
             }
             Field::Current => fg_only(&theme.accent),
             Field::Session(_) | Field::Checkout(_) => muted,

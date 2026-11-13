@@ -2860,10 +2860,24 @@ pub struct ControlResponse {
     /// older Rozi versions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<ControlErrorCode>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Absent when the command has no result. A result that is itself `null`, such as an agent
+    /// with no retained response, stays `Some(Value::Null)` so it survives every relay.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_data"
+    )]
     pub data: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// Keep a present `"data": null` as `Some(Value::Null)`; plain `Option` would read it as absent.
+fn deserialize_present_data<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    serde_json::Value::deserialize(deserializer).map(Some)
 }
 
 /// Why an unrecognized command cannot be served by this binary.

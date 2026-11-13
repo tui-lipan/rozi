@@ -198,7 +198,7 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
 /// command added here becomes something any client attached to the session can ask the server to do
 /// on its behalf, so it is a choice, not a default.
 ///
-/// A read-only client may look (`record-list`, `agents wait`) but not start, stop, or mark a
+/// A read-only client may look (`record-list`, `agents wait`, `agents response`) but not start, stop, or mark a
 /// recording, which writes a file on the server's host, nor prompt an agent, which types. The input
 /// lock is not consulted for a recording, because it reads a pane rather than typing into it; a
 /// prompt still meets it where the server writes the input.
@@ -219,6 +219,7 @@ pub fn attached_control_refusal(
             )),
         ControlCommand::RecordList
         | ControlCommand::AgentWait { .. }
+        | ControlCommand::AgentResponse { .. }
         | ControlCommand::ExtensionsStatus => None,
         ControlCommand::ExtensionsDeploy { .. } | ControlCommand::ExtensionsUndeploy { .. }
             if read_only =>
@@ -264,7 +265,7 @@ pub fn attached_control_refusal(
         )),
         _ => Some((
             ControlErrorCode::Unsupported,
-            "only recording commands and agent waits and prompts are run by the session server for an attached client",
+            "only recording commands and agent waits, prompts, and responses are run by the session server for an attached client",
         )),
     }
 }

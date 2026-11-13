@@ -7518,6 +7518,46 @@ fn a_forwarded_prompt_types_with_its_clients_authority_under_an_input_lock() {
     );
 }
 
+/// `agents response` from a pane inside a UI reaches the server as an attached request. A missing
+/// response is a `null` result, which must stay `"data": null` across the wire to the caller.
+#[test]
+fn an_attached_client_reads_an_absent_agent_response_as_null() {
+    let mut server = SessionServer::new_named("dev");
+    let (viewer, _viewer_stream) = attach_read_only_client(&mut server);
+    pane_with_session_rows(&mut server, 7);
+
+    let messages = server.handle_attached_control(
+        viewer,
+        1,
+        crate::control::ControlRequest {
+            command: crate::control::ControlCommand::AgentResponse {
+                target: crate::control::AgentTarget::Pane(7),
+            },
+            source_pane: None,
+            source_session: None,
+            extension: None,
+            caller_context: None,
+            credential: None,
+        },
+    );
+    let Some((Target::Sender, reply @ ServerMessage::AttachedControlResult { .. })) =
+        messages.into_iter().next()
+    else {
+        panic!("expected an attached result");
+    };
+    let mut frame = Vec::new();
+    protocol::write_frame(&mut frame, &reply).unwrap();
+    let ServerMessage::AttachedControlResult { response, .. } =
+        protocol::read_frame::<_, ServerMessage>(&mut &frame[..]).unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(
+        serde_json::to_value(&response).unwrap(),
+        serde_json::json!({"ok": true, "data": null})
+    );
+}
+
 #[test]
 fn program_status_is_authoritative_without_clients_and_coalesces_progress() {
     let mut server = SessionServer::new_named("osc-test");

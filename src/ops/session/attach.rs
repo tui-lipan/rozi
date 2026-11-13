@@ -1176,6 +1176,7 @@ pub(crate) fn disconnect_host(
     target: &crate::session::remote::RemoteTarget,
 ) -> Update {
     super::remotes::forget_reconnect_host(ctx, target);
+    crate::ops::ports::close_target(&mut ctx.state, target);
     ctx.state.remote.agents.remove(target);
     ctx.state.remote.projects.remove(target);
     ctx.state

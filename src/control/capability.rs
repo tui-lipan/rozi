@@ -54,6 +54,8 @@ pub enum ControlCapability {
     /// A pick action's prompt object honors `from_query`, starting from the picker's filter text. An
     /// older binary ignores the field and starts from `value`.
     PickPromptFromQuery,
+    /// A UI manages client-owned SSH port forwards (`ports-list`, `ports-forward`, `ports-close`).
+    PortForwarding,
     /// A UI answers `prompt`, a modal text prompt with no picker behind it.
     Prompt,
     /// `publish` accepts `kind` and `name`: a publisher declares whether its rows are agents, and
@@ -110,7 +112,7 @@ pub enum ControlCapability {
 
 impl ControlCapability {
     /// Every control capability this binary has, in name order.
-    pub const ALL: [ControlCapability; 39] = [
+    pub const ALL: [ControlCapability; 40] = [
         ControlCapability::AgentPromptResults,
         ControlCapability::AgentResponses,
         ControlCapability::AgentWaits,
@@ -131,6 +133,7 @@ impl ControlCapability {
         ControlCapability::PaneControl,
         ControlCapability::PaneReveal,
         ControlCapability::PickPromptFromQuery,
+        ControlCapability::PortForwarding,
         ControlCapability::Prompt,
         ControlCapability::PublishKind,
         ControlCapability::PublishedActivity,
@@ -175,6 +178,7 @@ impl ControlCapability {
             ControlCapability::PaneControl => "pane-control",
             ControlCapability::PaneReveal => "pane-reveal",
             ControlCapability::PickPromptFromQuery => "pick-prompt-from-query",
+            ControlCapability::PortForwarding => "port-forwarding",
             ControlCapability::Prompt => "prompt",
             ControlCapability::PublishKind => "publish-kind",
             ControlCapability::PublishedActivity => "published-activity",

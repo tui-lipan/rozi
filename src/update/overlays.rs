@@ -97,6 +97,7 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
         | Action::OpenWorktrees
         | Action::ApplyProfile
         | Action::OpenSessionPicker
+        | Action::OpenPorts
         | Action::OpenCollaborators => {}
         // The scratchpad manages its own focus (the scratch terminal on show, the previously
         // focused pane on hide); don't override it.

@@ -129,7 +129,7 @@ pub(crate) fn session_at(session: &str, host: Option<&str>) -> String {
 }
 
 /// On screen, or reached.
-const MARKER_LIVE: &str = "●";
+pub(crate) const MARKER_LIVE: &str = "●";
 /// Connected, but not the attachment on screen. Distinct from the hollow ring of a session this
 /// client holds no connection to, which would read as "this session is offline too".
 const MARKER_PARKED: &str = "◐";
@@ -147,7 +147,7 @@ const MARKER_QUIET: &str = "·";
 /// A host the last attempt could not reach. Distinct from the plain ring a merely *disconnected*
 /// host wears: those are two different pieces of news, and the error colour that used to be the
 /// only thing separating them is lost the moment the row is highlighted.
-const MARKER_FAILED: &str = "!";
+pub(crate) const MARKER_FAILED: &str = "!";
 
 /// How a session stands with this client, strongest first.
 ///

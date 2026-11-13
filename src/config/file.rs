@@ -508,6 +508,15 @@ struct RemoteFileConfig {
     batch_mode: Option<bool>,
     #[serde(default)]
     hosts: HashMap<String, RemoteHostFileConfig>,
+    #[serde(default)]
+    ports: RemotePortsFileConfig,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct RemotePortsFileConfig {
+    auto_forward_links: Option<bool>,
+    prefer_same_port: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1157,6 +1166,12 @@ fn load_config_from_text_with_extensions(
                 binary_path: non_empty(host.binary_path),
             },
         );
+    }
+    if let Some(enabled) = parsed.remote.ports.auto_forward_links {
+        config.remote.ports.auto_forward_links = enabled;
+    }
+    if let Some(enabled) = parsed.remote.ports.prefer_same_port {
+        config.remote.ports.prefer_same_port = enabled;
     }
     if let Some(multiplier) = parsed.layout.split_width_multiplier {
         if multiplier.is_finite() && multiplier > 0.0 {
@@ -4662,5 +4677,20 @@ mod cursor_tests {
         );
         assert_eq!(loaded.warnings.len(), 1);
         assert!(loaded.warnings[0].contains("cursor.blink"));
+    }
+
+    #[test]
+    fn remote_ports_settings_default_true_and_accept_false_without_warnings() {
+        let default_loaded = load_config_from_text("", Path::new("config.toml"));
+        assert!(default_loaded.config.remote.ports.auto_forward_links);
+        assert!(default_loaded.config.remote.ports.prefer_same_port);
+
+        let loaded = load_config_from_text(
+            "[remote.ports]\nauto_forward_links = false\nprefer_same_port = false\n",
+            Path::new("config.toml"),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert!(!loaded.config.remote.ports.auto_forward_links);
+        assert!(!loaded.config.remote.ports.prefer_same_port);
     }
 }

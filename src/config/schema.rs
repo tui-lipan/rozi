@@ -613,6 +613,24 @@ pub struct RemoteHostConfig {
     pub binary_path: Option<String>,
 }
 
+/// `[remote.ports]` configuration for client-owned SSH port forwarding.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemotePortsConfig {
+    /// Automatically forward `http`/`https` loopback URLs opened from remote panes onto the client.
+    pub auto_forward_links: bool,
+    /// When no local port is requested, try binding the remote port number on `127.0.0.1` first.
+    pub prefer_same_port: bool,
+}
+
+impl Default for RemotePortsConfig {
+    fn default() -> Self {
+        Self {
+            auto_forward_links: true,
+            prefer_same_port: true,
+        }
+    }
+}
+
 /// `[remote]` configuration for SSH session attach.
 #[derive(Clone, Debug)]
 pub struct RemoteConfig {
@@ -630,6 +648,7 @@ pub struct RemoteConfig {
     /// commands use the terminal. Without either, SSH always runs in batch mode, and so does
     /// every connection nobody asked for (see [`RemoteConfig::unattended`]).
     pub batch_mode: bool,
+    pub ports: RemotePortsConfig,
 }
 
 impl RemoteConfig {
@@ -655,6 +674,7 @@ impl Default for RemoteConfig {
             server_alive_count_max: 3,
             install: RemoteInstallPolicy::default(),
             batch_mode: false,
+            ports: RemotePortsConfig::default(),
         }
     }
 }

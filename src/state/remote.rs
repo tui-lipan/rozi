@@ -118,6 +118,7 @@ impl super::State {
                     .values()
                     .filter_map(|attachment| attachment.remote_target.as_ref()),
             )
+            .chain(self.ports.iter().map(|(key, _)| &key.target))
             .chain(agent_tab_target)
             .any(|other| other != target && other.display_label() == label);
         if collision {

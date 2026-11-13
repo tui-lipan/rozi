@@ -35,6 +35,7 @@ mod help;
 mod layout;
 mod palette;
 mod pick;
+mod ports;
 mod profiles;
 mod prompts;
 mod relaunch;
@@ -56,6 +57,7 @@ pub(crate) use extensions::{
 pub(crate) use help::{help_overlay, keybinding_editor_dialog_overlay, neighbor_keybinding_id};
 pub(crate) use layout::layout_picker_overlay;
 pub(crate) use pick::{pick_overlay, pick_prompt_overlay};
+pub(crate) use ports::ports_overlay;
 pub(crate) use profiles::profile_picker_overlay;
 pub(crate) use prompts::{
     askpass_overlay, extension_install_prompt_overlay, recording_mark_overlay, rename_overlay,

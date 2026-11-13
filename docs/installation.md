@@ -138,6 +138,10 @@ cargo build --release
 
 The binary is `target/release/rozi`, or `target\release\rozi.exe` on Windows.
 
+Release builds also include the experimental Ghostty terminal engine, selected with
+[`[experimental] terminal_engine`](configuration.md#experimental). To include it in your own build,
+install Zig 0.17 and add `--features ghostty-engine`.
+
 The manifest resolves `tui-lipan` from crates.io, so you do not need a separate `tui-lipan`
 checkout.
 

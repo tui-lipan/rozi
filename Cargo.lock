@@ -3986,6 +3986,7 @@ dependencies = [
  "thiserror 2.0.21",
  "toml",
  "ttf-parser",
+ "tui-lipan-ghostty-vt-sys",
  "tui-lipan-macro",
  "typed-path 0.12.4",
  "undo",
@@ -3993,6 +3994,23 @@ dependencies = [
  "unicode-width",
  "web-time",
  "wl-clipboard-rs",
+]
+
+[[package]]
+name = "tui-lipan-ghostty-vt-src"
+version = "0.2.0+libghostty-vt.1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b004e9d5e056aae8594f8c654e0b2567103d1aed19b100e0702bdc211f86af4"
+
+[[package]]
+name = "tui-lipan-ghostty-vt-sys"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf819ba838a2e40ad366e385e217464b1c9200bd9e7d7b76aa619be573f060bb"
+dependencies = [
+ "pkg-config",
+ "sha2 0.11.1",
+ "tui-lipan-ghostty-vt-src",
 ]
 
 [[package]]

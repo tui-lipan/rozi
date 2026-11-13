@@ -40,6 +40,8 @@ mod graphics;
 mod graphics_pacer;
 mod handoff;
 mod headless;
+#[cfg(feature = "ghostty-engine")]
+mod idle_compression;
 mod invocations;
 mod media;
 mod notifications;
@@ -251,6 +253,8 @@ pub struct SessionServer {
     media: media::MediaPipeline,
     last_snapshot: Instant,
     last_runtime_poll: Instant,
+    #[cfg(feature = "ghostty-engine")]
+    idle_compression: idle_compression::IdleCompression,
     last_attached_count: u32,
     session_name: String,
     /// The endpoint this server currently listens on. Set by [`run_named_session`]; a rename
@@ -1838,6 +1842,8 @@ impl SessionServer {
             media: media::MediaPipeline::default(),
             last_snapshot: Instant::now(),
             last_runtime_poll: Instant::now(),
+            #[cfg(feature = "ghostty-engine")]
+            idle_compression: Default::default(),
             last_attached_count: 0,
             session_name,
             endpoint: None,
@@ -1970,6 +1976,8 @@ impl SessionServer {
         self.pump_agent_history();
         self.pump_agent_requests();
         self.pump_recordings();
+        #[cfg(feature = "ghostty-engine")]
+        self.pump_idle_compression();
         self.flush_pending_foreground();
         self.adopt_pending_listener(listener);
         if let Err(err) = self.drain_snapshot_results() {
@@ -1986,6 +1994,26 @@ impl SessionServer {
         self.update_graphics_pacing();
         self.update_ephemeral_lifetime(no_client_since);
         Ok(activity)
+    }
+
+    /// Step quiet panes in turn under one shared budget, at most once per poll interval.
+    #[cfg(feature = "ghostty-engine")]
+    fn pump_idle_compression(&mut self) {
+        let now = Instant::now();
+        let mut due = self.idle_compression.due(now);
+        let mut cursor = self.idle_compression.cursor;
+        crate::pane::idle_compression::poll(&mut due, &mut cursor, |&mut key| {
+            let (owner, id) = key;
+            let Some(pane) = self.pane_mut(owner, id) else {
+                self.idle_compression.finished(key);
+                return;
+            };
+            // Compression changes how history is stored, never what it holds.
+            if !pane.screen_without_change().compress_idle() {
+                self.idle_compression.finished(key);
+            }
+        });
+        self.idle_compression.cursor = cursor;
     }
 
     fn shutdown_listener(&mut self) -> io::Result<()> {
@@ -2502,6 +2530,7 @@ pub fn run_named_session_mode_with_nonce(
     let (listener, endpoint) = bind_session_socket(name)?;
     let loaded = crate::config::load_config();
     crate::config::log_config_warnings(&loaded.warnings);
+    crate::pane::engine::install(loaded.config.experimental.terminal_engine);
     let (shell, command_shell) = crate::platform::command::resolve_launch_argv(
         loaded.config.shell.as_deref(),
         loaded.config.command_shell.as_deref(),

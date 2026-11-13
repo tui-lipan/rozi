@@ -80,6 +80,33 @@ jobs:
         if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest'
         run: cargo build --locked --release
 
+  # The experimental Ghostty terminal engine is off by default but in every release and nightly
+  # build. Linux is enough to keep it compiling and linted; the lib suite runs on the engine itself
+  # (`ROZI_TEST_TERMINAL_ENGINE`), since every session server and client test builds its screens
+  # through the same switch.
+  ghostty-engine:
+    name: ghostty engine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@f50ab1ce44b2f120b2531407517fcbfb1d610fa5 # 1.96
+        with:
+          toolchain: "1.96"
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Restore or prepare libghostty-vt
+        uses: ./.github/actions/libghostty-vt
+      - name: Lint
+        run: cargo clippy --locked --all-targets --features ghostty-engine -- -D warnings
+      - name: Test the lib suite on the Ghostty engine
+        if: ${{ !cancelled() }}
+        env:
+          ROZI_TEST_TERMINAL_ENGINE: ghostty
+        run: cargo test --locked --features ghostty-engine --lib
+      - name: Check THIRD_PARTY_NOTICES.md is current
+        if: ${{ !cancelled() }}
+        run: python3 scripts/third_party_notices.py --check
+
   remote-ssh:
     name: localhost SSH transport
     runs-on: ubuntu-latest
@@ -135,14 +162,14 @@ jobs:
       - name: Lint
         run: cross clippy --locked --all-targets --target x86_64-unknown-netbsd -- -D warnings
 
-  # Keep a direct Node check for the OpenCode plugins. The Cargo contracts suite also runs these
+  # Keep a direct Node check for the OpenCode plugin. The Cargo contracts suite also runs these
   # tests when Node is available, covering the V2 publish bridge on the primary CI platforms.
   agent-plugins:
     name: agent plugins
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Test the OpenCode plugins
+      - name: Test the OpenCode plugin
         run: node --test plugins/opencode/*.test.mjs
 
   # crates.io is the last release step and the only one that cannot be retried from the same tag,

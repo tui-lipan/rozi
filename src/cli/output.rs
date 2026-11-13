@@ -1996,7 +1996,7 @@ mod tests {
             "pane output must not carry a resolved colour: {report:?}"
         );
 
-        let mut screen = TerminalScreen::new(4, 40, 0);
+        let mut screen = crate::pane::engine::screen(4, 40, 0);
         screen.process_bytes(report.replace('\n', "\r\n").as_bytes());
 
         let render = |screen: &mut TerminalScreen, theme: &Theme| {

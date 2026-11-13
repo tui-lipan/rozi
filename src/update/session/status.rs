@@ -684,7 +684,7 @@ mod tests {
                     }
                 }
                 let epoch = backend.state().runtime_epoch;
-                let mut screen = tui_lipan::prelude::TerminalScreen::new(24, 80, 100);
+                let mut screen = crate::pane::engine::screen(24, 80, 100);
                 screen.set_program_status_enabled(true);
                 screen.process_bytes(b"\x1b]7501;state=blocked\x07");
                 let update = |initial, snapshot| Msg::SessionProgramStatusChanged {
@@ -815,7 +815,7 @@ mod tests {
 
     #[test]
     fn program_status_attention_is_per_client_and_does_not_touch_agents() {
-        let mut screen = TerminalScreen::new(24, 80, 100);
+        let mut screen = crate::pane::engine::screen(24, 80, 100);
         screen.set_program_status_enabled(true);
         screen.process_bytes(b"\x1b]7501;state=blocked:app=codex\x07");
         let blocked = screen.program_status_snapshot();
@@ -851,7 +851,7 @@ mod tests {
             agent: AgentIdentity::new("claude", "Claude Code").into(),
             state: DetectedAgentState::Working,
         });
-        let mut screen = TerminalScreen::new(24, 80, 100);
+        let mut screen = crate::pane::engine::screen(24, 80, 100);
         screen.set_program_status_enabled(true);
         screen.process_bytes(b"\x1b]7501;state=blocked:app=claude-code\x07");
         let blocked = screen.program_status_snapshot();

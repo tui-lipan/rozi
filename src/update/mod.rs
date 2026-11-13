@@ -2,6 +2,8 @@ mod attach;
 pub(crate) mod drag_and_drop;
 pub(crate) mod host_title;
 mod hosts;
+#[cfg(feature = "ghostty-engine")]
+mod idle_compression;
 mod local_agents;
 pub(crate) use attach::spawn_state_panes_on_session;
 pub(crate) mod keybindings;
@@ -58,6 +60,10 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
 }
 
 fn post_update_kind(msg: &Msg) -> PostUpdateKind {
+    #[cfg(feature = "ghostty-engine")]
+    if matches!(msg, Msg::IdleCompressionTick) {
+        return PostUpdateKind::Passive;
+    }
     if matches!(msg, Msg::SessionOutput { .. }) {
         PostUpdateKind::SessionOutputOnly
     } else if matches!(
@@ -76,6 +82,8 @@ fn post_update_kind(msg: &Msg) -> PostUpdateKind {
 
 fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) -> Update {
     match msg {
+        #[cfg(feature = "ghostty-engine")]
+        Msg::IdleCompressionTick => idle_compression::tick(ctx),
         Msg::TerminalPresented(reports) => session::presentation::presented(ctx, reports),
         Msg::HostMetadata {
             target,

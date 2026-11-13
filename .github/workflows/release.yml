@@ -311,6 +311,24 @@ jobs:
             echo "ROZI_EARLIER_RELEASE_NOTES=release-notes/earlier-release-notes" >> "$GITHUB_ENV"
           fi
 
+      # The experimental Ghostty terminal engine (`ghostty-engine`) builds libghostty-vt with Zig.
+      # The Linux containers install their own pinned Zig (scripts/install-zig.sh) and build for
+      # the same glibc ceiling as the rest of the payload. Like the rest of this build, the library
+      # is not cached.
+      - name: Install Zig 0.17.1
+        if: ${{ !matrix.glibc }}
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.17.1
+          use-cache: false
+
+      # Rust and Zig must agree on the oldest macOS, or the link warns about objects built for a
+      # newer one. 13.0 is libghostty-vt's own floor.
+      - name: Pin the macOS deployment target
+        if: contains(matrix.target, 'apple-darwin')
+        shell: bash
+        run: echo "MACOSX_DEPLOYMENT_TARGET=13.0" >> "$GITHUB_ENV"
+
       - name: Build payload
         shell: bash
         run: |
@@ -321,6 +339,7 @@ jobs:
               --env ROZI_RELEASE_NOTES \
               --env ROZI_EARLIER_RELEASE_NOTES \
               --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS \
+              --env GHOSTTY_VT_GLIBC="${{ matrix.glibc }}" \
               --env BUILD_UID="$(id -u)" \
               --env BUILD_GID="$(id -g)" \
               --volume "$GITHUB_WORKSPACE:/work" \
@@ -331,11 +350,14 @@ jobs:
                 curl --proto "=https" --tlsv1.2 -fsSL https://sh.rustup.rs \
                   | sh -s -- -y --profile minimal --default-toolchain 1.96.0 --no-modify-path
                 export PATH=/root/.cargo/bin:$PATH
-                cargo build --locked --release --target "${{ matrix.target }}"
+                ZIG="$(scripts/install-zig.sh)"
+                export ZIG
+                cargo build --locked --release --target "${{ matrix.target }}" \
+                  --features ghostty-engine
                 chown -R "$BUILD_UID:$BUILD_GID" target
               '
           else
-            cargo build --locked --release --target "${{ matrix.target }}"
+            cargo build --locked --release --target "${{ matrix.target }}" --features ghostty-engine
           fi
 
       - name: Build Windows launcher
@@ -351,6 +373,7 @@ jobs:
           binary="target/${{ matrix.target }}/release/rozi"
           if [[ "${{ matrix.archive }}" == "zip" ]]; then binary="$binary.exe"; fi
           "$binary" --version | grep -F "${{ steps.version.outputs.version }}"
+          "$binary" --version | grep -Fx "terminal_engines=alacritty,ghostty"
           "$binary" --help >/dev/null
           # The binary prints what it embeds, so the check reads the real constant rather than
           # searching the executable with whatever grep this runner has.
@@ -390,6 +413,18 @@ jobs:
             exit 1
           }
 
+      - name: Enforce macOS deployment target
+        if: contains(matrix.target, 'apple-darwin')
+        shell: bash
+        run: |
+          set -euo pipefail
+          minos="$(otool -l "target/${{ matrix.target }}/release/rozi" \
+            | awk '/LC_BUILD_VERSION/ { found = 1 } found && $1 == "minos" { print $2; exit }')"
+          test "$minos" = "13.0" || {
+            echo "payload requires macOS ${minos:-unknown}; the floor is 13.0" >&2
+            exit 1
+          }
+
       - name: Package canonical archive
         id: package
         shell: bash
@@ -405,7 +440,7 @@ jobs:
           else
             cp "target/${{ matrix.target }}/release/rozi" "dist/${stem}/rozi"
           fi
-          cp README.md LICENSE "dist/${stem}/"
+          cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/${stem}/"
           cp -R examples "dist/${stem}/examples"
           if [[ "${{ matrix.archive }}" == "zip" ]]; then
             (cd dist && 7z a -tzip "${stem}.zip" "$stem" >/dev/null)
@@ -430,6 +465,7 @@ jobs:
             tar -xzf "dist/${stem}.tar.gz" -C dist/verify
             "dist/verify/${stem}/rozi" --version | grep -F "$version"
           fi
+          test -f "dist/verify/${stem}/THIRD_PARTY_NOTICES.md"
 
       # This step verifies that the launcher forwards a payload's exit code, and does so by running
       # a payload that exits 37. `shell: pwsh` then propagates the trailing $LASTEXITCODE as the

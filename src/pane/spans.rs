@@ -527,7 +527,7 @@ mod tests {
 
     #[test]
     fn an_opaque_image_over_secret_text_exports_only_visible_pixels() {
-        let mut screen = TerminalScreen::new(1, 6, 0);
+        let mut screen = crate::pane::engine::screen(1, 6, 0);
         screen.set_cell_size(TerminalCellSize {
             width: 8,
             height: 16,
@@ -574,7 +574,7 @@ mod tests {
 
     #[test]
     fn a_styled_row_keeps_what_differs_from_the_default_and_drops_trailing_blanks() {
-        let mut screen = TerminalScreen::new(3, 20, 100);
+        let mut screen = crate::pane::engine::screen(3, 20, 100);
         screen.process_bytes(
             b"$ \x1b[1;31merror\x1b[0m: \x1b[4:3;58;5;196;38;2;1;2;3mbad\x1b[0m  \r\n\r\n\x1b[44m  \x1b[0m",
         );
@@ -626,7 +626,7 @@ mod tests {
 
     #[test]
     fn colors_that_name_the_same_slot_share_a_run() {
-        let mut screen = TerminalScreen::new(1, 10, 100);
+        let mut screen = crate::pane::engine::screen(1, 10, 100);
         screen.process_bytes(b"\x1b[31mab\x1b[38;5;1mcd\x1b[0m");
         assert_eq!(
             spans(&mut screen).rows[0],
@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn a_wide_glyph_covers_two_columns_of_its_run() {
-        let mut screen = TerminalScreen::new(1, 10, 100);
+        let mut screen = crate::pane::engine::screen(1, 10, 100);
         screen.process_bytes("a中b\x1b[7m日\x1b[0m.".as_bytes());
         let row = &spans(&mut screen).rows[0];
 
@@ -667,7 +667,7 @@ mod tests {
 
     #[test]
     fn the_cursor_reports_what_the_program_asked_for() {
-        let mut screen = TerminalScreen::new(2, 10, 100);
+        let mut screen = crate::pane::engine::screen(2, 10, 100);
         screen.process_bytes(b"ab");
         let cursor = spans(&mut screen).cursor.expect("a cursor");
         assert_eq!(
@@ -695,7 +695,7 @@ mod tests {
 
     #[test]
     fn the_palette_is_what_a_png_draws_names_and_defaults_in() {
-        let mut screen = TerminalScreen::new(1, 4, 100);
+        let mut screen = crate::pane::engine::screen(1, 4, 100);
         let mut ansi = [Color::Rgb(0, 0, 0); 16];
         ansi[1] = Color::Rgb(200, 10, 20);
         ansi[15] = Color::Rgb(250, 250, 250);
@@ -853,7 +853,7 @@ mod tests {
 
     #[test]
     fn image_pixels_belong_to_spans_only() {
-        let mut screen = TerminalScreen::new(1, 4, 100);
+        let mut screen = crate::pane::engine::screen(1, 4, 100);
         for render in [CaptureRender::Text, CaptureRender::Ansi, CaptureRender::Png] {
             let refused = super::super::capture_screen(&mut screen, None, render, None, true)
                 .expect_err("image_pixels outside spans");

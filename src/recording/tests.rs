@@ -24,7 +24,7 @@ fn header(width: u16, height: u16) -> RecordingHeader {
         max_fps: 30,
         keyframe_interval_ms: format::KEYFRAME_INTERVAL_MS,
         spans_version: SPAN_FRAME_VERSION,
-        palette: span(&mut TerminalScreen::new(1, 1, 0)).palette,
+        palette: span(&mut crate::pane::engine::screen(1, 1, 0)).palette,
         compression: None,
     }
 }
@@ -102,7 +102,7 @@ fn scratch() -> (tempfile::TempDir, PathBuf) {
 fn keyframes_and_deltas_reproduce_every_frame_exactly() {
     let (_dir, path) = scratch();
     let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
-    let mut screen = TerminalScreen::new(4, 20, 100);
+    let mut screen = crate::pane::engine::screen(4, 20, 100);
     let mut expected = Vec::new();
     let steps: [(u64, &[u8]); 6] = [
         (0, b"$ "),
@@ -162,7 +162,7 @@ fn keyframes_and_deltas_reproduce_every_frame_exactly() {
 fn a_delta_carries_only_the_rows_that_changed() {
     let (_dir, path) = scratch();
     let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
-    let mut screen = TerminalScreen::new(4, 20, 100);
+    let mut screen = crate::pane::engine::screen(4, 20, 100);
     screen.process_bytes(b"one\r\ntwo\r\nthree");
     push(&recorder, 0, &screen);
     screen.process_bytes(b"\x1b[2;1HTWO");
@@ -187,7 +187,7 @@ fn a_delta_carries_only_the_rows_that_changed() {
 fn an_unchanged_screen_writes_nothing() {
     let (_dir, path) = scratch();
     let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
-    let mut screen = TerminalScreen::new(4, 20, 100);
+    let mut screen = crate::pane::engine::screen(4, 20, 100);
     screen.process_bytes(b"still");
     for t in 0..10 {
         push(&recorder, t * 100, &screen);
@@ -201,7 +201,7 @@ fn an_unchanged_screen_writes_nothing() {
 fn a_truncated_recording_reads_up_to_its_last_complete_event() {
     let (_dir, path) = scratch();
     let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
-    let mut screen = TerminalScreen::new(4, 20, 100);
+    let mut screen = crate::pane::engine::screen(4, 20, 100);
     for t in 0..5 {
         screen.process_bytes(format!("line {t}\r\n").as_bytes());
         push(&recorder, t * 10, &screen);
@@ -230,7 +230,7 @@ fn a_truncated_recording_reads_up_to_its_last_complete_event() {
 fn an_image_is_stored_once_however_many_frames_show_it() {
     let (_dir, path) = scratch();
     let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
-    let mut screen = TerminalScreen::new(4, 20, 100);
+    let mut screen = crate::pane::engine::screen(4, 20, 100);
     screen.set_cell_size(TerminalCellSize {
         width: 10,
         height: 20,
@@ -307,7 +307,7 @@ fn image_planes_round_trip(z_index: i32, alpha: u8) {
         ["A界", "B界"]
     };
     for (t, text) in [(0, texts[0]), (10, texts[1])] {
-        let mut screen = TerminalScreen::new(4, 20, 100);
+        let mut screen = crate::pane::engine::screen(4, 20, 100);
         screen.set_cell_size(TerminalCellSize {
             width: 8,
             height: 16,
@@ -466,7 +466,7 @@ fn image_underlay_edge_round_trip(
     let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
     let mut expected = Vec::new();
     for t in [0, 10] {
-        let mut screen = TerminalScreen::new(4, 20, 100);
+        let mut screen = crate::pane::engine::screen(4, 20, 100);
         screen.set_cell_size(TerminalCellSize {
             width: 8,
             height: 16,
@@ -521,7 +521,7 @@ fn stacked_images_round_trip(
     let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
     let mut expected = Vec::new();
     for t in [0, 10] {
-        let mut screen = TerminalScreen::new(4, 20, 100);
+        let mut screen = crate::pane::engine::screen(4, 20, 100);
         screen.set_cell_size(TerminalCellSize {
             width: 8,
             height: 16,
@@ -622,7 +622,7 @@ fn serialized_cell_text(value: &serde_json::Value) -> String {
 fn a_stalled_writer_keeps_the_newest_state_and_counts_what_it_dropped() {
     let (_dir, path) = scratch();
     let mut recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();
-    let mut screen = TerminalScreen::new(4, 20, 100);
+    let mut screen = crate::pane::engine::screen(4, 20, 100);
     let total = writer::QUEUE_FRAMES as u64 + 12;
     for t in 0..total {
         screen.process_bytes(format!("\x1b[1;1Hframe {t}").as_bytes());
@@ -653,7 +653,7 @@ fn a_recording_stops_at_its_byte_cap_and_stays_readable() {
     let (_dir, path) = scratch();
     let max_bytes = writer::MIN_MAX_BYTES;
     let recorder = Recorder::start(options(&path, max_bytes)).unwrap();
-    let mut screen = TerminalScreen::new(40, 120, 100);
+    let mut screen = crate::pane::engine::screen(40, 120, 100);
     for t in 0..2_000u64 {
         screen.process_bytes(format!("\x1b[{};1H{}", t % 40 + 1, "x".repeat(100)).as_bytes());
         screen.process_bytes(format!("\x1b[1;1H{t}").as_bytes());
@@ -685,7 +685,7 @@ fn every_end_reason_is_written_as_the_last_event() {
     ] {
         let (_dir, path) = scratch();
         let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
-        let mut screen = TerminalScreen::new(4, 20, 100);
+        let mut screen = crate::pane::engine::screen(4, 20, 100);
         screen.process_bytes(b"x");
         push(&recorder, 0, &screen);
         recorder.meta(5, RecordingMeta::Exited { status: 3 });
@@ -792,7 +792,7 @@ fn a_reader_skips_what_it_does_not_know() {
     value["from_the_future"] = serde_json::json!(true);
     file = serde_json::to_vec(&value).unwrap();
     file.extend_from_slice(b"\n{\"kind\":\"hologram\",\"t\":1}\n");
-    let frame = span(&mut TerminalScreen::new(1, 2, 0));
+    let frame = span(&mut crate::pane::engine::screen(1, 2, 0));
     let mut keyframe = serde_json::to_value(RecordingEvent::Keyframe { t: 2, frame }).unwrap();
     keyframe["new_field"] = serde_json::json!(1);
     file.extend_from_slice(&serde_json::to_vec(&keyframe).unwrap());
@@ -813,7 +813,7 @@ fn a_reader_skips_what_it_does_not_know() {
 fn export_writes_frames_with_their_real_durations_and_a_cast() {
     let (dir, path) = scratch();
     let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
-    let mut screen = TerminalScreen::new(4, 20, 100);
+    let mut screen = crate::pane::engine::screen(4, 20, 100);
     for (t, text) in [(0, "a"), (250, "b"), (1_000, "c")] {
         screen.process_bytes(text.as_bytes());
         push(&recorder, t, &screen);
@@ -861,7 +861,7 @@ fn export_writes_frames_with_their_real_durations_and_a_cast() {
 
 #[test]
 fn a_recorded_frame_draws_back_into_the_same_cells() {
-    let mut screen = TerminalScreen::new(3, 12, 100);
+    let mut screen = crate::pane::engine::screen(3, 12, 100);
     screen.process_bytes(
         "\x1b[1;31mred\x1b[0m 中 \x1b[4:3mx\x1b[0m\r\n\x1b[44m   \x1b[0m".as_bytes(),
     );
@@ -876,7 +876,7 @@ fn a_recorded_frame_draws_back_into_the_same_cells() {
 fn a_small_change_inside_a_row_writes_only_the_columns_that_changed() {
     let (_dir, path) = scratch();
     let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
-    let mut screen = TerminalScreen::new(4, 60, 100);
+    let mut screen = crate::pane::engine::screen(4, 60, 100);
     screen.process_bytes(
         "CPU \x1b[32m######\x1b[0m   5% 中 load \x1b[1m0.25\x1b[0m trailing text".as_bytes(),
     );
@@ -910,7 +910,7 @@ fn random_screens_replay_exactly() {
     let mut encoder = encode::FrameEncoder::default();
     let mut file = serde_json::to_vec(&header(40, 12)).unwrap();
     file.push(b'\n');
-    let mut screen = TerminalScreen::new(12, 40, 100);
+    let mut screen = crate::pane::engine::screen(12, 40, 100);
     let mut expected: Vec<(u64, SpanFrame)> = Vec::new();
     let mut seed: u64 = 0x5eed;
     let mut next = |bound: u64| {
@@ -990,7 +990,7 @@ fn times(path: &Path) -> Vec<(u64, &'static str)> {
 fn a_frame_that_arrives_behind_a_mark_never_moves_ahead_of_it() {
     let (_dir, path) = scratch();
     let mut recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();
-    let mut screen = TerminalScreen::new(4, 20, 100);
+    let mut screen = crate::pane::engine::screen(4, 20, 100);
     for n in 0..writer::QUEUE_FRAMES as u64 {
         screen.process_bytes(format!("\x1b[1;1Hframe {n}").as_bytes());
         assert!(push(&recorder, n * 10, &screen));
@@ -1026,7 +1026,7 @@ fn a_frame_that_arrives_behind_a_mark_never_moves_ahead_of_it() {
 fn the_last_frame_is_queued_past_a_full_queue_once_and_never_again() {
     let (_dir, path) = scratch();
     let recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();
-    let mut screen = TerminalScreen::new(4, 20, 100);
+    let mut screen = crate::pane::engine::screen(4, 20, 100);
     for n in 0..writer::QUEUE_FRAMES as u64 {
         screen.process_bytes(format!("\x1b[1;1Hframe {n}").as_bytes());
         assert!(push(&recorder, n * 10, &screen));
@@ -1053,7 +1053,7 @@ fn the_last_frame_is_queued_past_a_full_queue_once_and_never_again() {
 fn a_frame_and_the_events_on_it_are_queued_together_or_not_at_all() {
     let (_dir, path) = scratch();
     let mut recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();
-    let mut screen = TerminalScreen::new(4, 20, 100);
+    let mut screen = crate::pane::engine::screen(4, 20, 100);
     for n in 0..writer::QUEUE_FRAMES as u64 {
         screen.process_bytes(format!("\x1b[1;1Hframe {n}").as_bytes());
         assert!(push(&recorder, n * 10, &screen));
@@ -1095,7 +1095,7 @@ fn a_frame_and_the_events_on_it_are_queued_together_or_not_at_all() {
 fn the_last_frame_keeps_its_events_past_a_full_event_queue() {
     let (_dir, path) = scratch();
     let mut recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();
-    let mut screen = TerminalScreen::new(4, 20, 100);
+    let mut screen = crate::pane::engine::screen(4, 20, 100);
     assert!(push(&recorder, 0, &screen));
     for n in 0..writer::QUEUE_EVENTS as u64 {
         assert!(recorder.mark(n / 100, format!("mark {n}")));
@@ -1133,7 +1133,7 @@ fn the_last_frame_keeps_its_events_past_a_full_event_queue() {
 fn a_queue_of_frames_each_before_an_event_refuses_another_rather_than_growing() {
     let (_dir, path) = scratch();
     let mut recorder = Recorder::start_paused(options(&path, u64::MAX)).unwrap();
-    let mut screen = TerminalScreen::new(4, 20, 100);
+    let mut screen = crate::pane::engine::screen(4, 20, 100);
     for n in 0..writer::QUEUE_FRAMES as u64 {
         screen.process_bytes(format!("\x1b[1;1Hframe {n}").as_bytes());
         assert!(push(&recorder, n * 10, &screen));
@@ -1195,7 +1195,7 @@ fn refusal(events: &[serde_json::Value]) -> String {
 
 #[test]
 fn a_reader_refuses_image_metadata_outside_its_cell_area() {
-    let mut screen = TerminalScreen::new(1, 2, 0);
+    let mut screen = crate::pane::engine::screen(1, 2, 0);
     screen.process_bytes(b"\x1b_Ga=T,f=32,s=1,v=1,t=d,i=1,C=1;AAAA/w==\x1b\\");
     let mut frame = span(&mut screen);
     let image = &mut frame.images[0];
@@ -1218,7 +1218,7 @@ fn a_reader_refuses_a_line_frame_or_image_too_large_to_hold() {
     let refused = reader.next_event().unwrap_err();
     assert!(refused.contains("longer than"), "{refused}");
 
-    let mut frame = span(&mut TerminalScreen::new(1, 2, 0));
+    let mut frame = span(&mut crate::pane::engine::screen(1, 2, 0));
     (frame.width, frame.height) = (2048, 1024);
     let refused =
         refusal(&[serde_json::to_value(RecordingEvent::Keyframe { t: 0, frame }).unwrap()]);
@@ -1325,7 +1325,7 @@ fn the_images_of_one_frame_decode_within_one_budget() {
         file.push(b'\n');
     }
     // Every image on the same cell.
-    let mut frame = span(&mut TerminalScreen::new(1, 2, 0));
+    let mut frame = span(&mut crate::pane::engine::screen(1, 2, 0));
     frame.images = ids
         .map(|id| crate::control::SpanImage {
             x: 0,
@@ -1376,7 +1376,7 @@ fn a_replay_past_its_image_budget_forgets_the_oldest_image() {
         file.extend_from_slice(&serde_json::to_vec(&image).unwrap());
         file.push(b'\n');
     }
-    let mut frame = span(&mut TerminalScreen::new(1, 2, 0));
+    let mut frame = span(&mut crate::pane::engine::screen(1, 2, 0));
     frame.images = ["old", "new"]
         .map(|id| crate::control::SpanImage {
             x: 0,
@@ -1409,7 +1409,7 @@ fn a_replay_past_its_image_budget_forgets_the_oldest_image() {
 fn a_cast_resizes_its_terminal_with_the_pane_and_keeps_marks() {
     let (dir, path) = scratch();
     let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
-    let mut screen = TerminalScreen::new(4, 20, 100);
+    let mut screen = crate::pane::engine::screen(4, 20, 100);
     screen.process_bytes(b"small");
     assert!(push(&recorder, 0, &screen));
     assert!(recorder.mark(50, "before growing".to_string()));
@@ -1466,13 +1466,13 @@ fn a_cast_resizes_its_terminal_with_the_pane_and_keeps_marks() {
 fn video_export_keeps_resized_frames_on_one_canvas_without_changing_timing() {
     let (dir, path) = scratch();
     let recorder = Recorder::start(options(&path, u64::MAX)).unwrap();
-    let mut small = TerminalScreen::new(2, 4, 0);
+    let mut small = crate::pane::engine::screen(2, 4, 0);
     small.process_bytes("\x1b[41mA\x1b[0m\x1b[1;4H\u{e0b0}\x1b[2;4H\u{f17c}".as_bytes());
     push(&recorder, 0, &small);
-    let mut wide = TerminalScreen::new(1, 8, 0);
+    let mut wide = crate::pane::engine::screen(1, 8, 0);
     wide.process_bytes(b"B");
     push(&recorder, 250, &wide);
-    let mut tall = TerminalScreen::new(4, 2, 0);
+    let mut tall = crate::pane::engine::screen(4, 2, 0);
     tall.process_bytes(b"C");
     push(&recorder, 900, &tall);
     finish(recorder, 1_500, EndReason::Stopped);
@@ -1535,7 +1535,7 @@ fn video_export_rejects_an_oversized_combined_canvas_before_creating_output() {
     let mut bytes = serde_json::to_vec(&header(2_000, 1)).unwrap();
     bytes.push(b'\n');
     for (t, width, height) in [(0, 2_000, 1), (100, 1, 2_000)] {
-        let mut frame = span(&mut TerminalScreen::new(1, 1, 0));
+        let mut frame = span(&mut crate::pane::engine::screen(1, 1, 0));
         frame.width = width;
         frame.height = height;
         frame.rows = vec![Vec::new(); usize::from(height)];

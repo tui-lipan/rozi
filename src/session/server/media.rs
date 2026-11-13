@@ -583,7 +583,7 @@ mod tests {
         let server =
             SessionServer::new_named_with_settings("media-worker", ServerSettings::default());
         let policy = server.image_media();
-        let mut source = TerminalScreen::new(5, 20, 100);
+        let mut source = crate::pane::engine::screen(5, 20, 100);
         source.set_output_transaction_recording(true);
         policy.apply(&mut source);
         let root = tempfile::tempdir().unwrap();
@@ -626,7 +626,7 @@ mod tests {
         assert!(!wire.windows(3).any(|medium| medium == b"t=t"));
         // Readers cannot acquire any source, and both must receive the original owned pixels.
         for _ in 0..2 {
-            let mut reader = TerminalScreen::new(5, 20, 100);
+            let mut reader = crate::pane::engine::screen(5, 20, 100);
             reader.set_image_media_policy(GraphicsMediaPolicy::NONE);
             reader.process_bytes(&wire);
             assert_eq!(&reader.capture_frame().images[0].rgba[..4], &pixel);
@@ -635,7 +635,7 @@ mod tests {
         let replacement = [0, 255, 0, 255];
         fs::write(&path, replacement).unwrap();
         let replay = source.export_replay_bytes();
-        let mut late = TerminalScreen::new(5, 20, 100);
+        let mut late = crate::pane::engine::screen(5, 20, 100);
         late.set_image_media_policy(GraphicsMediaPolicy::NONE);
         late.process_bytes(&replay);
         assert_eq!(&late.capture_frame().images[0].rgba[..4], &pixel);

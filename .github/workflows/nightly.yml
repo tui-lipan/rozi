@@ -186,6 +186,24 @@ jobs:
           toolchain: "1.96"
           targets: ${{ matrix.target }}
 
+      # The experimental Ghostty terminal engine (`ghostty-engine`) builds libghostty-vt with Zig.
+      # The Linux containers install their own pinned Zig (scripts/install-zig.sh) and build for
+      # the same glibc ceiling as the rest of the payload. Like the rest of this build, the library
+      # is not cached.
+      - name: Install Zig 0.17.1
+        if: ${{ !matrix.glibc }}
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.17.1
+          use-cache: false
+
+      # Rust and Zig must agree on the oldest macOS, or the link warns about objects built for a
+      # newer one. 13.0 is libghostty-vt's own floor.
+      - name: Pin the macOS deployment target
+        if: contains(matrix.target, 'apple-darwin')
+        shell: bash
+        run: echo "MACOSX_DEPLOYMENT_TARGET=13.0" >> "$GITHUB_ENV"
+
       - name: Build payload
         shell: bash
         run: |
@@ -198,6 +216,7 @@ jobs:
               --env ROZI_NIGHTLY_COMMIT \
               --env ROZI_NIGHTLY_BUILT \
               --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS \
+              --env GHOSTTY_VT_GLIBC="${{ matrix.glibc }}" \
               --volume "$GITHUB_WORKSPACE:/work" \
               --workdir /work \
               "${{ matrix.linux_builder }}" \
@@ -206,11 +225,14 @@ jobs:
                 curl --proto "=https" --tlsv1.2 -fsSL https://sh.rustup.rs \
                   | sh -s -- -y --profile minimal --default-toolchain 1.96.0 --no-modify-path
                 export PATH=/root/.cargo/bin:$PATH
-                cargo build --locked --release --target "${{ matrix.target }}"
+                ZIG="$(scripts/install-zig.sh)"
+                export ZIG
+                cargo build --locked --release --target "${{ matrix.target }}" \
+                  --features ghostty-engine
                 chown -R "$BUILD_UID:$BUILD_GID" target
               '
           else
-            cargo build --locked --release --target "${{ matrix.target }}"
+            cargo build --locked --release --target "${{ matrix.target }}" --features ghostty-engine
           fi
 
       - name: Build Windows launcher
@@ -227,6 +249,7 @@ jobs:
           if [[ "${{ matrix.archive }}" == "zip" ]]; then binary="$binary.exe"; fi
           "$binary" --version
           "$binary" --version | grep -Fx "nightly_commit=${{ needs.select.outputs.short }}"
+          "$binary" --version | grep -Fx "terminal_engines=alacritty,ghostty"
           "$binary" --help >/dev/null
 
       - name: Enforce Linux glibc compatibility ceiling
@@ -241,6 +264,18 @@ jobs:
           test -n "$newest"
           test "$(printf '%s\n%s\n' "$newest" "${{ matrix.glibc }}" | sort -V | tail -n 1)" = "${{ matrix.glibc }}" || {
             echo "payload requires GLIBC_$newest; nightly ceiling is GLIBC_${{ matrix.glibc }}" >&2
+            exit 1
+          }
+
+      - name: Enforce macOS deployment target
+        if: contains(matrix.target, 'apple-darwin')
+        shell: bash
+        run: |
+          set -euo pipefail
+          minos="$(otool -l "target/${{ matrix.target }}/release/rozi" \
+            | awk '/LC_BUILD_VERSION/ { found = 1 } found && $1 == "minos" { print $2; exit }')"
+          test "$minos" = "13.0" || {
+            echo "payload requires macOS ${minos:-unknown}; the floor is 13.0" >&2
             exit 1
           }
 
@@ -260,7 +295,7 @@ jobs:
           else
             cp "target/${{ matrix.target }}/release/rozi" "dist/${stem}/rozi"
           fi
-          cp README.md LICENSE "dist/${stem}/"
+          cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/${stem}/"
           cp -R examples "dist/${stem}/examples"
           cat > "dist/${stem}/NIGHTLY" <<EOF
           rozi nightly build - unsigned, unsupported, and replaced every night.
@@ -297,6 +332,7 @@ jobs:
             "dist/verify/${stem}/rozi" --version >/dev/null
           fi
           test -f "dist/verify/${stem}/NIGHTLY"
+          test -f "dist/verify/${stem}/THIRD_PARTY_NOTICES.md"
           rm -rf dist/verify
 
       # A nightly is not signed, so this checksum is a corruption check and nothing more. It is

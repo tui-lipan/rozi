@@ -3370,8 +3370,8 @@ mod tests {
         );
     }
 
-    /// A bare `publish` is an anonymous activity publisher; the OpenCode V1 plugin writes the
-    /// declared form below by hand over the socket, so its exact shape is pinned here.
+    /// A bare `publish` is an anonymous activity publisher. A client can write the declared form
+    /// below by hand over the socket, so its exact shape is pinned here.
     #[test]
     fn publish_requests_declare_their_kind_and_name() {
         let bare = serde_json::from_str::<ControlRequest>(r#"{"cmd":"publish"}"#).unwrap();

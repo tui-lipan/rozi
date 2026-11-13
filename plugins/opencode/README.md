@@ -1,7 +1,7 @@
 # OpenCode activity in rozi
 
-This package connects OpenCode to rozi. OpenCode V2 publishes each open session tab as a separate
-agent row. The V1 event plugin publishes one agent row with the aggregate state of the pane.
+This package connects OpenCode V2 to rozi: it publishes each open session tab as a separate agent
+row.
 
 ## Install for OpenCode V2
 
@@ -57,20 +57,6 @@ reference from `rozi agents list` to address a particular session. Markdown and 
 depend on the pane dimensions. JSON reports `source: "native-api"` and `fidelity: "semantic"`.
 A failed message fetch or interrupted turn may have no response. Text over 1 MiB has
 `truncated: true` and `complete: false`.
-
-## Install for OpenCode V1
-
-Copy `rozi-agent-state.js` into your project's `.opencode/plugins/` directory or the global
-`~/.config/opencode/plugins/` directory. OpenCode V1 loads the exported event plugin automatically.
-
-The V1 plugin aggregates sessions into one state, with blocked sessions taking precedence over
-working sessions. It holds a `publish` stream declared `kind: agent`, named `opencode`, and keeps
-one `OpenCode` row on it, starting `idle` when the plugin loads. Because the stream declares the
-agent, the row is listed in rozi's Agents view and `rozi agents` whether or not screen detection
-recognizes OpenCode in the pane. Unloading the plugin or exiting OpenCode closes the stream and
-withdraws the row. If rozi is unreachable, the next event opens the stream again. The plugin does
-not publish per-session rows, directories, native IDs, or activation. Its implementation uses the legacy Unix control socket; use
-the V2 CLI plugin for portable publishing. Do not copy the V1 file into a V2 plugin directory.
 
 ## Verify
 

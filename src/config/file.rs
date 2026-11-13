@@ -132,6 +132,7 @@ struct FileConfig {
     logging: LoggingFileConfig,
     capture: CaptureFileConfig,
     recording: RecordingFileConfig,
+    experimental: ExperimentalFileConfig,
     keys: HashMap<String, KeyBindingSpec>,
 }
 
@@ -226,6 +227,12 @@ struct RecordingFileConfig {
     duration: Option<String>,
     max_bytes: Option<String>,
     ui_indicator: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct ExperimentalFileConfig {
+    terminal_engine: Option<String>,
 }
 
 /// A `[keys]` value: replacement bindings, an additive binding table, or a user command table.
@@ -864,6 +871,30 @@ fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
     )
 }
 
+/// `experimental.terminal_engine`. An unknown name, or Ghostty in a build without it, warns and
+/// keeps Alacritty.
+fn terminal_engine(name: &str, warnings: &mut Vec<String>) -> crate::pane::engine::TerminalEngine {
+    use crate::pane::engine::TerminalEngine;
+    match name {
+        "alacritty" => TerminalEngine::Alacritty,
+        "ghostty" if cfg!(feature = "ghostty-engine") => TerminalEngine::Ghostty,
+        "ghostty" => {
+            warnings.push(
+                "Ignored experimental.terminal_engine \"ghostty\": this rozi was built without \
+                 the Ghostty engine, so panes use Alacritty"
+                    .to_string(),
+            );
+            TerminalEngine::Alacritty
+        }
+        other => {
+            warnings.push(format!(
+                "Ignored experimental.terminal_engine {other:?} (expected \"alacritty\" or \"ghostty\")"
+            ));
+            TerminalEngine::Alacritty
+        }
+    }
+}
+
 /// Out-of-range values warn and keep the built-in default, like `capture.scale`: one bad key must
 /// not take the rest of the file with it.
 fn apply_recording_config(
@@ -1014,6 +1045,9 @@ fn load_config_from_text_with_extensions(
         }
     }
     apply_recording_config(parsed.recording, &mut config.recording, &mut warnings);
+    if let Some(engine) = parsed.experimental.terminal_engine {
+        config.experimental.terminal_engine = terminal_engine(&engine, &mut warnings);
+    }
 
     let mut input = config.input.clone();
     apply_input_config(
@@ -3253,6 +3287,33 @@ on_open = { send = "danger\n" }
 
         let loaded = load_config_from_text("frame_rate = 1000\n", path);
         assert_eq!(loaded.config.frame_rate, MAX_FRAME_RATE);
+        assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
+    }
+
+    #[test]
+    fn a_terminal_engine_this_build_lacks_warns_and_keeps_alacritty() {
+        use crate::pane::engine::TerminalEngine;
+        let path = Path::new("test.toml");
+        let ghostty = cfg!(feature = "ghostty-engine");
+        let loaded = load_config_from_text("[experimental]\nterminal_engine = \"ghostty\"\n", path);
+        let expected = if ghostty {
+            TerminalEngine::Ghostty
+        } else {
+            TerminalEngine::Alacritty
+        };
+        assert_eq!(loaded.config.experimental.terminal_engine, expected);
+        assert_eq!(
+            loaded.warnings.len(),
+            usize::from(!ghostty),
+            "{:?}",
+            loaded.warnings
+        );
+
+        let loaded = load_config_from_text("[experimental]\nterminal_engine = \"wezterm\"\n", path);
+        assert_eq!(
+            loaded.config.experimental.terminal_engine,
+            TerminalEngine::Alacritty
+        );
         assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
     }
 

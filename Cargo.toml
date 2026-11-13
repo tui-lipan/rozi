@@ -94,6 +94,8 @@ exclude = [
 # 0.40.2: `Context::skip_cursor_trail`, so a workspace or session switch draws no trail.
 # 0.41.0: `CursorTrailSettle`, and a cursor jump along one line trails at once.
 # 0.43.1: path links (`Terminal::link_paths`, `TerminalLinkKind`) and bare file-name hints.
+# 0.44.0: the experimental libghostty-vt engine
+# (`terminal-ghostty`, `TerminalScreen::with_engine`, `compress_idle`).
 tui-lipan = { version = "0.44.0", features = [
   "terminal",
   "terminal-images",
@@ -153,6 +155,11 @@ ui-snapshot = ["tui-lipan/ui-snapshot-png"]
 # the callers that need it ask for it - `.github/workflows/release.yml` when packaging the zip, and
 # CI's check and lint steps, which keep type-checking it on all three hosts.
 windows-launcher = []
+
+# Experimental: build tui-lipan's libghostty-vt terminal engine, selectable with
+# `[experimental] terminal_engine = "ghostty"`. Building it needs Zig 0.17; release and nightly
+# builds enable it, a plain source build does not.
+ghostty-engine = ["tui-lipan/terminal-ghostty"]
 
 # Regenerates the checked-in control API JSON Schema from the types that actually serialize the
 # wire format, so documentation cannot drift from the API. Gated because the production binary has

@@ -3153,7 +3153,11 @@ mod tests {
             let probe_one = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
             let free_port_one = probe_one.local_addr().unwrap().port();
             drop(probe_one);
-            let racing_listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            // Keep this port below the usual ephemeral ranges. The test releases and rebinds
+            // it, and macOS can otherwise assign it to an unrelated outgoing connection.
+            let racing_listener = (1024..32768)
+                .find_map(|port| std::net::TcpListener::bind(("127.0.0.1", port)).ok())
+                .expect("a free non-ephemeral test port");
             let raced_port = racing_listener.local_addr().unwrap().port();
 
             let mut backend = TestBackend::new(AppRoot::default());

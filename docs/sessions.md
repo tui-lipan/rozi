@@ -165,16 +165,20 @@ Change the switch animation in **Settings** › General › Animations › Sessi
 Press `Ctrl+A`, then `a` to open **Agents**. It lists agents, not every Activity row: detected
 coding agents, agents that report their own state, and rows from a publisher that declared itself
 an agent. It covers the current session, other running named local sessions, and every
-[connected host](remote.md#connected-host-monitoring), with the ones that need you first: agents
-waiting for you, then failed ones, then finished runs you have not looked at, then agents still
-working, then finished runs you have seen, then idle agents.
+[connected host](remote.md#connected-host-monitoring), in sections: **Needs you** (agents waiting
+for you, failed ones, and finished runs you have not looked at), **Working**, **Done**, and **Idle**.
 
 ```text
 ╭Agents────────────────────────────────────────────────────────────────────────────── dev╮
 │ api   dev   backend@workbox   All                                                      │
+│ Needs you                                                                              │
 │ ▲ fix login · Claude Code  Blocked 2m10s · Permission required · dev · api (fix-login) │
 │ × Codex                                                Thread failed · backend@workbox │
+│                                                                                        │
+│ Working                                                                                │
 │ ⠋ review PR · Claude Code                      Working 4m00s · Current · rozi (master) │
+│                                                                                        │
+│ Idle                                                                                   │
 │ ○ add filesystem watcher · Claude Code                             dev · rozi (master) │
 ╰────────────────────────────────────────────────────────────────────────────────────────╯
 ```

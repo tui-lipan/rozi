@@ -115,7 +115,7 @@ pub enum ControlCapability {
 
 impl ControlCapability {
     /// Every control capability this binary has, in name order.
-    pub const ALL: [ControlCapability; 40] = [
+    pub const ALL: [ControlCapability; 41] = [
         ControlCapability::AgentPromptResults,
         ControlCapability::AgentRequests,
         ControlCapability::AgentResponses,

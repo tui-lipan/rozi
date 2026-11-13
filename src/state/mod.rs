@@ -192,6 +192,9 @@ pub struct State {
     /// app has selected: a selected pane is only attended while the host window is focused too.
     pub window_focused: bool,
     pub runtime_epoch: u64,
+    /// Next client pane to visit for bounded idle history compression.
+    #[cfg(feature = "ghostty-engine")]
+    pub(crate) idle_compression_cursor: usize,
     /// Bumped whenever the session shown in the foreground actually changes: switching to a
     /// parked session, a fresh attach landing, or dropping to the launcher. Deliberately not
     /// `runtime_epoch`, which a pending attach allocates before the Connecting scene - keying the
@@ -680,6 +683,8 @@ impl State {
             extension_runtime: ExtensionRuntimeState::default(),
             window_focused: true,
             runtime_epoch: 0,
+            #[cfg(feature = "ghostty-engine")]
+            idle_compression_cursor: 0,
             session_view_revision: 0,
             next_attachment_id: 1,
             command_link: None,

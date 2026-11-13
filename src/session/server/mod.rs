@@ -1992,23 +1992,24 @@ impl SessionServer {
         Ok(activity)
     }
 
-    /// Step history compression for panes whose output went quiet. Bounded per pane and
-    /// rate-limited, so a busy server spends nothing here.
+    /// Step quiet panes in turn under one shared budget, at most once per poll interval.
     #[cfg(feature = "ghostty-engine")]
     fn pump_idle_compression(&mut self) {
         let now = Instant::now();
-        for key in self.idle_compression.due(now) {
+        let mut due = self.idle_compression.due(now);
+        let mut cursor = self.idle_compression.cursor;
+        crate::pane::idle_compression::poll(&mut due, &mut cursor, |&mut key| {
             let (owner, id) = key;
             let Some(pane) = self.pane_mut(owner, id) else {
                 self.idle_compression.finished(key);
-                continue;
+                return;
             };
             // Compression changes how history is stored, never what it holds.
-            let screen = pane.screen_without_change();
-            if !crate::pane::idle_compression::step(screen) {
+            if !pane.screen_without_change().compress_idle() {
                 self.idle_compression.finished(key);
             }
-        }
+        });
+        self.idle_compression.cursor = cursor;
     }
 
     fn shutdown_listener(&mut self) -> io::Result<()> {

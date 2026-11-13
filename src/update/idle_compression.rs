@@ -17,12 +17,13 @@ pub(super) fn tick(ctx: &mut Context<AppRoot>) -> Update {
 fn compress_state(state: &mut crate::state::State) {
     let now = Instant::now();
     let attachments = std::iter::once(&mut state.attachment).chain(state.background.values_mut());
-    let panes = attachments
+    let mut panes: Vec<_> = attachments
         .flat_map(|attachment| &mut attachment.workspaces)
         .flat_map(|workspace| &mut workspace.panes)
         .chain(&mut state.scratch.panes)
-        .chain(state.popup.iter_mut());
-    for pane in panes {
+        .chain(state.popup.iter_mut())
+        .collect();
+    crate::pane::idle_compression::poll(&mut panes, &mut state.idle_compression_cursor, |pane| {
         pane.terminal.poll_idle_compression(now);
-    }
+    });
 }

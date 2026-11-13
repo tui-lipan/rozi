@@ -14,6 +14,8 @@ pub(super) struct IdleCompression {
     /// Panes with uncompressed output, by when that output last arrived.
     waiting: HashMap<PaneKey, Instant>,
     last_poll: Option<Instant>,
+    /// Resume at this position in the next due-pane poll.
+    pub(super) cursor: usize,
 }
 
 impl IdleCompression {

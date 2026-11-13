@@ -1015,53 +1015,40 @@ fn workspace_tabs(ctx: &Context<AppRoot>) -> DraggableTabBar {
                 let role = workspace_marker_color(marker);
                 let paint = state.config.workbar.alert.paint;
                 let animations = state.config.animations;
-                let pulse = state.config.workbar.alert.mode == AlertMode::Pulse
-                    && state.alert_pulse_armed
+                let pulses = state.config.workbar.alert.mode == AlertMode::Pulse
                     && animations.enabled
                     && animations.focus_chrome
                     && crate::ops::theme::tab_alert_can_pulse(theme, role, paint);
                 // A finished workspace is good news you have not read, so it breathes slower off the
                 // same beat; blocked asks for an answer and an error is a failure, so both breathe
                 // at the urgent rate.
-                let calm = marker.is_calm();
-                let phase = if calm {
-                    state.alert_pulse_calm_phase
-                } else {
-                    state.alert_pulse_phase
-                };
-                // The label fades on the same clock as the tint, between the bar's resting
-                // foreground and the contrast-correct one for the *peak* background.
+                let breath = pulses
+                    .then(|| animation::alert_chrome_pulse(ctx, marker.is_calm()))
+                    .flatten();
+                // The tab is drawn at its peak and moved toward its trough by the shared pulse,
+                // which the renderer resolves on every frame: the breath never rebuilds the view.
+                // The label fades on the same clock as the tint, between the contrast-correct
+                // colour for the *peak* background and the bar's resting foreground.
                 //
                 // `ContrastPolicy::Off` is what makes that hold: left on, the renderer re-derives
                 // the foreground against whatever the background holds mid-fade, so the label snaps
                 // to white and then to black as the tint crosses the readability threshold. Naming
                 // both endpoints ourselves turns that flip into a fade, and matches how every other
                 // piece of rozi chrome already picks its own readable colours.
-                let (fg_target, target) =
-                    crate::ops::theme::tab_alert_colors(theme, role, paint, pulse, phase);
-                let transition = if pulse && state.alert_pulse_armed {
-                    animation::alert_pulse_transition_config(ctx, calm)
-                } else {
-                    crate::layout::anim::instant_transition()
-                };
-                tab = tab.style(
-                    Style::new()
-                        .fg(animation::chrome_paint_with_frame_rate(
-                            ctx,
-                            format!("rozi-workspace-tab-{idx}-fg"),
-                            fg_target,
-                            transition,
-                            pulse.then_some(crate::layout::anim::ALERT_PULSE_FRAME_RATE),
-                        ))
-                        .bg(animation::chrome_paint_with_frame_rate(
-                            ctx,
-                            format!("rozi-workspace-tab-{idx}"),
-                            target,
-                            transition,
-                            pulse.then_some(crate::layout::anim::ALERT_PULSE_FRAME_RATE),
-                        ))
-                        .contrast_policy(ContrastPolicy::Off),
-                );
+                let (peak_fg, peak_bg) =
+                    crate::ops::theme::tab_alert_colors(theme, role, paint, false, false);
+                let mut style = Style::new()
+                    .fg(peak_fg)
+                    .bg(peak_bg)
+                    .contrast_policy(ContrastPolicy::Off);
+                if let Some(amount) = breath {
+                    let (trough_fg, trough_bg) =
+                        crate::ops::theme::tab_alert_colors(theme, role, paint, true, true);
+                    style = style
+                        .transform_fg(ColorTransform::tint(trough_fg, amount))
+                        .transform_bg(ColorTransform::tint(trough_bg, amount));
+                }
+                tab = tab.style(style);
                 // A filled tab is emphasized the same way the active one is, so it earns the same
                 // shaping - flat next to a capped peer reads as a rendering glitch. A text-painted
                 // tab has no background to fill a cap glyph with, so it stays flat by nature.

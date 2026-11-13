@@ -323,39 +323,19 @@ pub(crate) fn focus_chrome_transition_config(ctx: &Context<AppRoot>) -> Transiti
     }
 }
 
-/// Breathe timing for an alert. `calm` stretches the fade to the calm half period so a slower
-/// alert is genuinely slower rather than a fast fade that then sits still waiting for its beat.
-pub(crate) fn alert_pulse_transition_config(
-    ctx: &Context<AppRoot>,
-    calm: bool,
-) -> TransitionConfig {
-    let animations = ctx.state.config.animations;
-    if animations.enabled && animations.focus_chrome {
-        TransitionConfig {
-            duration: if calm {
-                anim::alert_pulse_calm_half_period(animations)
-            } else {
-                anim::alert_pulse_half_period(animations)
-            },
-            easing: Easing::EaseInOutCubic,
-        }
-    } else {
-        anim::instant_transition()
-    }
-}
-
-/// One breath of a pane alert, from `peak` to `trough` and back, as a pulse the animation registry
+/// One breath of an alert, from `peak` to `trough` and back, as a pulse the animation registry
 /// owns. `None` while the pulse chain is not running. `calm` picks the slower rate.
 ///
-/// Every surface that breathes with a pane alert - the border and the content tint - reads a pulse
-/// from here, and each is anchored where the chain's beat is: the instant it armed, plus the turn
+/// Every surface that breathes with an alert - a pane's border and content tint, and a marked
+/// workspace tab - reads a pulse from here, and each is anchored where the chain's beat is: the instant it armed, plus the turn
 /// that surface starts fading on (the first, or the second at the calm rate). Before that turn it
 /// holds at `peak`; from there it eases to `trough` over one beat and back over the next. Its value
 /// is therefore a function of the clock alone. However late the chain's ticks are handled, however
 /// long the loop stalls, and whenever a pane starts alerting or a surface starts being drawn, every
 /// surface sits at the point of the breath the clock says, in step with the others.
 ///
-/// Each `key` is shared by every pane, so every pane alerting at a rate reads one pulse.
+/// Each `key` is shared by every surface reading it, so everything alerting at a rate reads one
+/// pulse. The renderer resolves it on each frame, so a breath repaints but never rebuilds the view.
 fn alert_pulse(
     ctx: &Context<AppRoot>,
     key: &'static str,
@@ -391,13 +371,13 @@ pub(crate) fn alert_tint_pulse(ctx: &Context<AppRoot>, calm: bool) -> Option<Eff
     alert_pulse(ctx, key, calm, anim::ALERT_CONTENT_TINT, 0.0)
 }
 
-/// How far an alerting pane border has moved from its peak colour toward its trough: nothing at
-/// the peak of the breath, all the way at its trough.
-pub(crate) fn alert_border_pulse(ctx: &Context<AppRoot>, calm: bool) -> Option<EffectAmount> {
+/// How far alert chrome - a pane border, or a marked workspace tab - has moved from its peak colour
+/// toward its trough: nothing at the peak of the breath, all the way at its trough.
+pub(crate) fn alert_chrome_pulse(ctx: &Context<AppRoot>, calm: bool) -> Option<EffectAmount> {
     let key = if calm {
-        "rozi-alert-border-calm"
+        "rozi-alert-chrome-calm"
     } else {
-        "rozi-alert-border"
+        "rozi-alert-chrome"
     };
     alert_pulse(ctx, key, calm, 0.0, 1.0)
 }
@@ -417,44 +397,6 @@ pub(crate) fn chrome_color(
     slot: ChromeSlot,
     target: Color,
 ) -> Paint {
-    chrome_color_with(ctx, pane, slot, target, focus_chrome_transition_config(ctx))
-}
-
-pub(crate) fn chrome_color_with(
-    ctx: &Context<AppRoot>,
-    pane: &Pane,
-    slot: ChromeSlot,
-    target: Color,
-    config: TransitionConfig,
-) -> Paint {
-    chrome_color_with_frame_rate(ctx, pane, slot, target, config, None)
-}
-
-pub(crate) fn chrome_color_with_frame_rate(
-    ctx: &Context<AppRoot>,
-    pane: &Pane,
-    slot: ChromeSlot,
-    target: Color,
-    config: TransitionConfig,
-    frame_rate: Option<u16>,
-) -> Paint {
-    chrome_paint_with_frame_rate(
-        ctx,
-        pane.keys.chrome(slot).clone(),
-        target,
-        config,
-        frame_rate,
-    )
-}
-
-/// A caller-keyed chrome paint. Palette/indexed colors deliberately snap rather than blend.
-pub(crate) fn chrome_paint_with_frame_rate(
-    ctx: &Context<AppRoot>,
-    key: impl Into<tui_lipan::prelude::Key>,
-    target: Color,
-    config: TransitionConfig,
-    frame_rate: Option<u16>,
-) -> Paint {
     // Only truecolor targets may fade. Named/indexed ANSI colors must be emitted
     // verbatim so the user's terminal palette resolves them; blending them animates
     // through `Color::Rgb` (`blend_toward` always returns Rgb), which bypasses the
@@ -462,14 +404,11 @@ pub(crate) fn chrome_paint_with_frame_rate(
     // shows as true cyan while the focus animation runs but as the palette color at
     // rest. Snapping keeps palette themes consistent (and matching the workbar).
     let config = if crate::ops::theme::chrome_color_animates(target) {
-        config
+        focus_chrome_transition_config(ctx)
     } else {
         anim::instant_transition()
     };
-    match frame_rate {
-        Some(frame_rate) => ctx.animated_color_with_frame_rate(key, target, config, frame_rate),
-        None => ctx.animated_color(key, target, config),
-    }
+    ctx.animated_color(pane.keys.chrome(slot).clone(), target, config)
 }
 
 fn paint_frame_interval(ctx: &Context<AppRoot>) -> std::time::Duration {

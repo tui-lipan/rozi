@@ -13,6 +13,7 @@
 //! Output goes to `target/ui-sketches/`.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use rozi::config::{SidebarTab, SidebarTabId};
 use rozi::git::worktrees::{WorktreeInfo, WorktreeLock};
@@ -328,16 +329,18 @@ fn live_pane(id: u32) -> Pane {
 }
 
 /// Workspace 1 active and quiet, 2 blocked, 3 finished-unseen: one tab per marker plus an unmarked
-/// neighbour, which is what makes "is this subtle enough" answerable at a glance.
-fn workbar_backend(phase: bool, calm_phase: bool) -> TestBackend<AppRoot> {
+/// neighbour, which is what makes "is this subtle enough" answerable at a glance. The pulse chain
+/// is armed at the start of the backend's clock.
+fn workbar_backend() -> TestBackend<AppRoot> {
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(viewport(80, 6));
     let state = backend.state_mut();
     state.config.pane.show_workbar = true;
     state.config.workbar.alert.mode = AlertMode::Pulse;
+    state.config.animations.enabled = true;
     state.alert_pulse_armed = true;
-    state.alert_pulse_phase = phase;
-    state.alert_pulse_calm_phase = calm_phase;
+    state.alert_pulse_armed_at = Duration::ZERO;
+    state.alert_pulse_half = rozi::layout::anim::alert_pulse_half_period(state.config.animations);
 
     state.current_mut().workspaces[0].panes.push(live_pane(10));
     state.current_mut().workspaces[0].focused_pane = Some(10);
@@ -358,11 +361,17 @@ fn workbar_backend(phase: bool, calm_phase: bool) -> TestBackend<AppRoot> {
     backend
 }
 
+/// `half_periods` is where on the pulse's timeline to capture, in half periods since the chain
+/// armed: the tabs breathe by the clock, so the frame is chosen by advancing it.
+///
 /// `hover_x` puts the mouse over a tab. Hover is the case worth capturing because the hover style
 /// layers over whatever the tab already resolved to: an absolute colour there silently discards the
 /// alert, and only a rendered frame shows whether it survived.
-fn workbar_capture(name: &str, phase: bool, calm_phase: bool, hover_x: Option<u16>) {
-    let mut backend = workbar_backend(phase, calm_phase);
+fn workbar_capture(name: &str, half_periods: u32, hover_x: Option<u16>) {
+    let mut backend = workbar_backend();
+    backend.render();
+    let half = backend.state().alert_pulse_half;
+    backend.advance(half * half_periods);
     if let Some(x) = hover_x {
         backend.render();
         backend
@@ -380,12 +389,14 @@ fn workbar_capture(name: &str, phase: bool, calm_phase: bool, hover_x: Option<u1
 
 fn workbar_alerts() {
     // Blocked runs at the urgent rate and finished at the calm one, so the interesting frames are
-    // the three the two rates actually produce together.
-    workbar_capture("workbar-alert-both-peak", false, false, None);
-    workbar_capture("workbar-alert-urgent-trough", true, false, None);
-    workbar_capture("workbar-alert-both-trough", true, true, None);
+    // the three the two rates actually produce together. Both hold their peak until their first
+    // fade begins: the urgent one after one half period, reaching its trough after two, and the
+    // calm one after two, reaching its trough after four.
+    workbar_capture("workbar-alert-both-peak", 0, None);
+    workbar_capture("workbar-alert-urgent-trough", 2, None);
+    workbar_capture("workbar-alert-both-trough", 4, None);
     // Hovering the blocked tab must lift its colour, not replace it.
-    workbar_capture("workbar-alert-hovered", false, false, Some(21));
+    workbar_capture("workbar-alert-hovered", 0, Some(21));
 }
 
 // --- sidebar-worktrees -----------------------------------------------------------------------
@@ -846,6 +857,7 @@ fn agent_picker() {
             task: None,
             completions: 0,
             changed_at: 0,
+            screen_title: None,
         }],
     });
     for (width, height) in [(64, 22), (100, 30), (180, 40)] {
@@ -1548,6 +1560,7 @@ fn sidebar_agents() {
                     task: Some("Review graphics PR".into()),
                     completions: 0,
                     changed_at: 0,
+                    screen_title: None,
                 },
                 AgentSummary {
                     session: "backend".into(),
@@ -1559,6 +1572,7 @@ fn sidebar_agents() {
                     task: Some("Migrate the schema".into()),
                     completions: 0,
                     changed_at: 0,
+                    screen_title: None,
                 },
             ],
             projects: vec![ProjectSummary {
@@ -1649,6 +1663,7 @@ fn sidebar_activity_worktrees() {
     backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Activity {
         config: rozi::config::SidebarActivityConfig {
             worktrees: rozi::config::WorktreeLayout::Repository,
+            agents: false,
         },
     }];
     for width in [28, 32, 44] {
@@ -1832,6 +1847,7 @@ fn sidebar_projects() {
             task: None,
             completions: 0,
             changed_at: 0,
+            screen_title: None,
         });
     }
     backend.state_mut().config.sidebar.layout.left.width = 32;
@@ -2112,6 +2128,7 @@ fn session_compatibility() {
                 session_instance: SessionInstanceId::generate(),
                 protocol_version: PROTOCOL_VERSION,
                 effective_protocol: PROTOCOL_VERSION,
+                protocol_min: None,
                 session: "legacy-work".into(),
                 client_id: 1,
                 panes: Vec::new(),
@@ -2123,6 +2140,7 @@ fn session_compatibility() {
                 allow_takeover: true,
                 origin: Default::default(),
                 rozi_version: Some("0.0.41".into()),
+                handoff_claimed: None,
             },
         )
         .expect("send Attached");

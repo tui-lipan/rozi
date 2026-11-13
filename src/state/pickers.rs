@@ -1571,6 +1571,9 @@ pub struct PickPage {
     /// How many times this page's filter text has been reported to the caller. Each report
     /// carries the new count, and rows answering an earlier one are dropped.
     pub query_seq: u64,
+    /// The `query_seq` of the search answer `rows` came with; unchanged by a snapshot that
+    /// answers no search. Rows of different answers are different lists to the palette.
+    pub rows_seq: u64,
 }
 
 impl PickState {

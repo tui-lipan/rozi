@@ -995,7 +995,12 @@ cleared. Answer with a row snapshot holding the best matches, and echo the numbe
 rozi ignores a snapshot whose `query_seq` is lower than the latest it reported for that tab, so a
 slow search that finishes after a newer one cannot replace the newer rows. A snapshot without
 `query_seq` always applies; use that for rows that answer no search, such as a refresh after an
-action. rozi also filters and ranks the rows it holds against the current text.
+action.
+
+A picker with `report_query` shows rows in the order they were sent, so send the best match first.
+rozi still hides the rows it holds that do not match the current text, but does not reorder them.
+The highlight starts on the first row whenever the text changes or an answer arrives. After a
+snapshot without `query_seq`, it stays on the row it was on.
 
 ### CLI bridge
 

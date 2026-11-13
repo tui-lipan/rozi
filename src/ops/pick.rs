@@ -212,13 +212,33 @@ pub(crate) fn rows_reported(
     let Some(index) = pick.pages.iter().position(|page| page.tab == tab) else {
         return Update::none();
     };
+    let answers_search = pick.report_query && query_seq.is_some();
     let page = &mut pick.pages[index];
     // An answer to text that has since changed: a slower search finishing after a newer one
     // would otherwise replace the newer rows, and nothing would bring them back.
     if query_seq.is_some_and(|seq| seq < page.query_seq) {
         return Update::none();
     }
+    // A search's answer is ranked, so the highlight goes to its best match. Any other snapshot
+    // is the same list refreshed, and the highlight stays on the row it was on, wherever that
+    // row now is; left at its old position it would land on whichever row moved there.
+    let held = page
+        .rows
+        .get(page.selected)
+        .filter(|_| !answers_search)
+        .map(|row| row_id(row).to_string());
     page.rows = rows;
+    if answers_search {
+        page.rows_seq = query_seq.unwrap_or_default();
+    }
+    page.selected = match held {
+        Some(id) => page
+            .rows
+            .iter()
+            .position(|row| row_id(row) == id)
+            .unwrap_or(page.selected),
+        None => 0,
+    };
     if page.selected >= page.rows.len() {
         page.selected = 0;
     }
@@ -340,16 +360,20 @@ pub(crate) fn query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update
     let Some(pick) = ctx.state.pick.as_mut() else {
         return Update::none();
     };
-    if pick.report_query && pick.page().query != query {
+    let searching = pick.report_query && pick.page().query != query;
+    if searching {
         let page = pick.page_mut();
         page.query_seq += 1;
+        // New text is a new search: start from its best match, not from wherever the last
+        // search's highlight happens to be in this one.
+        page.selected = 0;
         let payload = serde_json::json!({ "query": query, "query_seq": page.query_seq });
         pick.reply.event(&with_tab(pick, payload));
     }
     pick.page_mut().query = query;
     let is_empty = pick.page().query.trim().is_empty();
     let disarmed = pick.pending_action.take().is_some();
-    if was_empty != is_empty || disarmed {
+    if was_empty != is_empty || disarmed || searching {
         Update::full()
     } else {
         Update::none()
@@ -1616,6 +1640,21 @@ mod tests {
         });
     }
 
+    /// A refreshed list keeps the highlight on the row it was on, wherever that row moved to.
+    #[test]
+    fn a_refresh_keeps_the_highlight_on_its_row() {
+        with_backend(|backend| {
+            open_tabbed(backend, Vec::new(), None, Vec::new());
+            report(backend, None, &["main", "dev", "old"]);
+            backend.dispatch(crate::Msg::PickSelect(1)).unwrap();
+            report(backend, None, &["new", "main", "old", "dev"]);
+            assert_eq!(backend.state().pick.as_ref().unwrap().page().selected, 3);
+            // Its row is gone: the highlight stays where it was.
+            report(backend, None, &["new", "main", "old", "x", "y"]);
+            assert_eq!(backend.state().pick.as_ref().unwrap().page().selected, 3);
+        });
+    }
+
     /// A caller that asked for the filter text hears each change once, numbered, with the tab it
     /// was typed on, and rows answering an earlier number never replace newer ones.
     #[test]
@@ -1660,6 +1699,28 @@ mod tests {
                     .unwrap();
                 assert_eq!(page_ids(backend)[0], [shown]);
             }
+
+            // New text and its answer both put the highlight on the best match, the first row.
+            report(backend, Some("files"), &["a", "b", "c"]);
+            backend.dispatch(crate::Msg::PickSelect(2)).unwrap();
+            backend
+                .dispatch(crate::Msg::PickQueryChanged("srcs".into()))
+                .unwrap();
+            assert_eq!(backend.state().pick.as_ref().unwrap().page().selected, 0);
+            backend.dispatch(crate::Msg::PickSelect(2)).unwrap();
+            backend
+                .dispatch(crate::Msg::PickRowsReported {
+                    id: 1,
+                    tab: Some("files".into()),
+                    rows: vec![row("c"), row("d"), row("e")],
+                    query_seq: Some(3),
+                })
+                .unwrap();
+            assert_eq!(backend.state().pick.as_ref().unwrap().page().selected, 0);
+            assert_eq!(
+                rx.try_recv().unwrap().trim(),
+                r#"{"query":"srcs","query_seq":3,"tab":"files"}"#
+            );
 
             backend.dispatch(crate::Msg::PickTabSelected(1)).unwrap();
             assert_eq!(rx.try_recv().unwrap().trim(), r#"{"tab":"dirs"}"#);

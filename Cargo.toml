@@ -94,7 +94,7 @@ exclude = [
 # 0.40.2: `Context::skip_cursor_trail`, so a workspace or session switch draws no trail.
 # 0.41.0: `CursorTrailSettle`, and a cursor jump along one line trails at once.
 # 0.43.1: path links (`Terminal::link_paths`, `TerminalLinkKind`) and bare file-name hints.
-tui-lipan = { version = "0.43.1", features = [
+tui-lipan = { version = "0.44.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

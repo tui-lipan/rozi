@@ -144,9 +144,12 @@ fn pull_request_of(
             host: host.cloned(),
             repository: checkout.repository.clone(),
         }),
-        state
-            .agent_pull_requests
-            .find(host, &checkout.root, checkout.family),
+        state.agent_pull_requests.find(
+            host,
+            &checkout.root,
+            checkout.branch.as_deref(),
+            checkout.family,
+        ),
     )
 }
 
@@ -543,6 +546,7 @@ pub(crate) fn initial_agent_location(state: &State) -> Option<AgentLocation> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::pull_requests::WorkStatus;
     use crate::session::protocol::AgentSummary;
     use crate::session::remote::RemoteTarget;
 
@@ -925,26 +929,14 @@ mod tests {
             }],
         );
         // The host answers for the whole repository; the agent's pull request is its worktree's.
-        let pull_request =
-            |number, status| crate::git::pull_requests::PullRequestStatus { number, status };
         state.agent_pull_requests.hosts.insert(
             Some(RemoteTarget::Alias("workbox".into())),
             [(
                 "/src/rozi".to_string(),
-                crate::git::pull_requests::WorktreeStatuses {
-                    checkouts: [
-                        (
-                            "/src/rozi".to_string(),
-                            pull_request(1, crate::git::pull_requests::WorkStatus::Open),
-                        ),
-                        (
-                            "/src/rozi/.worktrees/fix".to_string(),
-                            pull_request(7, crate::git::pull_requests::WorkStatus::Failed),
-                        ),
-                    ]
-                    .into(),
-                    ..Default::default()
-                },
+                found_pull_requests(&[
+                    ("/src/rozi", "main", 1, WorkStatus::Open),
+                    ("/src/rozi/.worktrees/fix", "fix-ssh", 7, WorkStatus::Failed),
+                ]),
             )]
             .into(),
         );
@@ -981,6 +973,78 @@ mod tests {
             crate::view::vocabulary::pull_request_badge(&stale),
             "#7 Failed · Stale"
         );
+
+        // The checkout moved on to another branch before its host looked again: #7 is not its.
+        state
+            .remote
+            .projects
+            .get_mut(&RemoteTarget::Alias("workbox".into()))
+            .unwrap()[0]
+            .branch = Some("other".into());
+        assert_eq!(global_agent_rows(&state)[0].pull_request, None);
+    }
+
+    /// What a host found, for each checkout path: the branch it had then, and that branch's pull
+    /// request.
+    fn found_pull_requests(
+        checkouts: &[(&str, &str, u64, WorkStatus)],
+    ) -> crate::git::pull_requests::WorktreeStatuses {
+        crate::git::pull_requests::WorktreeStatuses {
+            checkouts: checkouts
+                .iter()
+                .map(|(path, _, number, status)| {
+                    (
+                        path.to_string(),
+                        crate::git::pull_requests::PullRequestStatus {
+                            number: *number,
+                            status: *status,
+                        },
+                    )
+                })
+                .collect(),
+            branches: checkouts
+                .iter()
+                .map(|(path, branch, _, _)| (path.to_string(), branch.to_string()))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// An agent in the session on screen gets this machine's answer for its checkout, only while
+    /// its pane is still on the branch that answer was for.
+    #[test]
+    fn a_live_agent_shows_its_branchs_pull_request_until_the_branch_changes() {
+        use crate::state::Pane;
+        let mut state = state_with_hosts(&[]);
+        state.current_mut().session_name = Some("dev".into());
+        let mut pane = Pane::new(42, 100, Default::default());
+        pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
+            state: crate::session::protocol::DetectedAgentState::Working,
+        });
+        pane.terminal.cwd = Some("/src/rozi".into());
+        pane.terminal.project_root = Some("/src/rozi".into());
+        pane.terminal.git_branch = Some("feat".into());
+        state.current_mut().workspaces[0].panes.push(pane);
+        state.agent_pull_requests.hosts.insert(
+            None,
+            [(
+                "/src/rozi".to_string(),
+                found_pull_requests(&[("/src/rozi", "feat", 5, WorkStatus::Passed)]),
+            )]
+            .into(),
+        );
+        let rows = global_agent_rows(&state);
+        assert_eq!(rows[0].pull_request_source.as_ref().unwrap().host, None);
+        assert_eq!(rows[0].pull_request.as_ref().map(|pr| pr.number), Some(5));
+
+        let pane = state.current_mut().workspaces[0]
+            .panes
+            .iter_mut()
+            .find(|pane| pane.id == 42)
+            .unwrap();
+        pane.terminal.git_branch = Some("main".into());
+        assert_eq!(global_agent_rows(&state)[0].pull_request, None);
     }
 
     /// Two untitled runs of one program in one session and checkout read the same, so each is

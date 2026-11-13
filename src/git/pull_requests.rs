@@ -34,6 +34,10 @@ pub struct PullRequestStatus {
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct WorktreeStatuses {
     pub checkouts: BTreeMap<String, PullRequestStatus>,
+    /// The branch each checkout in `checkouts` had when its pull request was found, by the same
+    /// path. Lets a reader drop a result its checkout has since switched away from.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub branches: BTreeMap<String, String>,
     pub unavailable: bool,
     pub error: Option<String>,
     pub retryable: bool,
@@ -175,8 +179,23 @@ struct LookupShared {
 #[derive(Default)]
 struct LookupState {
     wanted: Vec<String>,
+    /// Counts changes to `wanted`, so the worker hears of one even when nothing is due.
+    generation: u64,
     results: BTreeMap<String, WorktreeStatuses>,
     stopped: bool,
+}
+
+/// Where a [`Lookup`] reads repositories from.
+trait Source: Send + 'static {
+    /// Lets go of whatever it keeps for repositories no longer in `wanted`.
+    fn forget_unwanted(&mut self, wanted: &[String]);
+    fn fetch(&mut self, repository: &Path) -> WorktreeStatuses;
+}
+
+/// The worker's next job: the repositories due a lookup, and the whole wanted set.
+struct Due {
+    repositories: Vec<String>,
+    wanted: Vec<String>,
 }
 
 impl Lookup {
@@ -184,19 +203,11 @@ impl Lookup {
     pub(crate) fn start(
         on_change: impl Fn(BTreeMap<String, WorktreeStatuses>) + Send + 'static,
     ) -> Self {
-        let mut caches = RepositoryCaches::default();
-        Self::start_with(
-            move |path, wanted| {
-                caches.retain(wanted);
-                caches.get(path, fetch)
-            },
-            on_change,
-        )
+        Self::start_with(RepositoryCaches::default(), on_change)
     }
 
-    /// `fetch` reads one repository, told every repository still wanted.
     fn start_with(
-        mut fetch: impl FnMut(&Path, &[String]) -> WorktreeStatuses + Send + 'static,
+        mut source: impl Source,
         on_change: impl Fn(BTreeMap<String, WorktreeStatuses>) + Send + 'static,
     ) -> Self {
         let shared = Arc::new(LookupShared {
@@ -208,10 +219,12 @@ impl Lookup {
             .name("rozi-pull-requests".into())
             .spawn(move || {
                 let mut refreshed: BTreeMap<String, Instant> = BTreeMap::new();
-                while let Some((due, wanted)) = worker.next_due(&mut refreshed) {
+                let mut generation = 0;
+                while let Some(due) = worker.next_due(&mut refreshed, &mut generation) {
+                    source.forget_unwanted(&due.wanted);
                     let mut changed = false;
-                    for repository in due {
-                        let statuses = fetch(Path::new(&repository), &wanted);
+                    for repository in due.repositories {
+                        let statuses = source.fetch(Path::new(&repository));
                         refreshed.insert(repository.clone(), Instant::now());
                         let mut state = worker.state.lock().unwrap();
                         if state.wanted.contains(&repository)
@@ -243,6 +256,7 @@ impl Lookup {
                 .results
                 .retain(|repository, _| repositories.contains(repository));
             state.wanted = repositories;
+            state.generation = state.generation.wrapping_add(1);
             self.shared.wake.notify_all();
         }
     }
@@ -254,19 +268,20 @@ impl Lookup {
 }
 
 impl LookupShared {
-    /// Waits until a wanted repository is due, then names every one that is, and every one wanted.
+    /// Waits until a wanted repository is due or the wanted set has changed since `generation`.
     /// `None` once stopped.
     fn next_due(
         &self,
         refreshed: &mut BTreeMap<String, Instant>,
-    ) -> Option<(Vec<String>, Vec<String>)> {
+        generation: &mut u64,
+    ) -> Option<Due> {
         let mut state = self.state.lock().unwrap();
         loop {
             if state.stopped {
                 return None;
             }
             refreshed.retain(|repository, _| state.wanted.contains(repository));
-            let due: Vec<String> = state
+            let repositories: Vec<String> = state
                 .wanted
                 .iter()
                 .filter(|repository| {
@@ -276,8 +291,12 @@ impl LookupShared {
                 })
                 .cloned()
                 .collect();
-            if !due.is_empty() {
-                return Some((due, state.wanted.clone()));
+            if !repositories.is_empty() || state.generation != *generation {
+                *generation = state.generation;
+                return Some(Due {
+                    repositories,
+                    wanted: state.wanted.clone(),
+                });
             }
             let wait = refreshed
                 .values()
@@ -297,11 +316,6 @@ impl LookupShared {
 struct RepositoryCaches(BTreeMap<String, StatusCache>);
 
 impl RepositoryCaches {
-    /// Forgets the repositories no longer wanted.
-    fn retain(&mut self, wanted: &[String]) {
-        self.0.retain(|repository, _| wanted.contains(repository));
-    }
-
     fn get(
         &mut self,
         repository: &Path,
@@ -315,6 +329,16 @@ impl RepositoryCaches {
             .entry(repository.to_string_lossy().into_owned())
             .or_default()
             .get_with(repository, false, fetch)
+    }
+}
+
+impl Source for RepositoryCaches {
+    fn forget_unwanted(&mut self, wanted: &[String]) {
+        self.0.retain(|repository, _| wanted.contains(repository));
+    }
+
+    fn fetch(&mut self, repository: &Path) -> WorktreeStatuses {
+        self.get(repository, fetch)
     }
 }
 
@@ -512,6 +536,9 @@ fn fetch(
                 .filter(|tree| tree.branch.as_deref() == Some(branch))
             {
                 result.checkouts.insert(tree.path.clone(), status.clone());
+                result
+                    .branches
+                    .insert(tree.path.clone(), branch.to_string());
             }
         }
     }
@@ -679,15 +706,26 @@ mod tests {
     /// A host looks up only what a viewer still has on screen, and forgets the rest.
     #[test]
     fn a_lookup_answers_only_for_the_repositories_still_wanted() {
-        let (fetched, fetches) = std::sync::mpsc::channel();
-        let (changed, changes) = std::sync::mpsc::channel();
-        let lookup = Lookup::start_with(
-            move |path, _| {
-                fetched.send(path.to_path_buf()).unwrap();
+        /// Reports each fetch, and what it keeps after being told what is still wanted.
+        struct Recorder {
+            fetched: std::sync::mpsc::Sender<PathBuf>,
+            kept: std::sync::mpsc::Sender<Vec<String>>,
+        }
+        impl Source for Recorder {
+            fn forget_unwanted(&mut self, wanted: &[String]) {
+                self.kept.send(wanted.to_vec()).unwrap();
+            }
+            fn fetch(&mut self, repository: &Path) -> WorktreeStatuses {
+                self.fetched.send(repository.to_path_buf()).unwrap();
                 WorktreeStatuses::default()
-            },
-            move |results| changed.send(results).unwrap(),
-        );
+            }
+        }
+        let (fetched, fetches) = std::sync::mpsc::channel();
+        let (kept, keeps) = std::sync::mpsc::channel();
+        let (changed, changes) = std::sync::mpsc::channel();
+        let lookup = Lookup::start_with(Recorder { fetched, kept }, move |results| {
+            changed.send(results).unwrap()
+        });
         let wait = Duration::from_secs(5);
         lookup.want(vec!["/a".into()]);
         assert_eq!(fetches.recv_timeout(wait).unwrap(), PathBuf::from("/a"));
@@ -705,6 +743,11 @@ mod tests {
 
         lookup.want(Vec::new());
         assert!(lookup.results().is_empty());
+        // The source lets go of everything as soon as nothing is wanted, not at its next fetch.
+        let deadline = Instant::now() + wait;
+        while keeps.recv_timeout(wait).unwrap() != Vec::<String>::new() {
+            assert!(Instant::now() < deadline, "the source kept `/b`");
+        }
         assert!(
             fetches.recv_timeout(Duration::from_millis(200)).is_err(),
             "nothing is looked up while nothing is wanted"

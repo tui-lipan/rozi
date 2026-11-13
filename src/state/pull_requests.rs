@@ -27,14 +27,18 @@ pub(crate) struct AgentPullRequest {
 }
 
 impl AgentPullRequests {
-    /// The pull request of the branch checked out at `root` on `host`, when it has one. `root` is
-    /// compared by its host's path rules, since one directory can be spelled several ways there.
+    /// The pull request of `branch`, checked out at `root` on `host`, when it has one. A result
+    /// found while the checkout had another branch says nothing about this one, and a detached
+    /// checkout has none. `root` is compared by its host's path rules, since one directory can be
+    /// spelled several ways there; the branch exactly.
     pub(crate) fn find(
         &self,
         host: Option<&RemoteTarget>,
         root: &str,
+        branch: Option<&str>,
         family: PathFamily,
     ) -> Option<AgentPullRequest> {
+        let branch = branch?;
         self.hosts
             .get(&host.cloned())?
             .values()
@@ -42,7 +46,10 @@ impl AgentPullRequests {
                 statuses
                     .checkouts
                     .iter()
-                    .find(|(path, _)| family.paths_equal(path, root))
+                    .find(|(path, _)| {
+                        family.paths_equal(path, root)
+                            && statuses.branches.get(*path).map(String::as_str) == Some(branch)
+                    })
                     .map(|(_, pull_request)| AgentPullRequest {
                         number: pull_request.number,
                         status: pull_request.status,

@@ -149,12 +149,13 @@ stable release before the signing workflow completes.
    and Windows.
 5. **Packaging.** Release archives build for Linux x86-64 and ARM64, macOS x86-64 and ARM64, and
    Windows x86-64. Linux payloads build in pinned manylinux 2.28 containers, and the workflow rejects
-   binaries whose ELF version requirements exceed `GLIBC_2.28`. Each payload embeds the accepted
-   notes through `ROZI_RELEASE_NOTES` and `build.rs` for its What's new dialog, unless they are the
-   no-user-facing-changes placeholder. Builds made anywhere else embed nothing.
-6. **Payload smoke test.** Each payload reports the tag version and prints help, and
-   `rozi --release-notes` prints exactly the bytes of the notes it was given, or nothing when it
-   was given none.
+   binaries whose ELF version requirements exceed `GLIBC_2.28`; macOS payloads must target macOS
+   13.0. Each payload embeds the accepted notes through `ROZI_RELEASE_NOTES` and `build.rs` for its
+   What's new dialog, unless they are the no-user-facing-changes placeholder. Builds made anywhere
+   else embed nothing.
+6. **Payload smoke test.** Each payload reports the tag version and both terminal engines and
+   prints help, and `rozi --release-notes` prints exactly the bytes of the notes it was given, or
+   nothing when it was given none.
 7. **Archive smoke test.** Each final archive is extracted and smoke-tested. On Windows this also
    covers launcher version selection, argument and environment forwarding, working-directory
    forwarding, and exit-code propagation.
@@ -184,7 +185,8 @@ rozi-<version>-x86_64-pc-windows-msvc.zip
 
 Each archive has a root directory with the same name. Unix archives contain `rozi`; the Windows
 archive contains `rozi.exe` and `rozi-launcher.exe`. Every archive also contains `README.md`,
-`LICENSE`, and `examples/`.
+`LICENSE`, `THIRD_PARTY_NOTICES.md`, and `examples/`. Payloads are built with the experimental
+`ghostty-engine` feature; see [Terminal engines](terminal-engines.md).
 
 The publication bundle also contains:
 

@@ -37,6 +37,10 @@ package() {
 	# installed - put their docs at the same path.
 	install -Dm644 "$_root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 	install -Dm644 "$_root/README.md" "$pkgdir/usr/share/doc/$_pkgname/README.md"
+	# The release binary also links libghostty-vt and its bundled code (the experimental Ghostty
+	# terminal engine); their licence texts.
+	install -Dm644 "$_root/THIRD_PARTY_NOTICES.md" \
+		"$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_NOTICES.md"
 
 	# Sample configuration and the bundled example extensions. Installed file by file rather than
 	# with `cp -r` so the archive's own modes cannot carry through: the extension payloads are

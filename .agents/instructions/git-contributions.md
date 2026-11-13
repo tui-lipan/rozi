@@ -58,6 +58,6 @@ explanations under Verification.
 ## Pushing and releases
 
 Commit, push, tag, publish, or create a release only when the user asks. Before any of those actions,
-inspect the exact commits and refs involved. Release archives include `README.md`, `LICENSE`, and
-`examples/`; `.github/workflows/release.yml` is the source of truth for the current matrix and
+inspect the exact commits and refs involved. Release archives include `README.md`, `LICENSE`,
+`THIRD_PARTY_NOTICES.md`, and `examples/`; `.github/workflows/release.yml` is the source of truth for the current matrix and
 signing flow.

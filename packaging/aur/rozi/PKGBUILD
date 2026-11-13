@@ -37,7 +37,9 @@ build() {
 	export CARGO_TARGET_DIR=target
 	# `--bin rozi` for explicitness. The manifest's other binary is the Windows activation launcher,
 	# which is gated behind the non-default `windows-launcher` feature and so would not be built
-	# here in any case.
+	# here in any case. Without the experimental `ghostty-engine` feature, like any default source
+	# build: it would need Zig 0.17. THIRD_PARTY_NOTICES.md covers only that engine's native code,
+	# so this package does not install it.
 	cargo build --frozen --release --bin rozi
 }
 

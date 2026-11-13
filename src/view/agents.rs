@@ -112,6 +112,42 @@ pub(crate) struct GlobalAgentRow {
     /// [`crate::view::sidebar::agents::is_background_run`]. Another session's summary does not say,
     /// so its rows are never marked.
     pub background: bool,
+    /// Which host to ask about the checkout's pull request, and as what repository: the session's
+    /// own host. `None` outside a checkout, and for one reached through an SSH shell in a pane,
+    /// whose paths belong to a machine rozi has no channel to.
+    pub pull_request_source: Option<PullRequestSource>,
+    /// The pull request of the branch checked out where the agent works, once its host has said.
+    pub pull_request: Option<crate::git::pull_requests::PullRequestStatus>,
+}
+
+/// A repository whose pull requests a host can look up, named by that host's path for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PullRequestSource {
+    pub host: Option<crate::session::remote::RemoteTarget>,
+    pub repository: String,
+}
+
+/// Where to ask about `checkout`'s pull request when it is on `host`, and what that host has said.
+fn pull_request_of(
+    state: &State,
+    host: Option<&crate::session::remote::RemoteTarget>,
+    checkout: Option<&AgentCheckout>,
+) -> (
+    Option<PullRequestSource>,
+    Option<crate::git::pull_requests::PullRequestStatus>,
+) {
+    let Some(checkout) = checkout else {
+        return (None, None);
+    };
+    (
+        Some(PullRequestSource {
+            host: host.cloned(),
+            repository: checkout.repository.clone(),
+        }),
+        state
+            .agent_pull_requests
+            .find(host, &checkout.root, checkout.family),
+    )
 }
 
 impl GlobalAgentRow {
@@ -228,6 +264,11 @@ impl GlobalAgentRow {
             .into_iter()
             .chain(self.place())
             .chain(self.reason.clone())
+            .chain(
+                self.pull_request
+                    .as_ref()
+                    .map(|pull_request| format!("#{}", pull_request.number)),
+            )
             .collect()
     }
 
@@ -269,6 +310,11 @@ fn summary_row(
 ) -> GlobalAgentRow {
     let checkout =
         crate::session::protocol::checkout_of(projects, &agent.session, agent.pane(), agent.row());
+    let (pull_request_source, pull_request) = pull_request_of(
+        state,
+        target,
+        checkout.map(AgentCheckout::from_summary).as_ref(),
+    );
     GlobalAgentRow {
         location: AgentLocation::OtherSession {
             target: target.cloned(),
@@ -294,6 +340,8 @@ fn summary_row(
         branch: checkout.and_then(|checkout| checkout.branch.clone()),
         ordinal: None,
         background: false,
+        pull_request_source,
+        pull_request,
     }
 }
 
@@ -438,6 +486,11 @@ fn live_attachment_rows(
         .map(|(elapsed, _)| elapsed);
         let seat = (row.pane_id, row.order);
         let background = crate::view::sidebar::agents::is_background_run(&row);
+        let (pull_request_source, pull_request) = if row.cwd_host.is_none() {
+            pull_request_of(state, attachment.remote_target.as_ref(), checkout.as_ref())
+        } else {
+            (None, None)
+        };
         let global = GlobalAgentRow {
             location: if std::ptr::eq(attachment, state.current()) {
                 AgentLocation::Here {
@@ -469,6 +522,8 @@ fn live_attachment_rows(
             branch,
             ordinal: None,
             background,
+            pull_request_source,
+            pull_request,
         };
         rows.push((global, seat));
     }
@@ -764,6 +819,8 @@ mod tests {
             branch: Some("worktree-fix".into()),
             ordinal: None,
             background: false,
+            pull_request_source: None,
+            pull_request: None,
         };
         assert_eq!(row.title(), "fix login redirect");
         assert_eq!(row.label(), "fix login redirect · Claude Code · dev");
@@ -867,14 +924,44 @@ mod tests {
                 rows: Vec::new(),
             }],
         );
+        // The host answers for the whole repository; the agent's pull request is its worktree's.
+        let pull_request =
+            |number, status| crate::git::pull_requests::PullRequestStatus { number, status };
+        state.agent_pull_requests.hosts.insert(
+            Some(RemoteTarget::Alias("workbox".into())),
+            [(
+                "/src/rozi".to_string(),
+                crate::git::pull_requests::WorktreeStatuses {
+                    checkouts: [
+                        (
+                            "/src/rozi".to_string(),
+                            pull_request(1, crate::git::pull_requests::WorkStatus::Open),
+                        ),
+                        (
+                            "/src/rozi/.worktrees/fix".to_string(),
+                            pull_request(7, crate::git::pull_requests::WorkStatus::Failed),
+                        ),
+                    ]
+                    .into(),
+                    ..Default::default()
+                },
+            )]
+            .into(),
+        );
         let rows = global_agent_rows(&state);
         assert_eq!(rows[0].task.as_deref(), Some("fix reconnect"));
         assert_eq!(rows[0].place().as_deref(), Some("rozi (fix-ssh)"));
-        assert!(
-            rows[0]
-                .search_aliases(&state)
-                .contains(&"rozi (fix-ssh)".to_string())
+        assert_eq!(
+            rows[0].pull_request_source,
+            Some(PullRequestSource {
+                host: Some(RemoteTarget::Alias("workbox".into())),
+                repository: "/src/rozi".into(),
+            })
         );
+        assert_eq!(rows[0].pull_request.as_ref().map(|pr| pr.number), Some(7));
+        let aliases = rows[0].search_aliases(&state);
+        assert!(aliases.contains(&"rozi (fix-ssh)".to_string()));
+        assert!(aliases.contains(&"#7".to_string()));
     }
 
     /// Two untitled runs of one program in one session and checkout read the same, so each is

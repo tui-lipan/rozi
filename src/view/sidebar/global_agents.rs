@@ -44,6 +44,8 @@ struct Checkout<'a> {
     root: Option<&'a str>,
     repository: Option<&'a str>,
     branch: Option<&'a str>,
+    /// The pull request of `branch`, as the first of its agents to know it says.
+    pull_request: Option<&'a crate::git::pull_requests::PullRequestStatus>,
     /// The repository's name, disambiguated against the host's other repositories.
     label: String,
     agents: Vec<&'a GlobalAgentRow>,
@@ -139,7 +141,10 @@ fn checkouts<'a>(agents: &[&'a GlobalAgentRow]) -> Vec<Checkout<'a>> {
         let checkout = agent.checkout.as_ref();
         let key = checkout.map(crate::view::agents::AgentCheckout::root_key);
         match checkouts.iter_mut().find(|known| known.key == key) {
-            Some(known) => known.agents.push(agent),
+            Some(known) => {
+                known.pull_request = known.pull_request.or(agent.pull_request.as_ref());
+                known.agents.push(agent);
+            }
             None => {
                 checkouts.push(Checkout {
                     key,
@@ -148,6 +153,7 @@ fn checkouts<'a>(agents: &[&'a GlobalAgentRow]) -> Vec<Checkout<'a>> {
                     root: checkout.map(|checkout| checkout.root.as_str()),
                     repository: checkout.map(|checkout| checkout.repository.as_str()),
                     branch: checkout.and_then(|checkout| checkout.branch.as_deref()),
+                    pull_request: agent.pull_request.as_ref(),
                     label: String::new(),
                     agents: vec![agent],
                 });
@@ -253,6 +259,7 @@ impl Layout<'_> {
             self.group_row(
                 checkout.label.clone(),
                 checkout.repository.and(checkout.branch_label()),
+                checkout.pull_request,
                 if checkout.root.is_none() {
                     Label::Elsewhere
                 } else {
@@ -301,6 +308,7 @@ impl Layout<'_> {
                 self.group_row(
                     checkout.label.clone(),
                     None,
+                    None,
                     Label::Project,
                     &agents,
                     key,
@@ -326,6 +334,7 @@ impl Layout<'_> {
                     self.group_row(
                         branch,
                         None,
+                        sibling.pull_request,
                         Label::Branch,
                         &sibling.agents,
                         key,
@@ -348,6 +357,7 @@ impl Layout<'_> {
         &self,
         label: String,
         note: Option<String>,
+        pull_request: Option<&crate::git::pull_requests::PullRequestStatus>,
         kind: Label,
         agents: &[&GlobalAgentRow],
         key: TreeExpansionKey,
@@ -368,6 +378,14 @@ impl Layout<'_> {
             status_counts(agents, theme)
         };
         let mut parts: Vec<(String, Style)> = note.into_iter().map(|note| (note, dim)).collect();
+        // The branch's pull request by its number alone, its status in its colour: the tab is too
+        // narrow for the word, which the Agents view and Worktrees spell out.
+        parts.extend(pull_request.map(|pull_request| {
+            (
+                format!("#{}", pull_request.number),
+                crate::view::vocabulary::work_status_style(theme, pull_request.status),
+            )
+        }));
         if !parts.is_empty() && !counts.is_empty() {
             parts.push(("·".into(), dim));
         }

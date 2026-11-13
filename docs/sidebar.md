@@ -162,7 +162,8 @@ backend                      migrate
 ```
 
 A heading names each machine once another machine has agents, `LOCAL` for this one. Beneath it,
-each checkout is a row named by its repository, with its branch on the right. A repository's primary
+each checkout is a row named by its repository, with its branch on the right, followed by the
+branch's pull request number in the color of its status. A repository's primary
 checkout comes first, then its worktrees by branch, and agents outside any Git checkout come last,
 under **Elsewhere**.
 

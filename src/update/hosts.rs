@@ -54,6 +54,10 @@ pub(crate) fn sync(ctx: &mut Context<AppRoot>) {
         .remote
         .monitors
         .retain(|monitor| targets.contains(&monitor.target));
+    ctx.state
+        .agent_pull_requests
+        .hosts
+        .retain(|host, _| host.as_ref().is_none_or(|target| targets.contains(target)));
     for target in targets {
         if ctx
             .state
@@ -74,7 +78,14 @@ pub(crate) fn sync(ctx: &mut Context<AppRoot>) {
             ctx.state.config.remote.clone(),
             move |snapshot| {
                 let (rows, agents, projects) = match snapshot {
-                    Ok(snapshot) => (Ok(snapshot.rows), snapshot.agents, snapshot.projects),
+                    Ok(snapshot) => {
+                        link.send(Msg::PullRequests {
+                            target: Some(destination.clone()),
+                            generation: Some(generation),
+                            repositories: snapshot.pull_requests,
+                        });
+                        (Ok(snapshot.rows), snapshot.agents, snapshot.projects)
+                    }
                     Err(error) => (Err(error), Vec::new(), Vec::new()),
                 };
                 link.send(Msg::HostMetadata {
@@ -149,6 +160,10 @@ pub(crate) fn apply(
             // `blocked` token beside one would claim a live prompt on a machine nothing can reach.
             ctx.state.remote.agents.remove(&target);
             ctx.state.remote.projects.remove(&target);
+            ctx.state
+                .agent_pull_requests
+                .hosts
+                .remove(&Some(target.clone()));
             // What this client had seen of the host's agents goes with them, so the snapshot that
             // arrives on reconnecting is a baseline again rather than a diff against a stale count.
             ctx.state.prune_agent_attention();

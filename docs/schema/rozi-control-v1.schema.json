@@ -254,6 +254,197 @@
       ],
       "type": "object"
     },
+    "AgentRequestDirection": {
+      "description": "Which of the session's requests `agent-requests` lists, relative to the calling agent.",
+      "oneOf": [
+        {
+          "const": "incoming",
+          "description": "Sent to the caller.",
+          "type": "string"
+        },
+        {
+          "const": "outgoing",
+          "description": "Sent by the caller.",
+          "type": "string"
+        }
+      ]
+    },
+    "AgentRequestInfo": {
+      "description": "One request from an agent, or from a script, to another agent of the same session.",
+      "properties": {
+        "created_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The asking agent, absent when the caller was not an agent."
+        },
+        "from_native_session": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "parent": {
+          "description": "The request the asking agent was answering when it asked this one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why the request is still queued, or why it failed or was cancelled.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "response": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentResponse"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "root": {
+          "description": "The request this one descends from at the top of its chain, or its own id.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/AgentRequestState"
+        },
+        "to": {
+          "$ref": "#/$defs/AgentRef"
+        },
+        "to_native_session": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "root",
+        "to",
+        "prompt",
+        "state",
+        "created_at_unix_ms",
+        "updated_at_unix_ms"
+      ],
+      "type": "object"
+    },
+    "AgentRequestList": {
+      "description": "What `agent-requests` answers with, oldest first. `agent-request` returns one in full.",
+      "items": {
+        "$ref": "#/$defs/AgentRequestSummary"
+      },
+      "type": "array"
+    },
+    "AgentRequestState": {
+      "description": "Where an agent request is.",
+      "oneOf": [
+        {
+          "enum": [
+            "answered",
+            "failed",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "queued",
+          "description": "Waiting to be delivered; `reason` says why.",
+          "type": "string"
+        },
+        {
+          "const": "active",
+          "description": "Typed into the agent and not yet answered.",
+          "type": "string"
+        }
+      ]
+    },
+    "AgentRequestSummary": {
+      "description": "A request without its prompt and answer, as `agent-requests` lists it.",
+      "properties": {
+        "created_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/AgentRequestState"
+        },
+        "to": {
+          "$ref": "#/$defs/AgentRef"
+        },
+        "updated_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "root",
+        "to",
+        "state",
+        "created_at_unix_ms",
+        "updated_at_unix_ms"
+      ],
+      "type": "object"
+    },
     "AgentResponse": {
       "description": "Content supplied by an integration, separate from lifecycle metadata.",
       "properties": {
@@ -353,7 +544,8 @@
         "transcript",
         "acp",
         "terminal",
-        "alternate-screen-history"
+        "alternate-screen-history",
+        "agent-cli"
       ],
       "type": "string"
     },
@@ -2364,6 +2556,130 @@
           "type": "object"
         },
         {
+          "description": "Ask another agent of the caller's session, without waiting: the session delivers the prompt\nwhen the agent is ready and keeps the answer. The caller is derived from the request's\n`source_session` and `source_pane`.",
+          "properties": {
+            "cmd": {
+              "const": "agent-ask",
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/AgentTarget"
+            }
+          },
+          "required": [
+            "cmd",
+            "target",
+            "prompt"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Answer a request sent to the calling agent.",
+          "properties": {
+            "cmd": {
+              "const": "agent-reply",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Hold the reply until a request is answered, failed, or cancelled.",
+          "properties": {
+            "cmd": {
+              "const": "agent-await",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "timeout_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Read one request.",
+          "properties": {
+            "cmd": {
+              "const": "agent-request",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "List the session's requests, or those to or from the calling agent.",
+          "properties": {
+            "cmd": {
+              "const": "agent-requests",
+              "type": "string"
+            },
+            "direction": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentRequestDirection"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Cancel a request the caller made.",
+          "properties": {
+            "cmd": {
+              "const": "agent-cancel",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Report an agent's state from its own integration, for a pane.",
           "properties": {
             "agent": {
@@ -4211,6 +4527,130 @@
           "required": [
             "cmd",
             "target"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Ask another agent of the caller's session, without waiting: the session delivers the prompt\nwhen the agent is ready and keeps the answer. The caller is derived from the request's\n`source_session` and `source_pane`.",
+          "properties": {
+            "cmd": {
+              "const": "agent-ask",
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/AgentTarget"
+            }
+          },
+          "required": [
+            "cmd",
+            "target",
+            "prompt"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Answer a request sent to the calling agent.",
+          "properties": {
+            "cmd": {
+              "const": "agent-reply",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Hold the reply until a request is answered, failed, or cancelled.",
+          "properties": {
+            "cmd": {
+              "const": "agent-await",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "timeout_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Read one request.",
+          "properties": {
+            "cmd": {
+              "const": "agent-request",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "List the session's requests, or those to or from the calling agent.",
+          "properties": {
+            "cmd": {
+              "const": "agent-requests",
+              "type": "string"
+            },
+            "direction": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentRequestDirection"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Cancel a request the caller made.",
+          "properties": {
+            "cmd": {
+              "const": "agent-cancel",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
           ],
           "type": "object"
         },
@@ -9090,5 +9530,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 4
+  "x-rozi-schema-version": 5
 }

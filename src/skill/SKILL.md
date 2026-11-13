@@ -24,6 +24,7 @@ single command, needs keystrokes, or its result is what the screen looks like.
 | Screenshot a pane or the whole UI for a report or pull request | `capture-pane --render png`, `capture-ui --render png` |
 | Record a flow and export it as frames, video input, or an asciinema cast | [`record`](#record-a-pane-or-the-ui) |
 | Delegate a task to another coding agent, or run several in parallel, and collect the answers | [`agents prompt --wait turn --result`](#coding-agents-in-panes) |
+| Ask another agent in your session without waiting for the answer | [`agents ask`](#coding-agents-in-panes) |
 | Read what another pane shows, such as a failing build beside you | `list-panes`, then `capture-pane --scrollback` |
 | Arrange panes and workspaces when the user asks | [`layout` and `pane`](#arrange-panes) |
 | Ask the user to choose or type something, or report a result | `pick`, `prompt`, `notify`, `status` |
@@ -286,6 +287,27 @@ reply; `agents response` reads the latest one later. The JSON `response` object 
 `--capture text` or `--capture ansi` adds a terminal snapshot to the wait reply and combines with
 `--result`. `result.kind` is then `terminal` and `result.capture` holds the visible terminal,
 chrome and older output included. Treat it as terminal content, not an assistant message.
+
+**Asking.** `rozi agents ask --ref '<JSON>' -- '<TEXT>'` (or `--target <PANE_ID>`) queues a request
+for another agent in the same session and returns at once with the request and its `id`. Rozi types
+it into the target when that agent is stopped and it is safe to type; until then the request is
+`queued`, with a `reason`. Keep working after `ask`. Run `rozi agents await <ID> --timeout <DUR>`
+only when your work depends on the answer; a timeout leaves the request in place, so await again.
+To block on one agent right now, use `agents prompt --wait turn --result` instead.
+
+- A request that arrives in your own prompt starts with `Request <id>` and ends by naming the reply
+  command. Pipe the whole answer to it; the reply text is all the asker receives:
+
+  ```bash
+  rozi agents reply <ID> --stdin <<'EOF'
+  The parser is fine; the lexer drops a trailing newline in src/lex.rs.
+  EOF
+  ```
+
+- If `await` refuses because the other agent has asked you something (a wait cycle), read that
+  request with `rozi agents request <ID>`, `reply` to it, then await again.
+- `rozi agents requests --incoming` or `--outgoing` lists them, and `rozi agents cancel <ID>`
+  withdraws one you asked. A request is `queued`, `active`, `answered`, `failed`, or `cancelled`.
 
 **Failures.** They distinguish a gone agent, a replacement, a stale reference, and a timeout. Do
 not blindly retry them. When `agents prompt` refuses because the pane does not say which

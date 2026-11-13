@@ -428,7 +428,13 @@ fn session_worker_permitted(command: &ControlCommand) -> bool {
         | ControlCommand::RecordStart { .. }
         | ControlCommand::RecordStop { .. }
         | ControlCommand::RecordList
-        | ControlCommand::RecordMark { .. } => true,
+        | ControlCommand::RecordMark { .. }
+        | ControlCommand::AgentAsk { .. }
+        | ControlCommand::AgentReply { .. }
+        | ControlCommand::AgentAwait { .. }
+        | ControlCommand::AgentRequest { .. }
+        | ControlCommand::AgentRequests { .. }
+        | ControlCommand::AgentCancel { .. } => true,
         ControlCommand::ListAttachedPanes
         | ControlCommand::PaneReveal { .. }
         | ControlCommand::AgentsOverview

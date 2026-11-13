@@ -29,7 +29,7 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// third-party software validates against, and no two development builds negotiate with it, so
 /// intermediate commits need no revisions of their own. Any change counts; the common one is a
 /// closed vocabulary such as commands, error codes, or event names gaining a value.
-pub const API_SCHEMA_VERSION: u32 = 4;
+pub const API_SCHEMA_VERSION: u32 = 5;
 
 /// The published JSON Schema, as `rozi api schema` prints it. CI fails when the checked-in file
 /// differs from what the wire types generate, so embedding the file gives every build the schema
@@ -157,6 +157,12 @@ impl ControlCommand {
             | Self::RecordUiMark { .. }
             | Self::Pick { .. }
             | Self::Prompt { .. } => None,
+            Self::AgentAsk { .. }
+            | Self::AgentReply { .. }
+            | Self::AgentAwait { .. }
+            | Self::AgentRequest { .. }
+            | Self::AgentRequests { .. }
+            | Self::AgentCancel { .. } => Some(crate::session::protocol::Capability::AgentRequests),
             Self::Unknown => {
                 debug_assert!(false, "an unknown control command must never be sent");
                 None
@@ -756,6 +762,27 @@ pub enum ControlCommand {
     },
     /// Read the latest response for one exact agent incarnation.
     AgentResponse { target: AgentTarget },
+    /// Ask another agent of the caller's session, without waiting: the session delivers the prompt
+    /// when the agent is ready and keeps the answer. The caller is derived from the request's
+    /// `source_session` and `source_pane`.
+    AgentAsk { target: AgentTarget, prompt: String },
+    /// Answer a request sent to the calling agent.
+    AgentReply { id: String, text: String },
+    /// Hold the reply until a request is answered, failed, or cancelled.
+    AgentAwait {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u64>,
+    },
+    /// Read one request.
+    AgentRequest { id: String },
+    /// List the session's requests, or those to or from the calling agent.
+    AgentRequests {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        direction: Option<AgentRequestDirection>,
+    },
+    /// Cancel a request the caller made.
+    AgentCancel { id: String },
     /// Report an agent's state from its own integration, for a pane.
     AgentReport {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -972,6 +999,17 @@ impl ControlCommand {
 pub enum AgentTarget {
     Pane(PaneId),
     Ref(crate::session::protocol::AgentRef),
+}
+
+/// Which of the session's requests `agent-requests` lists, relative to the calling agent.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum AgentRequestDirection {
+    /// Sent to the caller.
+    Incoming,
+    /// Sent by the caller.
+    Outgoing,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -2530,6 +2568,8 @@ pub struct AgentResponsePayload {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
+    #[serde(deserialize_with = "crate::session::protocol::tolerant::deserialize")]
+    #[cfg_attr(feature = "schema-gen", schemars(with = "AgentResponseSource"))]
     pub source: AgentResponseSource,
     pub fidelity: AgentResponseFidelity,
     pub complete: bool,
@@ -2555,7 +2595,98 @@ pub enum AgentResponseSource {
     Acp,
     Terminal,
     AlternateScreenHistory,
+    // An explicit `agents reply` to a request. (A plain comment, as for `ControlErrorCode`.)
+    AgentCli,
 }
+
+/// Where an agent request is.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum AgentRequestState {
+    /// Waiting to be delivered; `reason` says why.
+    Queued,
+    /// Typed into the agent and not yet answered.
+    Active,
+    Answered,
+    Failed,
+    Cancelled,
+}
+
+impl AgentRequestState {
+    pub fn is_resolved(self) -> bool {
+        matches!(self, Self::Answered | Self::Failed | Self::Cancelled)
+    }
+}
+
+/// One request from an agent, or from a script, to another agent of the same session.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct AgentRequestInfo {
+    pub id: String,
+    /// The request this one descends from at the top of its chain, or its own id.
+    pub root: String,
+    /// The request the asking agent was answering when it asked this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    /// The asking agent, absent when the caller was not an agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<crate::session::protocol::AgentRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_native_session: Option<String>,
+    pub to: crate::session::protocol::AgentRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_native_session: Option<String>,
+    pub prompt: String,
+    pub state: AgentRequestState,
+    /// Why the request is still queued, or why it failed or was cancelled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response: Option<AgentResponse>,
+    pub created_at_unix_ms: u64,
+    pub updated_at_unix_ms: u64,
+}
+
+/// A request without its prompt and answer, as `agent-requests` lists it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct AgentRequestSummary {
+    pub id: String,
+    pub root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<crate::session::protocol::AgentRef>,
+    pub to: crate::session::protocol::AgentRef,
+    pub state: AgentRequestState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub created_at_unix_ms: u64,
+    pub updated_at_unix_ms: u64,
+}
+
+impl From<&AgentRequestInfo> for AgentRequestSummary {
+    fn from(request: &AgentRequestInfo) -> Self {
+        Self {
+            id: request.id.clone(),
+            root: request.root.clone(),
+            parent: request.parent.clone(),
+            from: request.from.clone(),
+            to: request.to.clone(),
+            state: request.state,
+            reason: request.reason.clone(),
+            created_at_unix_ms: request.created_at_unix_ms,
+            updated_at_unix_ms: request.updated_at_unix_ms,
+        }
+    }
+}
+
+/// What `agent-requests` answers with, oldest first. `agent-request` returns one in full.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(transparent)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct AgentRequestList(pub Vec<AgentRequestSummary>);
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -3059,6 +3190,7 @@ mod tests {
         for cap in crate::session::protocol::Capability::ALL {
             let expected = match cap {
                 crate::session::protocol::Capability::DragAndDrop => "0.0.46",
+                crate::session::protocol::Capability::AgentRequests => "0.0.47",
                 _ => "0.0.44",
             };
             assert_eq!(cap.introduced_in(), expected, "{cap}");

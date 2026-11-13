@@ -47,6 +47,13 @@ impl AgentResponseStore {
             .map(|entry| &entry.response)
     }
 
+    /// An id for a response kept outside this store, in sequence with the ones in it.
+    pub fn next_id(&mut self) -> u64 {
+        self.generation += 1;
+        self.generation
+    }
+
+    /// The first response to the turn `fence` started.
     pub fn after(
         &self,
         reference: &AgentRef,

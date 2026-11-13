@@ -407,6 +407,46 @@ returns the latest retained response, or JSON `null` when none exists. Responses
 session restart. Each response is limited to 1 MiB; terminal history is truncated with
 `truncated: true`.
 
+### Ask another agent
+
+An agent can hand work to another agent in its session and keep going. `agents ask` returns at
+once with a request id; the answer is collected for you:
+
+```bash
+id=$(rozi agents ask --ref "$REVIEWER" --format json -- "Review the parser changes" | jq -r .id)
+rozi agents await "$id" --timeout 10m
+```
+
+rozi types the request into the other agent once it is idle, done, or in error, shows no dialog,
+and nobody has typed into its pane for two seconds. The typed text names the request and how to
+answer it: `rozi agents reply <ID> --stdin`, with the answer on stdin. An agent receives one
+request at a time, and an approval prompt does not end its turn. Without a reply, the answer is the
+agent's [integration response](#read-the-agents-response), or else its terminal when the turn
+ends, read the same way, including an alternate-screen transcript.
+
+| State | Meaning |
+| --- | --- |
+| `queued` | Not typed yet; `reason` says what it waits for. A reply answers it without typing it. |
+| `active` | Typed into the agent. |
+| `answered` | `response` holds the answer. The first answer stands; a different reply is refused with `conflict`. |
+| `failed` | The agent exited, was replaced, or moved to another conversation. |
+| `cancelled` | Cancelled by whoever asked, or the asking agent left or changed conversation before delivery. |
+
+`agents await` prints the answer, or the request's state when it failed or was cancelled. A
+request asked while answering another belongs to its chain (`parent` and `root` in JSON). Awaiting
+a request fails at once with `conflict` when a request from its chain is waiting on you, since
+neither could finish; answer that one first. `agents requests --incoming` or `--outgoing` lists
+the requests to or from you without their text, which `agents request <ID>` shows, and
+`agents cancel <ID>` cancels one you asked.
+
+These commands always go to the session server of the pane they run in; from outside rozi, pass
+`--session`, and the request has no asker. A prompt is limited to 64 KiB, an agent to 16 queued
+requests, a chain to 8 levels and 64 requests, and a session to 1024 live requests. A request
+counts as live until it is resolved and its delivery turn has ended. Replies whose delivery turns
+have not ended share a 16 MiB storage budget, including their prompts. A reply that exceeds the
+remaining budget is refused with `conflict`; the request remains unanswered. Requests do not
+survive a session restart.
+
 ### Report state from agent hooks
 
 Agent hooks can report state that screen detection cannot see:

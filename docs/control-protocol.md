@@ -13,7 +13,8 @@ rozi serves the same request and response documents on two transports:
   length-prefixed session-protocol frame. See [Session transport](#session-transport).
 
 The complete request vocabulary, including `context` and the agent requests (`agents-list`, `agent-get`,
-`agent-read`, `agent-response`, `agent-wait`, `agent-prompt`, `agent-report`, and `agent-release`) that this page
+`agent-read`, `agent-response`, `agent-wait`, `agent-prompt`, `agent-ask`, `agent-reply`, `agent-await`,
+`agent-request`, `agent-requests`, `agent-cancel`, `agent-report`, and `agent-release`) that this page
 does not spell out, is described by the [JSON Schema](control.md#json-schema).
 
 ## Caller identity and prompt results
@@ -720,7 +721,8 @@ gains no authority an attached client would not have.
 
 A session server answers `list-panes`, `layout-get`, `layout-set`, `pane-set`, `pane-move`,
 `pane-swap`, `pane-close`, `context`, `agents-list`, `agent-get`, `agent-read`, `agent-response`, `agent-wait`,
-`agent-prompt`, `agent-report`, `agent-release`, `metrics`, `capture-pane`, `send-text`,
+`agent-prompt`, `agent-ask`, `agent-reply`, `agent-await`, `agent-request`, `agent-requests`,
+`agent-cancel`, `agent-report`, `agent-release`, `metrics`, `capture-pane`, `send-text`,
 `send-keys`, `new-pane`, `set-status`, `pane-logging`, `record-start`, `record-stop`, `record-list`,
 `record-mark`, `extensions-deploy`, `extensions-undeploy`, and `extensions-status`. It refuses
 every other `cmd` with `ok: false` and a reason naming what the request needs a UI for.
@@ -737,6 +739,7 @@ These requests behave differently than against a UI:
 | `metrics` | Returns only `sampled_at_unix_ms` and `server`, sampled at request time, so `age_ms` is `0` and `stale` is `false`. |
 | `new-pane` | `focus` must be `false`. Refused with `not-controller` while any client holds layout control. The server reads `[[rules]]` and the shell from its own config, picks the pane id, appends the pane to the resolved workspace (default 1) in the shared layout, and broadcasts the new revision as client `0`. `pty_ready` reports whether the pane's process started. |
 | `send-text`, `send-keys` | Refused while the session's input lock is on, which only an attached client can release. |
+| `agent-ask`, `agent-reply`, `agent-await`, `agent-request`, `agent-requests`, `agent-cancel` | Answered only by a session server. The calling agent is the one `source_pane` names, when `source_session` is this server; otherwise the caller is not an agent. |
 | Any request with `extension` provenance | Refused. The generation is minted per UI process, so a server cannot check it. |
 
 ### Extension deployments

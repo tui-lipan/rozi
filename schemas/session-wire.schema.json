@@ -158,6 +158,21 @@
       ],
       "type": "object"
     },
+    "AgentRequestDirection": {
+      "description": "Which of the session's requests `agent-requests` lists, relative to the calling agent.",
+      "oneOf": [
+        {
+          "const": "incoming",
+          "description": "Sent to the caller.",
+          "type": "string"
+        },
+        {
+          "const": "outgoing",
+          "description": "Sent by the caller.",
+          "type": "string"
+        }
+      ]
+    },
     "AgentResponseFidelity": {
       "enum": [
         "semantic",
@@ -206,7 +221,8 @@
         "transcript",
         "acp",
         "terminal",
-        "alternate-screen-history"
+        "alternate-screen-history",
+        "agent-cli"
       ],
       "type": "string"
     },
@@ -3541,6 +3557,130 @@
           "required": [
             "cmd",
             "target"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Ask another agent of the caller's session, without waiting: the session delivers the prompt\nwhen the agent is ready and keeps the answer. The caller is derived from the request's\n`source_session` and `source_pane`.",
+          "properties": {
+            "cmd": {
+              "const": "agent-ask",
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/AgentTarget"
+            }
+          },
+          "required": [
+            "cmd",
+            "target",
+            "prompt"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Answer a request sent to the calling agent.",
+          "properties": {
+            "cmd": {
+              "const": "agent-reply",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Hold the reply until a request is answered, failed, or cancelled.",
+          "properties": {
+            "cmd": {
+              "const": "agent-await",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "timeout_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Read one request.",
+          "properties": {
+            "cmd": {
+              "const": "agent-request",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "List the session's requests, or those to or from the calling agent.",
+          "properties": {
+            "cmd": {
+              "const": "agent-requests",
+              "type": "string"
+            },
+            "direction": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentRequestDirection"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Cancel a request the caller made.",
+          "properties": {
+            "cmd": {
+              "const": "agent-cancel",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
           ],
           "type": "object"
         },
@@ -8769,6 +8909,7 @@
   "description": "Control frames exchanged between a rozi session server and its clients, CLI callers, and remote proxies. Generated; see dev/wire-compatibility.md for the rules every change to it follows.",
   "title": "Rozi session wire protocol",
   "x-rozi-capabilities": [
+    "agent-requests",
     "agent-summaries",
     "client-handoff",
     "drag-and-drop",

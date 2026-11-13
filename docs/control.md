@@ -241,6 +241,12 @@ attached.
 | `agents wait TARGET --until STATE --timeout DURATION [--format text\|json]` | Wait atomically for semantic state. | yes |
 | `agents prompt TARGET [--wait STATE --timeout DURATION] [--capture text\|ansi] [--result] [--allow-working] [--format text\|json] TEXT` | Validate, submit, and optionally wait atomically. | yes |
 | `agents response TARGET [--format text\|json]` | Read the latest retained agent response, including its source and fidelity. | yes |
+| `agents ask TARGET [--format text\|json] -- TEXT` | [Ask another agent](agents.md#ask-another-agent) without waiting; prints the request. | yes |
+| `agents reply ID --stdin` | Answer a request sent to the calling agent with the text on stdin. | yes |
+| `agents await ID --timeout DURATION [--format text\|json]` | Wait until a request is answered, failed, or cancelled, and print its answer. | yes |
+| `agents request ID [--format text\|json]` | Show one request. | yes |
+| `agents requests [--incoming\|--outgoing] [--format text\|json]` | List the session's requests, or those to or from the calling agent. | yes |
+| `agents cancel ID` | Cancel a request you asked. | yes |
 | `agents report --agent ID --integration TOKEN --state STATE --seq N [--reason TEXT] [--native-session ID] [--unless-quiet STATE [--ended]] [--target ID]` | Publish incarnation- and sequence-fenced native agent state. | yes |
 | `agents release --integration TOKEN --seq N [--target ID]` | Release integration authority. | yes |
 | `metrics [--format text\|json]` | Read bounded client and cached server resource counters. | yes |
@@ -318,11 +324,12 @@ to a UI or session:
 {
   "release": "0.0.44",
   "api": 1,
-  "schema": 4,
+  "schema": 5,
   "session_protocol": 52,
   "session_protocol_min": 52,
   "capabilities": [
     "agent-prompt-results",
+    "agent-requests",
     "agent-responses",
     "agent-waits",
     "attached-control",

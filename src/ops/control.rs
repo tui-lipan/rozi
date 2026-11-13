@@ -204,6 +204,17 @@ pub(crate) fn handle_control_request(
             crate::control::ControlErrorCode::Unsupported,
             "extension deployments belong to a session server; pass `--session <NAME>`",
         ),
+        // The CLI sends these from a pane to its own session server; reaching a UI means the
+        // caller is outside any session.
+        ControlCommand::AgentAsk { .. }
+        | ControlCommand::AgentReply { .. }
+        | ControlCommand::AgentAwait { .. }
+        | ControlCommand::AgentRequest { .. }
+        | ControlCommand::AgentRequests { .. }
+        | ControlCommand::AgentCancel { .. } => ControlResponse::error_with(
+            crate::control::ControlErrorCode::Unsupported,
+            "agent requests belong to a session server; run this from a pane or pass `--session <NAME>`",
+        ),
         ControlCommand::AgentGet { target } => match resolve_agent(ctx, &target) {
             Ok(agent) => ControlResponse::ok(agent),
             Err(response) => response,

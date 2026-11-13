@@ -32,10 +32,12 @@ const TAGS: [&str; 4] = ["type", "kind", "step", "cmd"];
 /// The catch-all variant a tolerant vocabulary decodes unknown values into.
 const UNKNOWN: &str = "unknown";
 /// Vocabularies that stay closed in the schema, because the control API publishes them, but that
-/// the session wire decodes tolerantly through `session::protocol::tolerant` (or Serde's
-/// `#[serde(other)]` on `ControlCommand`). Each entry's variants stay compatible across peers.
-const TOLERANT: [&str; 5] = [
+/// the session wire decodes tolerantly through `session::protocol::tolerant`. Each needs an
+/// `UnknownValue` impl there; keep the two lists in step. `ControlRequest` is the exception: its
+/// command decodes an unknown `cmd` into `ControlCommand::Unknown`, which the schema leaves out.
+const TOLERANT: [&str; 6] = [
     "AgentAuthority",
+    "AgentResponseSource",
     "AgentState",
     "ControlRequest",
     "DetectedAgentState",

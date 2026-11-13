@@ -13,12 +13,93 @@ pub(super) struct PendingAgentWait {
     subject: WaitSubject,
     until: AgentWaitCondition,
     deadline: Option<Instant>,
-    require_transition: bool,
-    initial_state: Option<protocol::AgentState>,
-    armed: bool,
+    /// Present on a wait registered after a prompt: the wait answers only for that prompt's turn.
+    turn: Option<AgentTurnTracker>,
     reply: ReplyTo,
     capture: Option<crate::control::CaptureRender>,
-    response_fence: Option<super::responses::AgentResponseFence>,
+}
+
+/// Whether the turn a prompt started has reached an outcome, for one exact agent.
+///
+/// The consumer decides which states count as an outcome and reports each observation. An outcome
+/// already showing when the prompt was delivered belongs to the previous turn, so it counts only
+/// once the agent has left it.
+pub(super) struct AgentTurnTracker {
+    initial_state: Option<protocol::AgentState>,
+    armed: bool,
+    state_change_ends_turn: bool,
+    fence: Option<super::responses::AgentResponseFence>,
+}
+
+impl AgentTurnTracker {
+    /// Start tracking at delivery. `reached` and `state` are the consumer's outcome and the agent's
+    /// state at that moment. With `state_change_ends_turn`, moving from that state straight to
+    /// another outcome ends the turn; otherwise the agent must first leave the outcome entirely.
+    /// `fence` marks the responses published before the prompt.
+    pub(super) fn new(
+        reached: bool,
+        state: Option<protocol::AgentState>,
+        state_change_ends_turn: bool,
+        fence: Option<super::responses::AgentResponseFence>,
+    ) -> Self {
+        Self {
+            initial_state: state.filter(|_| reached),
+            armed: !reached,
+            state_change_ends_turn,
+            fence,
+        }
+    }
+
+    /// Feed one observation of the agent, and learn whether it ends the prompted turn.
+    pub(super) fn turn_ended(
+        &mut self,
+        reached: bool,
+        state: Option<protocol::AgentState>,
+    ) -> bool {
+        if self.armed {
+            return reached;
+        }
+        if !reached {
+            self.armed = true;
+            return false;
+        }
+        // A turn can go directly from idle to an approval or error. It need not leave the
+        // entire outcome predicate, which would require observing working first.
+        self.state_change_ends_turn && state.is_some_and(|state| Some(state) != self.initial_state)
+    }
+
+    pub(super) fn fence(&self) -> Option<&super::responses::AgentResponseFence> {
+        self.fence.as_ref()
+    }
+
+    pub(super) fn into_fence(self) -> Option<super::responses::AgentResponseFence> {
+        self.fence
+    }
+
+    /// Bind an unbound fence to the native session the agent reports, once it reports one.
+    pub(super) fn adopt_native_session(&mut self, native_session: Option<String>) {
+        if let Some(fence) = self.fence.as_mut()
+            && fence.native_session.is_none()
+        {
+            fence.native_session = native_session;
+        }
+    }
+
+    /// Whether the agent has moved to a native session other than the one the fence is bound to.
+    pub(super) fn native_session_changed(&self, native_session: &Option<String>) -> bool {
+        self.fence.as_ref().is_some_and(|fence| {
+            fence.native_session.is_some() && *native_session != fence.native_session
+        })
+    }
+
+    /// The first response `reference` published after the fence, if any.
+    pub(super) fn fresh_response<'a>(
+        &self,
+        responses: &'a super::responses::AgentResponseStore,
+        reference: &protocol::AgentRef,
+    ) -> Option<&'a crate::control::AgentResponse> {
+        responses.after(reference, self.fence.as_ref()?)
+    }
 }
 
 /// What a wait is watching.
@@ -46,41 +127,21 @@ enum WaitEvaluation {
     Error(ControlErrorCode, String),
 }
 
-impl PendingAgentWait {
-    fn adopt_response_session(&mut self, native_session: Option<String>) {
-        if let Some(fence) = self.response_fence.as_mut()
-            && fence.native_session.is_none()
-        {
-            fence.native_session = native_session;
-        }
-    }
-
-    fn needs_departure(&self, evaluation: &WaitEvaluation) -> bool {
-        if !self.require_transition || self.armed {
-            return false;
-        }
-        match evaluation {
-            // A turn can go directly from idle to an approval or error. It need not leave
-            // the entire outcome predicate, which would require observing working first.
-            WaitEvaluation::Ready(Some(agent)) if self.until == AgentWaitCondition::Turn => {
-                Some(agent.state) == self.initial_state
-            }
-            _ => true,
-        }
-    }
-}
-
 impl SessionServer {
+    /// Whether another prompt is in flight for `reference`: a history read on its pane, a prompt
+    /// wait, or, for a `result` prompt, a request it is answering.
     pub(super) fn has_conflicting_prompt(
         &self,
         reference: &protocol::AgentRef,
         result: bool,
     ) -> bool {
         self.agent_history.contains_key(&reference.pane.pane_id)
+            || (result && self.agent_requests.answering(reference).is_some())
             || self.agent_waits.values().any(|wait| {
-                wait.require_transition
+                wait.turn
+                    .as_ref()
+                    .is_some_and(|turn| result || turn.fence().is_some())
                     && matches!(&wait.subject, WaitSubject::Agent(current) if current == reference)
-                    && (result || wait.response_fence.is_some())
             })
     }
 
@@ -153,10 +214,7 @@ impl SessionServer {
                             .map(Duration::from_millis)
                             .and_then(|duration| Instant::now().checked_add(duration)),
                         capture: None,
-                        response_fence: None,
-                        require_transition: false,
-                        initial_state: None,
-                        armed: true,
+                        turn: None,
                         reply,
                     },
                 );
@@ -230,19 +288,26 @@ impl SessionServer {
             };
             let (subject, mut evaluation) =
                 self.evaluate_wait_subject(wait.subject.clone(), wait.until);
-            let fresh_response = self.fresh_prompt_response(wait, &mut evaluation);
-            let needs_departure = !fresh_response && wait.needs_departure(&evaluation);
-            let adopted_session = subject
+            let native_session = subject
                 .agent_reference()
                 .and_then(|reference| self.response_native_session(reference));
+            let fresh_response = self.fresh_prompt_response(wait, &native_session, &mut evaluation);
             let wait = self.agent_waits.get_mut(&key).expect("wait read above");
-            wait.adopt_response_session(adopted_session);
             wait.subject = subject;
-            if needs_departure {
-                match evaluation {
-                    WaitEvaluation::Ready(_) => evaluation = WaitEvaluation::Pending,
-                    WaitEvaluation::Pending => wait.armed = true,
-                    WaitEvaluation::Error(_, _) => {}
+            if let Some(turn) = wait.turn.as_mut() {
+                turn.adopt_native_session(native_session);
+                if !fresh_response {
+                    match &evaluation {
+                        WaitEvaluation::Ready(agent) => {
+                            if !turn.turn_ended(true, agent.as_ref().map(|agent| agent.state)) {
+                                evaluation = WaitEvaluation::Pending;
+                            }
+                        }
+                        WaitEvaluation::Pending => {
+                            turn.turn_ended(false, None);
+                        }
+                        WaitEvaluation::Error(_, _) => {}
+                    }
                 }
             }
             if !matches!(evaluation, WaitEvaluation::Pending) {
@@ -250,31 +315,33 @@ impl SessionServer {
             }
         }
         self.finish_agent_waits(completed);
+        self.pump_agent_requests();
     }
 
+    /// Whether the agent has answered the prompt `wait` follows. `native_session` is the one the
+    /// agent reports now.
     fn fresh_prompt_response(
         &self,
         wait: &PendingAgentWait,
+        native_session: &Option<String>,
         evaluation: &mut WaitEvaluation,
     ) -> bool {
         if matches!(evaluation, WaitEvaluation::Error(_, _)) {
             return false;
         }
-        let (Some(reference), Some(fence)) =
-            (wait.subject.agent_reference(), wait.response_fence.as_ref())
+        let (Some(reference), Some(turn)) = (wait.subject.agent_reference(), wait.turn.as_ref())
         else {
             return false;
         };
-        if fence.native_session.is_some()
-            && self.response_native_session(reference) != fence.native_session
-        {
+        if turn.native_session_changed(native_session) {
             *evaluation = WaitEvaluation::Error(
                 ControlErrorCode::AgentReplaced,
                 "agent changed its native session while waiting for a response".into(),
             );
             return false;
         }
-        self.agent_responses.after(reference, fence).is_some()
+        turn.fresh_response(&self.agent_responses, reference)
+            .is_some()
     }
 
     pub(super) fn expire_agent_waits(&mut self) {
@@ -336,7 +403,7 @@ impl SessionServer {
                         wait.until,
                         agent,
                         wait.capture,
-                        wait.response_fence.as_ref(),
+                        wait.turn.as_ref().and_then(AgentTurnTracker::fence),
                         reference,
                     ) {
                         Ok(result) => result,
@@ -345,18 +412,19 @@ impl SessionServer {
                             continue;
                         }
                     };
-                    if let Some(fence) = wait.response_fence {
+                    if let Some(fence) = wait.turn.and_then(AgentTurnTracker::into_fence) {
+                        let subject = super::agent_history::history_subject(&result);
                         let pending = super::agent_history::HistoryWait {
-                            key,
-                            reply: wait.reply.clone(),
+                            consumer: super::agent_history::HistoryConsumer::Reply {
+                                key,
+                                reply: wait.reply,
+                                result: Box::new(result),
+                            },
                             deadline: wait.deadline,
                             fence,
-                            result,
                         };
-                        let Some(response) = self.fallback_agent_result(pending) else {
-                            continue;
-                        };
-                        response
+                        self.answer_from_screen(pending, subject);
+                        continue;
                     } else {
                         ControlResponse::ok(result)
                     }
@@ -417,12 +485,14 @@ impl SessionServer {
     pub(super) fn remove_agent_waits(&mut self, client_id: ClientId) {
         self.agent_waits
             .retain(|&(client, _), _| client != client_id);
+        self.agent_requests.remove_awaits(client_id);
         self.cancel_client_history(client_id);
     }
 
     /// Whether `client_id` still holds a wait, which keeps a headless connection open.
     pub(super) fn holds_agent_wait(&self, client_id: ClientId) -> bool {
         self.holds_agent_history(client_id)
+            || self.agent_requests.holds_await(client_id)
             || self
                 .agent_waits
                 .keys()
@@ -440,18 +510,17 @@ impl SessionServer {
         result: bool,
         reply: ReplyTo,
     ) -> std::result::Result<(), ControlResponse> {
-        let evaluation = self.evaluate_agent_wait(&reference, until);
-        let initial_state = match &evaluation {
-            WaitEvaluation::Ready(Some(agent)) => Some(agent.state),
-            _ => None,
-        };
-        let armed = match evaluation {
-            WaitEvaluation::Ready(_) => false,
-            WaitEvaluation::Pending => true,
+        let (reached, state) = match self.evaluate_agent_wait(&reference, until) {
+            WaitEvaluation::Ready(agent) => (true, agent.map(|agent| agent.state)),
+            WaitEvaluation::Pending => (false, None),
             WaitEvaluation::Error(code, message) => {
                 return Err(ControlResponse::error_with(code, message));
             }
         };
+        let fence = result.then(|| {
+            self.agent_responses
+                .fence(self.response_native_session(&reference))
+        });
         self.agent_waits.insert(
             (client_id, reply.hold_id()),
             PendingAgentWait {
@@ -461,13 +530,12 @@ impl SessionServer {
                     .map(Duration::from_millis)
                     .and_then(|duration| Instant::now().checked_add(duration)),
                 capture,
-                response_fence: result.then(|| {
-                    self.agent_responses
-                        .fence(self.response_native_session(&reference))
-                }),
-                require_transition: true,
-                initial_state,
-                armed,
+                turn: Some(AgentTurnTracker::new(
+                    reached,
+                    state,
+                    until == AgentWaitCondition::Turn,
+                    fence,
+                )),
                 reply,
             },
         );
@@ -503,37 +571,44 @@ impl SessionServer {
                     )),
                 }
             }
-            AgentTarget::Ref(reference) => {
-                if reference.pane.session_instance != self.instance_id {
-                    return Err(ControlResponse::error_with(
-                        ControlErrorCode::StaleReference,
-                        "agent reference belongs to a different session server instance",
-                    ));
-                }
-                let Some(pane) = self.panes.get(&reference.pane.pane_id) else {
-                    return Err(ControlResponse::error_with(
-                        ControlErrorCode::StaleReference,
-                        format!("pane {} no longer exists", reference.pane.pane_id),
-                    ));
-                };
-                if pane.generation != reference.pane.generation {
-                    return Err(ControlResponse::error_with(
-                        ControlErrorCode::StaleReference,
-                        format!("pane {} has been replaced", reference.pane.pane_id),
-                    ));
-                }
-                let current = self
-                    .agent_runtimes_for(reference.pane.pane_id, pane)
-                    .into_iter()
-                    .find(|runtime| runtime.reference == reference);
-                current.map(|runtime| runtime.reference).ok_or_else(|| {
-                    ControlResponse::error_with(
-                        ControlErrorCode::AgentReplaced,
-                        "agent reference no longer names the current incarnation",
-                    )
-                })
-            }
+            AgentTarget::Ref(reference) => self
+                .current_agent_runtime(&reference)
+                .map(|runtime| runtime.reference),
         }
+    }
+
+    /// The runtime of the exact agent `reference` names, while it is still the current one.
+    pub(super) fn current_agent_runtime(
+        &self,
+        reference: &protocol::AgentRef,
+    ) -> std::result::Result<protocol::AgentRuntime, ControlResponse> {
+        if reference.pane.session_instance != self.instance_id {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::StaleReference,
+                "agent reference belongs to a different session server instance",
+            ));
+        }
+        let Some(pane) = self.panes.get(&reference.pane.pane_id) else {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::StaleReference,
+                format!("pane {} no longer exists", reference.pane.pane_id),
+            ));
+        };
+        if pane.generation != reference.pane.generation {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::StaleReference,
+                format!("pane {} has been replaced", reference.pane.pane_id),
+            ));
+        }
+        self.agent_runtimes_for(reference.pane.pane_id, pane)
+            .into_iter()
+            .find(|runtime| runtime.reference == *reference)
+            .ok_or_else(|| {
+                ControlResponse::error_with(
+                    ControlErrorCode::AgentReplaced,
+                    "agent reference no longer names the current incarnation",
+                )
+            })
     }
 
     fn evaluate_agent_wait(
@@ -1183,14 +1258,14 @@ mod tests {
                 },
             )
             .unwrap();
-        assert!(!server.agent_waits[&(1, 0)].armed);
+        assert!(!server.agent_waits[&(1, 0)].turn.as_ref().unwrap().armed);
 
         server.panes.get_mut(&3).unwrap().runtime.detected_agent = Some(protocol::DetectedAgent {
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Working,
         });
         server.resolve_agent_waits();
-        assert!(server.agent_waits[&(1, 0)].armed);
+        assert!(server.agent_waits[&(1, 0)].turn.as_ref().unwrap().armed);
 
         server.panes.get_mut(&3).unwrap().runtime.detected_agent = Some(protocol::DetectedAgent {
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),

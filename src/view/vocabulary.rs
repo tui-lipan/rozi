@@ -53,6 +53,13 @@ pub(crate) const BACKGROUND_RUN: &str = "⧉";
 /// The one you are in: the session on screen in Sessions, the agent on screen in Agents.
 pub(crate) const CURRENT: &str = "Current";
 
+/// The Agents picker's sections, in the order they list: agents waiting on you, failed, or with a
+/// finished run nobody has looked at, then the ones still going, then the quiet ones.
+pub(crate) const AGENTS_NEED_YOU: &str = "Needs you";
+pub(crate) const AGENTS_WORKING: &str = "Working";
+pub(crate) const AGENTS_DONE: &str = "Done";
+pub(crate) const AGENTS_IDLE: &str = "Idle";
+
 /// What happens to a session when this client is restarted on another build. Each says what the
 /// session will be afterwards, so it reads as a status, capitalized. A blocked session's reason is
 /// its own, and is drawn apart from the word.

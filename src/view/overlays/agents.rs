@@ -4,7 +4,7 @@ use crate::state::{AgentLocation, AgentPickerTab};
 use crate::view::agents::GlobalAgentRow;
 
 /// The global Agents view: every agent this client knows about, wherever it is running, ordered by
-/// what wants attention. `Enter` lands on the one under the cursor — a focus change for a pane in
+/// what wants attention and sectioned by it. `Enter` lands on the one under the cursor — a focus change for a pane in
 /// the session on screen, and an attach followed by a focus change for anything else.
 ///
 /// Its rows are a pure projection of `State` (see [`crate::view::agents::global_agent_rows`]), so
@@ -32,17 +32,13 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     // session on screen. Only rows from elsewhere need to name theirs.
     let show_session =
         picker.tab == AgentPickerTab::All && rows.iter().any(|entry| !entry.row.is_here());
-    let width = picker_width(&rows, show_session);
-    let entries = rows
-        .iter()
-        .map(|entry| {
-            SearchEntry::Item(
-                SearchItem::new(entry.row.label(), entry.row.location.clone())
-                    .aliases(entry.row.search_aliases(&ctx.state)),
-            )
-            .description(picker_description(entry.row.description()))
-        })
-        .collect::<Vec<_>>();
+    let entries = grouped_entries(&rows, |entry| {
+        SearchEntry::Item(
+            SearchItem::new(entry.row.label(), entry.row.location.clone())
+                .aliases(entry.row.search_aliases(&ctx.state)),
+        )
+        .description(picker_description(entry.row.description()))
+    });
     let selected_row = picker.selected.as_ref().and_then(|selected| {
         rows.iter()
             .position(|entry| &entry.row.location == selected)
@@ -99,9 +95,11 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         "Agents",
         crate::view::agent_picker_key(),
         Msg::CloseAgentPicker,
-        width,
+        WIDTH,
     )
     .entries(entries)
+    // Rows stay under their state while searching, in the same order as without a query.
+    .preserve_groups(true)
     // Two agents can share a name and session (`Codex · dev` twice), which the shared label key
     // would fold into one row, so every refresh would put the cursor back on the first of them.
     .item_key(|item| Arc::from(format!("{:?}", item.value)))
@@ -163,15 +161,60 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
 /// from another, so it keeps more of the row than the facts beside it.
 const LABEL_SHARE: u16 = 40;
 
-/// The columns a row needs besides its label and right side: frame border, row padding, the
-/// status gutter, and the gap between the two sides.
-const ROW_CHROME: usize = 8;
+/// One width whatever the tab, query, or rows, so switching tabs never moves the frame. Wide enough
+/// for a task and its whole right side on a usual screen; a narrower terminal bounds it further.
+const WIDTH: u16 = 120;
 
-const MIN_WIDTH: usize = 64;
+/// Where a row lists, by what it wants from the user.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Section {
+    NeedsYou,
+    Working,
+    Done,
+    Idle,
+}
 
-/// Rows widen the picker up to this, so a long task keeps its whole right side on a wide screen.
-/// A narrower terminal bounds it further.
-const MAX_WIDTH: usize = 180;
+impl Section {
+    /// Follows [`GlobalAgentRow::rank`], which already orders the rows, so each section is one run
+    /// of them.
+    fn of(row: &GlobalAgentRow) -> Self {
+        use crate::session::protocol::ActivityState;
+        if row.needs_attention() {
+            return Self::NeedsYou;
+        }
+        match ActivityState::from_status(&row.status) {
+            ActivityState::Working | ActivityState::Custom => Self::Working,
+            ActivityState::Done => Self::Done,
+            _ => Self::Idle,
+        }
+    }
+
+    fn title(self) -> &'static str {
+        use crate::view::vocabulary::{AGENTS_DONE, AGENTS_IDLE, AGENTS_NEED_YOU, AGENTS_WORKING};
+        match self {
+            Self::NeedsYou => AGENTS_NEED_YOU,
+            Self::Working => AGENTS_WORKING,
+            Self::Done => AGENTS_DONE,
+            Self::Idle => AGENTS_IDLE,
+        }
+    }
+}
+
+/// The rows under a header for each section that has any, in row order.
+fn grouped_entries<T>(
+    rows: &[PickerRow],
+    entry: impl Fn(&PickerRow) -> SearchEntry<T>,
+) -> Vec<SearchEntry<T>> {
+    let mut groups: Vec<(&'static str, Vec<SearchEntry<T>>)> = Vec::new();
+    for row in rows {
+        let title = Section::of(&row.row).title();
+        match groups.last_mut() {
+            Some((last, items)) if *last == title => items.push(entry(row)),
+            _ => groups.push((title, vec![entry(row)])),
+        }
+    }
+    crate::view::search_entries_with_groups(groups)
+}
 
 /// One row and whether it is the agent on screen.
 struct PickerRow {
@@ -329,29 +372,6 @@ fn state_note(row: &GlobalAgentRow) -> Option<String> {
     }
 }
 
-/// Wide enough for the widest row's label and right side together, within bounds. Sized from all
-/// rows so filtering does not make the palette jump horizontally.
-fn picker_width(rows: &[PickerRow], show_session: bool) -> u16 {
-    use unicode_width::UnicodeWidthStr;
-    let separator = crate::view::vocabulary::SEPARATOR.width();
-    let widest = rows
-        .iter()
-        .map(|entry| {
-            let row = &entry.row;
-            let label = row.title().width() + row.work().map_or(0, |_| row.agent.width() + 3);
-            let fields = fields(entry, show_session);
-            let right = fields
-                .iter()
-                .map(|field| field.text().width())
-                .sum::<usize>()
-                + separator * fields.len().saturating_sub(1);
-            label + right
-        })
-        .max()
-        .unwrap_or(0);
-    (widest + ROW_CHROME).clamp(MIN_WIDTH, MAX_WIDTH) as u16
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,25 +401,50 @@ mod tests {
         PickerRow { row, current }
     }
 
+    /// A finished run nobody has seen still wants the user, and a publisher's own word is still a
+    /// run in progress, so neither lists with the quiet ones.
     #[test]
-    fn width_fits_task_and_right_side_in_terminal_columns_within_bounds() {
-        assert_eq!(picker_width(&[], true), 64);
-        assert_eq!(picker_width(&[entry(row(""), false)], true), 64);
-        // 40 columns of task and ` · Codex` beside `Working 4m00s · dev@workbox · api (fix-login)`.
-        let wide = row(&"界".repeat(20));
+    fn rows_list_under_the_section_for_what_they_want_from_the_user() {
+        let with = |status: &str, unseen: bool| {
+            let mut row = row(status);
+            row.status = status.into();
+            row.finished_unseen = unseen;
+            entry(row, false)
+        };
+        let mut rows = vec![
+            with("blocked", false),
+            with("done", true),
+            with("compacting", false),
+            with("working", false),
+            with("done", false),
+            with("idle", false),
+        ];
+        rows.sort_by_key(|entry| entry.row.rank());
+        let entries = grouped_entries(&rows, |entry| {
+            SearchEntry::item(entry.row.status.clone(), ())
+        });
+        let listed = entries
+            .iter()
+            .filter_map(|entry| match entry {
+                SearchEntry::Header(title) => Some(format!("# {title}")),
+                SearchEntry::Item(item) => Some(item.label.to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         assert_eq!(
-            picker_width(&[entry(wide.clone(), false)], true),
-            48 + 45 + 8
-        );
-        // `Current` stands in for the session, and without the session column there is none.
-        assert_eq!(
-            picker_width(&[entry(wide.clone(), true)], true),
-            48 + 41 + 8
-        );
-        assert_eq!(picker_width(&[entry(wide, false)], false), 48 + 31 + 8);
-        assert_eq!(
-            picker_width(&[entry(row(&"x".repeat(400)), false)], true),
-            180
+            listed,
+            [
+                "# Needs you",
+                "blocked",
+                "done",
+                "# Working",
+                "compacting",
+                "working",
+                "# Done",
+                "done",
+                "# Idle",
+                "idle"
+            ]
         );
     }
 

@@ -3331,6 +3331,9 @@ mod tests {
             // Free the raced port, close the form, retry the failed entry, and confirm the
             // recovered queued activation still opens on Ready.
             drop(racing_listener);
+            if let Err(error) = crate::session::remote::forward::exact_local_port(raced_port) {
+                panic!("port {raced_port} is still taken after its listener closed: {error:?}");
+            }
             backend
                 .dispatch(crate::Msg::Ports(PortMsg::CloseAddForm))
                 .unwrap();

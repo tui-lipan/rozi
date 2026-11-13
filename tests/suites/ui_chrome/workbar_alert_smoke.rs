@@ -211,3 +211,39 @@ fn hovering_a_marked_tab_keeps_its_alert_background() {
         );
     });
 }
+
+/// A breathing tab is drawn at its peak and moved toward its trough by a pulse the renderer resolves
+/// by the clock. The chain's turns therefore cost no view rebuild, and the tab still breathes.
+#[test]
+fn a_breathing_tab_fades_by_the_clock_without_rebuilding_the_view() {
+    rozi::test_support::on_deeper_stack(|| {
+        let (peak, columns) = alert_columns();
+        let x = columns[columns.len() / 2];
+        let trough = row_backgrounds(&mut quiet_backend())[x];
+
+        let mut backend = backend();
+        let state = backend.state_mut();
+        state.config.workbar.alert.mode = AlertMode::Pulse;
+        state.config.animations.enabled = true;
+        state.alert_pulse_armed = true;
+        state.alert_pulse_half =
+            rozi::layout::anim::alert_pulse_half_period(state.config.animations);
+        let half = state.alert_pulse_half;
+        assert_eq!(
+            row_backgrounds(&mut backend)[x],
+            peak[x],
+            "held at the peak until the first turn"
+        );
+
+        backend.advance(half);
+        backend.dispatch(rozi::Msg::AlertPulseTick).unwrap();
+        backend.advance(half);
+        assert_eq!(
+            backend.update_level(rozi::Msg::AlertPulseTick).unwrap(),
+            tui_lipan::UpdateLevel::None,
+            "a turn of the chain must not rebuild the view"
+        );
+        assert_eq!(backend.state().alert_pulse_turns, 2);
+        assert_eq!(row_backgrounds(&mut backend)[x], trough, "at the trough");
+    });
+}

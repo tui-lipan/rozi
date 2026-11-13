@@ -1460,6 +1460,8 @@ pub struct PickState {
     /// Opened by `prompt`: there is no picker under the prompt to return to, so submitting or
     /// cancelling it ends the stream.
     pub standalone: bool,
+    /// The caller asked for the filter text, to send rows that match it.
+    pub report_query: bool,
     pub reply: PickReply,
 }
 
@@ -1566,6 +1568,9 @@ pub struct PickPage {
     /// typing - feeding the live mirror back as `initial_query` would change that prop on every
     /// keystroke and risk re-seeding the field mid-edit.
     pub restore_query: String,
+    /// How many times this page's filter text has been reported to the caller. Each report
+    /// carries the new count, and rows answering an earlier one are dropped.
+    pub query_seq: u64,
 }
 
 impl PickState {

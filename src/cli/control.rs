@@ -379,7 +379,7 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
     // snapshot the producer wrote straight after it along with it.
     let mut stdin = BufReader::new(std::io::stdin().lock());
     let mut opening_rows = None;
-    let (title, placeholder, empty, width, actions, tabs, tab) = if command.json {
+    let (title, placeholder, empty, width, actions, tabs, tab, report_query) = if command.json {
         let first_line = read_socket_line(&mut stdin)?;
         let spec: serde_json::Value =
             serde_json::from_str(first_line.trim()).unwrap_or(serde_json::Value::Null);
@@ -416,6 +416,7 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
                 .unwrap_or_default(),
             tabs,
             tab,
+            spec.get("report_query").and_then(|v| v.as_bool()) == Some(true),
         )
     } else {
         (
@@ -426,6 +427,7 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
             Vec::new(),
             Vec::new(),
             None,
+            false,
         )
     };
 
@@ -437,6 +439,7 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
         actions,
         tabs,
         tab,
+        report_query,
     });
     writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
 
@@ -461,7 +464,7 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
                 continue;
             };
             match classify_pick_stream_event(&value) {
-                PickStreamEvent::Action | PickStreamEvent::Tab => {
+                PickStreamEvent::Action | PickStreamEvent::Tab | PickStreamEvent::Query => {
                     if json {
                         println!("{line}");
                         let _ = std::io::stdout().flush();
@@ -590,6 +593,8 @@ enum PickStreamEvent<'a> {
     Action,
     /// The user switched tabs; the producer may fill the new one lazily.
     Tab,
+    /// The search text changed in a picker that reports it; the producer sends matching rows.
+    Query,
     Selected(&'a str),
     Cancelled,
     Ignore,
@@ -602,6 +607,8 @@ fn classify_pick_stream_event(value: &serde_json::Value) -> PickStreamEvent<'_> 
         .is_some()
     {
         PickStreamEvent::Action
+    } else if value.get("query").is_some() {
+        PickStreamEvent::Query
     } else if value.get("selected").is_none() && value.get("tab").is_some() {
         PickStreamEvent::Tab
     } else if let Some(selected) = value.get("selected").and_then(serde_json::Value::as_str) {
@@ -1164,6 +1171,11 @@ mod tests {
         assert_eq!(
             classify_pick_stream_event(&serde_json::json!({ "selected": "v1", "tab": "tags" })),
             PickStreamEvent::Selected("v1")
+        );
+        // Search text is passed on with or without a tab; an untabbed one names nothing else.
+        assert_eq!(
+            classify_pick_stream_event(&serde_json::json!({ "query": "api", "query_seq": 1 })),
+            PickStreamEvent::Query
         );
         assert_eq!(
             classify_pick_stream_event(&serde_json::json!({

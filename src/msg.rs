@@ -748,6 +748,7 @@ pub enum Msg {
         actions: Vec<crate::control::pick::PickAction>,
         tabs: Vec<crate::control::pick::PickTab>,
         tab: Option<String>,
+        report_query: bool,
         extension: Option<crate::control::ExtensionProvenance>,
         worker: Option<crate::control::WorkerId>,
         sender: crate::state::PickReply,
@@ -778,6 +779,8 @@ pub enum Msg {
         id: u64,
         tab: Option<String>,
         rows: Vec<crate::control::pick::PickRow>,
+        /// The search text these rows answer, by the number it was reported with.
+        query_seq: Option<u64>,
     },
     /// A tab of the picker was chosen; the index is into `PickState::pages`.
     PickTabSelected(usize),

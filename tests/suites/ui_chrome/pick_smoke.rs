@@ -24,6 +24,7 @@ fn pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, rozi::state::PickReply
             extension: None,
             tabs: Vec::new(),
             tab: None,
+            report_query: false,
             sender: tx,
             ack: ack_tx,
             worker: None,
@@ -32,6 +33,7 @@ fn pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, rozi::state::PickReply
 
     backend
         .dispatch(rozi::Msg::PickRowsReported {
+            query_seq: None,
             id: 1,
             tab: None,
             rows: vec![
@@ -173,6 +175,7 @@ fn an_empty_collection_shows_producer_copy_and_a_filter_miss_says_no_matches() {
                 extension: None,
                 tabs: Vec::new(),
                 tab: None,
+                report_query: false,
                 sender: tx,
                 ack: ack_tx,
                 worker: None,
@@ -216,6 +219,7 @@ fn a_masked_prompt_hides_its_seed_value() {
         let (ack_tx, _ack_rx) = mpsc::channel();
         backend
             .dispatch(rozi::Msg::PickStreamOpen {
+                report_query: false,
                 width: None,
                 actions: vec![rozi::control::pick::PickAction {
                     id: "token".into(),
@@ -351,6 +355,7 @@ fn a_long_description_never_costs_a_row_its_label() {
                 extension: None,
                 tabs: Vec::new(),
                 tab: None,
+                report_query: false,
                 sender: tx,
                 ack: ack_tx,
                 worker: None,
@@ -358,6 +363,7 @@ fn a_long_description_never_costs_a_row_its_label() {
             .expect("dispatch open");
         backend
             .dispatch(rozi::Msg::PickRowsReported {
+                query_seq: None,
                 id: 1,
                 tab: None,
                 rows: vec![PickRow {
@@ -429,6 +435,7 @@ fn tabbed_pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, rozi::state::Pi
     let (ack_tx, _ack_rx) = mpsc::channel();
     backend
         .dispatch(rozi::Msg::PickStreamOpen {
+            report_query: false,
             id: 1,
             title: Some("Git".into()),
             placeholder: None,
@@ -454,6 +461,7 @@ fn tabbed_pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, rozi::state::Pi
     ] {
         backend
             .dispatch(rozi::Msg::PickRowsReported {
+                query_seq: None,
                 id: 1,
                 tab: Some(tab.into()),
                 rows: labels

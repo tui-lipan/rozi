@@ -28,6 +28,7 @@ pub(crate) struct PickOpen {
     pub actions: Vec<crate::control::pick::PickAction>,
     pub tabs: Vec<PickTab>,
     pub tab: Option<String>,
+    pub report_query: bool,
     pub extension: Option<crate::control::ExtensionProvenance>,
 }
 
@@ -69,6 +70,7 @@ pub(crate) fn open_pick_stream(
         actions,
         tabs,
         tab,
+        report_query,
         extension,
     } = open;
     if extension.as_ref().is_some_and(|provenance| {
@@ -120,6 +122,7 @@ pub(crate) fn open_pick_stream(
         pages,
         active,
         standalone: false,
+        report_query,
         reply: sender,
     });
     ctx.state.show_pick = true;
@@ -160,6 +163,7 @@ pub(crate) fn open_prompt_stream(
         }],
         tabs: Vec::new(),
         tab: None,
+        report_query: false,
         extension,
     };
     let update = open_pick_stream(ctx, open, sender, ack);
@@ -200,6 +204,7 @@ pub(crate) fn rows_reported(
     id: u64,
     tab: Option<String>,
     rows: Vec<PickRow>,
+    query_seq: Option<u64>,
 ) -> Update {
     let Some(pick) = ctx.state.pick.as_mut().filter(|p| p.id == id) else {
         return Update::none();
@@ -208,6 +213,11 @@ pub(crate) fn rows_reported(
         return Update::none();
     };
     let page = &mut pick.pages[index];
+    // An answer to text that has since changed: a slower search finishing after a newer one
+    // would otherwise replace the newer rows, and nothing would bring them back.
+    if query_seq.is_some_and(|seq| seq < page.query_seq) {
+        return Update::none();
+    }
     page.rows = rows;
     if page.selected >= page.rows.len() {
         page.selected = 0;
@@ -330,6 +340,12 @@ pub(crate) fn query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update
     let Some(pick) = ctx.state.pick.as_mut() else {
         return Update::none();
     };
+    if pick.report_query && pick.page().query != query {
+        let page = pick.page_mut();
+        page.query_seq += 1;
+        let payload = serde_json::json!({ "query": query, "query_seq": page.query_seq });
+        pick.reply.event(&with_tab(pick, payload));
+    }
     pick.page_mut().query = query;
     let is_empty = pick.page().query.trim().is_empty();
     let disarmed = pick.pending_action.take().is_some();
@@ -583,6 +599,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx,
                     ack: ack_tx,
                     worker: None,
@@ -593,6 +610,7 @@ mod tests {
 
             backend
                 .dispatch(crate::Msg::PickRowsReported {
+                    query_seq: None,
                     id: 1,
                     tab: None,
                     rows: vec![PickRow {
@@ -637,6 +655,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx,
                     ack: ack_tx,
                     worker: None,
@@ -676,6 +695,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx,
                     ack: ack_tx,
                     worker: None,
@@ -684,6 +704,7 @@ mod tests {
 
             backend
                 .dispatch(crate::Msg::PickRowsReported {
+                    query_seq: None,
                     id: 1,
                     tab: None,
                     rows: vec![PickRow {
@@ -724,6 +745,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx,
                     ack: ack_tx,
                     worker: None,
@@ -756,6 +778,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx1,
                     ack: ack_tx1,
                     worker: None,
@@ -776,6 +799,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx2,
                     ack: ack_tx2,
                     worker: None,
@@ -805,6 +829,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx,
                     ack: ack_tx,
                     worker: None,
@@ -851,6 +876,7 @@ mod tests {
                 extension: None,
                 tabs: Vec::new(),
                 tab: None,
+                report_query: false,
                 sender: tx,
                 ack: ack_tx,
                 worker: None,
@@ -858,6 +884,7 @@ mod tests {
             .expect("dispatch open");
         backend
             .dispatch(crate::Msg::PickRowsReported {
+                query_seq: None,
                 id: 1,
                 tab: None,
                 rows: vec![PickRow {
@@ -1057,6 +1084,7 @@ mod tests {
 
             backend
                 .dispatch(crate::Msg::PickRowsReported {
+                    query_seq: None,
                     id: 1,
                     tab: None,
                     rows: vec![PickRow {
@@ -1201,6 +1229,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx,
                     ack: ack_tx,
                     worker: None,
@@ -1305,6 +1334,7 @@ mod tests {
                     extension: None,
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx,
                     ack: ack_tx,
                     worker: None,
@@ -1313,6 +1343,7 @@ mod tests {
 
             backend
                 .dispatch(crate::Msg::PickRowsReported {
+                    query_seq: None,
                     id: 1,
                     tab: None,
                     rows: vec![PickRow {
@@ -1360,6 +1391,7 @@ mod tests {
                     extension: Some(provenance),
                     tabs: Vec::new(),
                     tab: None,
+                    report_query: false,
                     sender: tx,
                     ack: ack_tx,
                     worker: None,
@@ -1385,6 +1417,7 @@ mod tests {
             let (ack_tx, ack_rx) = mpsc::channel();
             backend
                 .dispatch(crate::Msg::PickStreamOpen {
+                    report_query: false,
                     id: 7,
                     width: None,
                     actions: Vec::new(),
@@ -1434,6 +1467,16 @@ mod tests {
         tab: Option<&str>,
         actions: Vec<crate::control::pick::PickAction>,
     ) -> crate::state::PickReplyReceiver {
+        open_reporting(backend, tabs, tab, actions, false)
+    }
+
+    fn open_reporting(
+        backend: &mut TestBackend<crate::AppRoot>,
+        tabs: Vec<crate::control::pick::PickTab>,
+        tab: Option<&str>,
+        actions: Vec<crate::control::pick::PickAction>,
+        report_query: bool,
+    ) -> crate::state::PickReplyReceiver {
         let (tx, rx) = crate::state::PickReply::channel();
         let (ack_tx, ack_rx) = mpsc::channel();
         backend
@@ -1446,6 +1489,7 @@ mod tests {
                 actions,
                 tabs,
                 tab: tab.map(str::to_string),
+                report_query,
                 extension: None,
                 sender: tx,
                 ack: ack_tx,
@@ -1459,6 +1503,7 @@ mod tests {
     fn report(backend: &mut TestBackend<crate::AppRoot>, tab: Option<&str>, ids: &[&str]) {
         backend
             .dispatch(crate::Msg::PickRowsReported {
+                query_seq: None,
                 id: 1,
                 tab: tab.map(str::to_string),
                 rows: ids.iter().map(|id| row(id)).collect(),
@@ -1568,6 +1613,63 @@ mod tests {
             let page = backend.state().pick.as_ref().unwrap().page();
             assert_eq!(page.restore_query, "de", "the filter was not brought back");
             assert_eq!(page.selected, 1, "the highlight was not brought back");
+        });
+    }
+
+    /// A caller that asked for the filter text hears each change once, numbered, with the tab it
+    /// was typed on, and rows answering an earlier number never replace newer ones.
+    #[test]
+    fn a_reporting_picker_numbers_each_filter_change_and_drops_stale_rows() {
+        with_backend(|backend| {
+            let rx = open_reporting(
+                backend,
+                vec![tab("files", None), tab("dirs", None)],
+                None,
+                Vec::new(),
+                true,
+            );
+            for query in ["sr", "sr", "src"] {
+                backend
+                    .dispatch(crate::Msg::PickQueryChanged(query.into()))
+                    .unwrap();
+            }
+            assert_eq!(
+                rx.try_recv().unwrap().trim(),
+                r#"{"query":"sr","query_seq":1,"tab":"files"}"#
+            );
+            assert_eq!(
+                rx.try_recv().unwrap().trim(),
+                r#"{"query":"src","query_seq":2,"tab":"files"}"#
+            );
+            assert!(rx.try_recv().is_none());
+
+            // The search for "sr" finishes after the one for "src": its rows are stale. Rows that
+            // answer no search, such as a refresh after an action, always apply.
+            for (query_seq, label, shown) in [
+                (Some(2), "src", "src"),
+                (Some(1), "sr", "src"),
+                (None, "refreshed", "refreshed"),
+            ] {
+                backend
+                    .dispatch(crate::Msg::PickRowsReported {
+                        id: 1,
+                        tab: Some("files".into()),
+                        rows: vec![row(label)],
+                        query_seq,
+                    })
+                    .unwrap();
+                assert_eq!(page_ids(backend)[0], [shown]);
+            }
+
+            backend.dispatch(crate::Msg::PickTabSelected(1)).unwrap();
+            assert_eq!(rx.try_recv().unwrap().trim(), r#"{"tab":"dirs"}"#);
+            backend
+                .dispatch(crate::Msg::PickQueryChanged("".into()))
+                .unwrap();
+            assert!(
+                rx.try_recv().is_none(),
+                "an untouched tab reported its empty filter"
+            );
         });
     }
 

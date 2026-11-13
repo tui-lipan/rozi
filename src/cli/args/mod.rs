@@ -1234,6 +1234,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                             actions: Vec::new(),
                             tabs: Vec::new(),
                             tab: None,
+                            report_query: false,
                         },
                     )?,
                     title,

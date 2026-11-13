@@ -4993,6 +4993,7 @@ mod tests {
                 actions: Vec::new(),
                 tabs: Vec::new(),
                 tab: None,
+                report_query: false,
             },
             ControlCommand::Prompt {
                 title: "Name".to_string(),

@@ -32,7 +32,7 @@ pub(super) fn test_pane(generation: u64) -> ServerPane {
         palette: test_palette(),
         pty: None,
         pty_resize_pending: false,
-        terminal: TerminalScreen::new(5, 20, 100),
+        terminal: crate::pane::engine::screen(5, 20, 100),
         content_generation: 0,
         output_sequence: 0,
         output_coalesce_epoch: 0,
@@ -480,7 +480,7 @@ fn a_file_frame_reaches_a_remote_client_as_inline_pixels() {
         !text.contains("t=f"),
         "a path reached the remote client: {text}"
     );
-    let mut receiver = TerminalScreen::new(5, 20, 100);
+    let mut receiver = crate::pane::engine::screen(5, 20, 100);
     receiver.set_image_media_policy(GraphicsMediaPolicy::NONE);
     receiver.process_bytes(&forwarded);
     let capture = receiver.capture_frame();
@@ -663,7 +663,7 @@ fn pending_pane_output_is_represented_only_by_its_future_snapshot() {
         })
         .flatten()
         .collect();
-    let mut restored = TerminalScreen::new(5, 20, 100);
+    let mut restored = crate::pane::engine::screen(5, 20, 100);
     restored.process_bytes(&replay);
     assert!(restored.snapshot().to_string().contains("before snapshot"));
 }
@@ -695,7 +695,7 @@ fn attach_replay_restores_retained_kitty_images() {
         })
         .flatten()
         .collect();
-    let mut restored = TerminalScreen::new(5, 20, 100);
+    let mut restored = crate::pane::engine::screen(5, 20, 100);
     restored.process_bytes(&replay);
     let snapshot = restored.render_snapshot();
     assert_eq!(snapshot.images.len(), 1);
@@ -808,7 +808,7 @@ fn large_pane_replay_spills_to_file_and_round_trips_exactly() {
     let mut pane = test_pane(1);
     pane.cols = 120;
     pane.rows = 32;
-    pane.terminal = TerminalScreen::new(pane.rows, pane.cols, 5_000);
+    pane.terminal = crate::pane::engine::screen(pane.rows, pane.cols, 5_000);
     let mut input = Vec::new();
     for _ in 0..3_000 {
         input.extend(std::iter::repeat_n(b'x', usize::from(pane.cols) - 1));
@@ -1291,7 +1291,7 @@ fn a_client_behind_on_one_pane_sheds_it_and_is_resynced_from_the_server_screen()
             .iter()
             .all(|frame| !matches!(frame, DecodedOutboxFrame::Pane { pane_id: 7, .. }))
     );
-    let mut restored = TerminalScreen::new(5, 20, 100);
+    let mut restored = crate::pane::engine::screen(5, 20, 100);
     restored.process_bytes(&outbox_pane_bytes(client, 7));
     assert!(restored.snapshot().to_string().contains("latest"));
 
@@ -2507,7 +2507,7 @@ fn cursor_position_report_detection_is_strict() {
 
 #[test]
 fn resurrected_fullscreen_state_becomes_shell_safe_scrollback() {
-    let mut source = TerminalScreen::new(6, 30, 100);
+    let mut source = crate::pane::engine::screen(6, 30, 100);
     source.process_bytes(b"shell before app\r\n");
     source.process_bytes(
         b"\x1b[?1049h\x1b[H\x1b[1;38;2;12;34;56;48;5;22mdead app\x1b[0m\r\nwaiting for input\x1b[3;9H\
@@ -2515,7 +2515,7 @@ fn resurrected_fullscreen_state_becomes_shell_safe_scrollback() {
     );
     let replay = source.export_replay_bytes();
 
-    let mut restored = TerminalScreen::new(6, 30, 100);
+    let mut restored = crate::pane::engine::screen(6, 30, 100);
     super::panes::recover_restored_screen(&mut restored, &replay);
     let snapshot = restored.render_snapshot();
 
@@ -2559,12 +2559,12 @@ fn resurrected_fullscreen_state_becomes_shell_safe_scrollback() {
 
 #[test]
 fn resurrected_alternate_screen_keeps_style_only_changes() {
-    let mut source = TerminalScreen::new(4, 12, 100);
+    let mut source = crate::pane::engine::screen(4, 12, 100);
     source.process_bytes(b"same text");
     source.process_bytes(b"\x1b[?1049h\x1b[H\x1b[1;31msame text\x1b[0m");
     let replay = source.export_replay_bytes();
 
-    let mut restored = TerminalScreen::new(4, 12, 100);
+    let mut restored = crate::pane::engine::screen(4, 12, 100);
     super::panes::recover_restored_screen(&mut restored, &replay);
     let frame = restored.capture_frame();
     let retained = frame
@@ -2579,7 +2579,7 @@ fn resurrected_alternate_screen_keeps_style_only_changes() {
 #[test]
 fn resurrected_scrollback_keeps_styles_after_new_output() {
     for alternate in [false, true] {
-        let mut source = TerminalScreen::new(4, 12, 100);
+        let mut source = crate::pane::engine::screen(4, 12, 100);
         if alternate {
             source.process_bytes(b"\x1b[?1049h");
         }
@@ -2587,7 +2587,7 @@ fn resurrected_scrollback_keeps_styles_after_new_output() {
         source.process_bytes(b"\x1b[3;32m123456789012\x1b[0m\r\n");
         source.process_bytes("\x1b[38;5;200m界 colored\x1b[0m".as_bytes());
         let replay = source.export_replay_bytes();
-        let mut restored = TerminalScreen::new(4, 12, 100);
+        let mut restored = crate::pane::engine::screen(4, 12, 100);
         super::panes::recover_restored_screen(&mut restored, &replay);
         restored.process_bytes(b"new\r\nnew\r\nnew\r\nnew\r\n");
 
@@ -4713,7 +4713,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
             palette: test_palette(),
             pty: None,
             pty_resize_pending: false,
-            terminal: TerminalScreen::new(5, 20, 100),
+            terminal: crate::pane::engine::screen(5, 20, 100),
             content_generation: 0,
             output_sequence: 0,
             output_coalesce_epoch: 0,
@@ -4889,7 +4889,7 @@ fn duplicate_spawn_is_rejected() {
             palette: test_palette(),
             pty: None,
             pty_resize_pending: false,
-            terminal: TerminalScreen::new(5, 20, 100),
+            terminal: crate::pane::engine::screen(5, 20, 100),
             content_generation: 0,
             output_sequence: 0,
             output_coalesce_epoch: 0,
@@ -4957,7 +4957,7 @@ fn exited_pane_can_be_respawned() {
             palette: test_palette(),
             pty: None,
             pty_resize_pending: false,
-            terminal: TerminalScreen::new(5, 20, 100),
+            terminal: crate::pane::engine::screen(5, 20, 100),
             content_generation: 0,
             output_sequence: 0,
             output_coalesce_epoch: 0,
@@ -5153,7 +5153,7 @@ fn attach_reports_layout_and_panes() {
         palette: test_palette(),
         pty: None,
         pty_resize_pending: false,
-        terminal: TerminalScreen::new(5, 20, 100),
+        terminal: crate::pane::engine::screen(5, 20, 100),
         content_generation: 0,
         output_sequence: 0,
         output_coalesce_epoch: 0,
@@ -5359,7 +5359,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             palette: test_palette(),
             pty: None,
             pty_resize_pending: false,
-            terminal: TerminalScreen::new(5, 20, 100),
+            terminal: crate::pane::engine::screen(5, 20, 100),
             content_generation: 0,
             output_sequence: 0,
             output_coalesce_epoch: 0,
@@ -5431,7 +5431,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
         (2, Some(0)),
         (crate::pane::id::POPUP_PANE_ID, None),
     ] {
-        let mut screen = TerminalScreen::new(5, 20, 100);
+        let mut screen = crate::pane::engine::screen(5, 20, 100);
         screen.process_bytes(format!("marker-{id}").as_bytes());
         server.panes.insert(
             id,
@@ -8219,7 +8219,7 @@ fn pump_until_transport_closed(server: &mut SessionServer, client: ClientId) {
 
 fn assert_inline_pixel(bytes: &[u8], expected: &[u8]) {
     assert!(!bytes.windows(3).any(|key| key == b"t=t" || key == b"t=s"));
-    let mut receiver = TerminalScreen::new(5, 20, 100);
+    let mut receiver = crate::pane::engine::screen(5, 20, 100);
     receiver.set_image_media_policy(GraphicsMediaPolicy::NONE);
     receiver.process_bytes(bytes);
     let capture = receiver.capture_frame();
@@ -8243,7 +8243,7 @@ fn assert_snapshot_pixel(bytes: &[u8], source: &std::path::Path, expected: &[u8]
             .any(|name| name == source.as_bytes())
     );
     for _ in 0..2 {
-        let mut receiver = TerminalScreen::new(5, 20, 100);
+        let mut receiver = crate::pane::engine::screen(5, 20, 100);
         receiver.set_image_media_policy(GraphicsMediaPolicy::SHARED);
         receiver.process_bytes(bytes);
         let capture = receiver.capture_frame();
@@ -8485,7 +8485,7 @@ fn large_relay_emission_allows_text_between_its_chunks_and_keeps_the_next_source
     assert!(server.pump_media_output());
     let first_chunk = sent_pane_output(&mut server, local);
     assert!(first_chunk.len() <= 256 * 1024);
-    let mut receiver = TerminalScreen::new(5, 20, 100);
+    let mut receiver = crate::pane::engine::screen(5, 20, 100);
     receiver.process_bytes(&first_chunk);
     assert!(
         !receiver.has_images(),

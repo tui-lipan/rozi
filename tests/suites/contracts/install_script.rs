@@ -89,6 +89,39 @@ fn unix_installer_has_valid_syntax() {
 
 #[cfg(unix)]
 #[test]
+fn unix_installer_rejects_macos_below_the_release_floor() {
+    let printed = in_unix_installer_scope(
+        r#"uname() {
+  case "$1" in
+    -s) printf '%s\n' "$TEST_OS" ;;
+    -m) printf '%s\n' "$TEST_ARCH" ;;
+  esac
+}
+sw_vers() { printf '%s\n' "$TEST_MACOS"; }
+TEST_OS=Darwin
+for TEST_ARCH in x86_64 arm64; do
+  TEST_MACOS=12.7.6
+  if rejection="$(target_triple 2>&1)"; then
+    printf '%s\n' 'accepted unsupported macOS' >&2
+    exit 1
+  fi
+  [[ "$rejection" == *'prebuilt rozi releases require macOS 13 or newer; build from source on older macOS'* ]]
+  TEST_MACOS=13.0
+  target_triple
+done
+TEST_OS=Linux
+TEST_ARCH=x86_64
+sw_vers() { exit 99; }
+target_triple"#,
+    );
+    assert_eq!(
+        printed,
+        "x86_64-apple-darwin\naarch64-apple-darwin\nx86_64-unknown-linux-gnu"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn command_hint_on_path_is_a_single_run_line() {
     let printed = in_unix_installer_scope(
         r#"PATH="$HOME/.local/bin:$PATH"

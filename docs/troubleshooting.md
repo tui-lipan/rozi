@@ -66,10 +66,11 @@ See [What an update restarts](installation.md#what-an-update-restarts).
 
 ### A prebuilt release does not run on my system
 
-Prebuilt Linux releases need glibc 2.28 or newer. Windows releases need Windows 10 version 1809 or
-newer and exist for x86-64 only. There are no prebuilt NetBSD archives.
+Prebuilt Linux releases need glibc 2.28 or newer. macOS releases need macOS 13 or newer.
+Windows releases need Windows 10 version 1809 or newer and exist for x86-64 only. There are no
+prebuilt NetBSD archives.
 
-On an older Linux or an unsupported architecture, install with `cargo install rozi --locked` or
+On older Linux or macOS, or an unsupported architecture, install with `cargo install rozi --locked` or
 build from source. On NetBSD, use `pkgin install rozi`. See
 [Platform support](platform-support.md#requirements).
 

@@ -5,7 +5,10 @@
 
 pub(crate) mod capture_wait;
 pub mod chrome;
+pub(crate) mod engine;
 pub mod id;
+#[cfg(feature = "ghostty-engine")]
+pub(crate) mod idle_compression;
 pub mod launch;
 pub mod lifecycle;
 pub mod pty_events;
@@ -207,7 +210,9 @@ pub(crate) fn terminal_identity() -> String {
     format!("{TERMINAL_PROGRAM} {}", env!("CARGO_PKG_VERSION"))
 }
 
-/// Build a terminal grid without crossing Alacritty's next history allocation boundary.
+/// Build a pane's terminal screen on this process's [engine](engine::active).
+///
+/// On Alacritty, without crossing its next history allocation boundary.
 ///
 /// Alacritty grows history storage in 1,000-row blocks. tui-lipan deliberately gives its eviction
 /// ledger a little headroom beyond the exposed limit, so a saturated limit on that exact boundary
@@ -219,13 +224,15 @@ pub(crate) fn new_terminal_screen(rows: u16, cols: u16, scrollback: usize) -> Te
 
     let rows = rows.max(1);
     let cols = cols.max(1);
-    let mut screen = if scrollback.is_multiple_of(HISTORY_ALLOCATION_ROWS) && rows < u16::MAX {
-        let mut screen = TerminalScreen::new(rows + 1, cols, scrollback);
-        screen.resize(rows, cols);
-        screen
-    } else {
-        TerminalScreen::new(rows, cols, scrollback)
-    };
+    let alacritty = engine::active() == engine::TerminalEngine::Alacritty;
+    let mut screen =
+        if alacritty && scrollback.is_multiple_of(HISTORY_ALLOCATION_ROWS) && rows < u16::MAX {
+            let mut screen = engine::screen(rows + 1, cols, scrollback);
+            screen.resize(rows, cols);
+            screen
+        } else {
+            engine::screen(rows, cols, scrollback)
+        };
     screen.set_image_file_storage_enabled(true);
     screen.set_terminal_identity(terminal_identity());
     screen
@@ -234,6 +241,8 @@ pub(crate) fn new_terminal_screen(rows: u16, cols: u16, scrollback: usize) -> Te
 /// A terminal pane. Its screen is a client-side `TerminalScreen` parser fed by raw PTY bytes
 /// broadcast from the session server; the server owns the actual PTY.
 pub struct TerminalPane {
+    #[cfg(feature = "ghostty-engine")]
+    idle_compression: idle_compression::ClientIdleCompression,
     pub pane_id: crate::pane::id::PaneId,
     pub generation: u64,
     pub cols: u16,
@@ -521,6 +530,8 @@ impl TerminalPane {
             scrollback_limit: scrollback,
             output_seen: false,
             pointer_flow: crate::pane::pty_events::pointer_flow::PointerFlow::default(),
+            #[cfg(feature = "ghostty-engine")]
+            idle_compression: Default::default(),
             screen: Rc::new(RefCell::new(screen)),
         }
     }
@@ -674,6 +685,8 @@ impl TerminalPane {
                 .map_err(|_| std::io::Error::other("stale immutable media input"))?
         };
         self.output_seen = true;
+        #[cfg(feature = "ghostty-engine")]
+        self.idle_compression.note_output();
         let _ = screen.drain_responses();
         let clipboard_events = screen.drain_clipboard_events();
         // Runtime metadata comes from the server. Keep the screen's bounded semantic marks, but do
@@ -707,6 +720,13 @@ impl TerminalPane {
             mutation,
             clipboard_events,
         })
+    }
+
+    /// Storage maintenance only; leaves presentation snapshots and repaint scope untouched.
+    #[cfg(feature = "ghostty-engine")]
+    pub(crate) fn poll_idle_compression(&mut self, now: std::time::Instant) {
+        self.idle_compression
+            .poll(&mut self.screen.borrow_mut(), now);
     }
 
     pub fn is_ready(&self) -> bool {
@@ -1290,7 +1310,7 @@ mod tests {
 
     #[test]
     fn capture_screen_trims_the_padding_of_visible_rows() {
-        let mut screen = TerminalScreen::new(2, 6, 100);
+        let mut screen = crate::pane::engine::screen(2, 6, 100);
         screen.process_bytes(b"\x1b[31mred\x1b[0m");
         assert!(screen.render_snapshot().text.starts_with("red   "));
         let content = capture_screen(&mut screen, None, CaptureRender::Text, None, false)
@@ -1305,7 +1325,7 @@ mod tests {
 
     #[test]
     fn capture_screen_renders_the_visible_grid_as_an_ansi_document() {
-        let mut screen = TerminalScreen::new(2, 6, 100);
+        let mut screen = crate::pane::engine::screen(2, 6, 100);
         screen.process_bytes(b"\x1b[31mred\x1b[0m");
         let content = capture_screen(&mut screen, None, CaptureRender::Ansi, None, false)
             .expect("ansi capture");
@@ -1323,7 +1343,7 @@ mod tests {
 
     #[test]
     fn a_png_scale_multiplies_its_size_and_other_renders_refuse_one() {
-        let mut screen = TerminalScreen::new(3, 10, 100);
+        let mut screen = crate::pane::engine::screen(3, 10, 100);
         screen.process_bytes(b"hi");
         let doubled = png_bytes(
             capture_screen(&mut screen, None, CaptureRender::Png, Some(2), false).expect("png"),
@@ -1342,7 +1362,7 @@ mod tests {
 
     #[test]
     fn capture_screen_renders_a_png_in_the_screen_palette() {
-        let mut screen = TerminalScreen::new(3, 10, 100);
+        let mut screen = crate::pane::engine::screen(3, 10, 100);
         screen.process_bytes(b"hi");
         let plain = png_bytes(
             capture_screen(&mut screen, None, CaptureRender::Png, None, false).expect("png"),
@@ -1420,7 +1440,7 @@ mod tests {
         use base64::Engine as _;
 
         // A solid red two-cell image, sent the way `kitty icat` sends one.
-        let mut screen = TerminalScreen::new(2, 6, 100);
+        let mut screen = crate::pane::engine::screen(2, 6, 100);
         screen.set_cell_size(TerminalCellSize {
             width: 10,
             height: 20,
@@ -1444,7 +1464,7 @@ mod tests {
         let with_image = png_bytes(
             capture_screen(&mut screen, None, CaptureRender::Png, None, false).expect("png"),
         );
-        let mut blank = TerminalScreen::new(2, 6, 100);
+        let mut blank = crate::pane::engine::screen(2, 6, 100);
         let without = png_bytes(
             capture_screen(&mut blank, None, CaptureRender::Png, None, false).expect("png"),
         );
@@ -1453,7 +1473,7 @@ mod tests {
 
     #[test]
     fn styled_captures_refuse_scrollback_instead_of_dropping_its_styling() {
-        let mut screen = TerminalScreen::new(2, 6, 100);
+        let mut screen = crate::pane::engine::screen(2, 6, 100);
         for render in [
             CaptureRender::Ansi,
             CaptureRender::Png,
@@ -1479,7 +1499,7 @@ mod tests {
     #[test]
     fn allocation_boundary_priming_preserves_terminal_semantics_and_capacity() {
         let mut primed = new_terminal_screen(5, 20, 1_000);
-        let mut direct = TerminalScreen::new(5, 20, 1_000);
+        let mut direct = crate::pane::engine::screen(5, 20, 1_000);
         let primed_initial = primed.render_snapshot();
         let direct_initial = direct.render_snapshot();
         assert_eq!(primed_initial.text, direct_initial.text);

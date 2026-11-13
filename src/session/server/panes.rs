@@ -7,7 +7,12 @@ use super::*;
 /// How soon after a resume starts a failure still counts as the agent refusing it. A conversation
 /// that ran for a while and then exited non-zero is not retried as an attach.
 const ATTACH_FALLBACK_WINDOW: Duration = Duration::from_secs(10);
-const SHELL_MODE_RECOVERY: &[u8] = b"\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?2004l\x1b[?1l\x1b[?7h\x1b[?25h\x1b[=0u\x1b>\x1b[0 q\x1b[0m";
+/// Leaves the alternate screen. Sent only from it: on the primary screen `DECRST 1049` still
+/// restores the saved cursor in xterm and Ghostty, which would move the next line up over earlier
+/// output.
+const LEAVE_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049l";
+
+const SHELL_MODE_RECOVERY: &[u8] = b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?2004l\x1b[?1l\x1b[?7h\x1b[?25h\x1b[=0u\x1b>\x1b[0 q\x1b[0m";
 use std::path::Path;
 
 impl SessionServer {
@@ -517,6 +522,11 @@ impl SessionServer {
                 if owner.is_none() && matches!(&event, TerminalPtyEvent::Output(_)) {
                     self.note_history_output(id, generation);
                 }
+                #[cfg(feature = "ghostty-engine")]
+                if matches!(&event, TerminalPtyEvent::Output(_)) {
+                    self.idle_compression
+                        .note_output((owner, id), std::time::Instant::now());
+                }
                 let prepared = self.media.take_ready((owner, id, generation));
                 let pane = self.pane_mut(owner, id)?;
                 if pane.generation != generation {
@@ -797,11 +807,10 @@ impl SessionServer {
             ),
             _ => format!("\r\n\x1b[2m[rozi] command exited with status {code}\x1b[0m\r\n"),
         };
-        let mut bytes = Vec::with_capacity(SHELL_MODE_RECOVERY.len() + banner.len());
-        bytes.extend_from_slice(SHELL_MODE_RECOVERY);
+        let pane = self.pane_mut(owner, id)?;
+        let mut bytes = shell_mode_recovery(pane.screen());
         bytes.extend_from_slice(banner.as_bytes());
 
-        let pane = self.pane_mut(owner, id)?;
         pane.screen_mut().process_bytes(&bytes);
         if let Some(log) = pane.log.as_mut() {
             let _ = log.write(&bytes);
@@ -1216,7 +1225,8 @@ pub(super) fn recover_restored_screen(screen: &mut TerminalScreen, seed: &[u8]) 
     let restored_view = screen.render_snapshot().text.clone();
     let restored_frame = screen.capture_frame();
 
-    screen.process_bytes(SHELL_MODE_RECOVERY);
+    let recovery = shell_mode_recovery(screen);
+    screen.process_bytes(&recovery);
     // Equal text can still hide different colors or modifiers on the alternate screen.
     // Compare cells only: recovery deliberately changes cursor and input modes.
     if restored_frame.cells != screen.capture_frame().cells {
@@ -1226,6 +1236,16 @@ pub(super) fn recover_restored_screen(screen: &mut TerminalScreen, seed: &[u8]) 
     place_replacement_cursor(screen);
     screen.drain_responses();
     screen.drain_clipboard_events();
+}
+
+/// Bytes that return a pane to plain shell modes after its program ended.
+fn shell_mode_recovery(screen: &TerminalScreen) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(LEAVE_ALTERNATE_SCREEN.len() + SHELL_MODE_RECOVERY.len());
+    if screen.is_alternate_screen() {
+        bytes.extend_from_slice(LEAVE_ALTERNATE_SCREEN);
+    }
+    bytes.extend_from_slice(SHELL_MODE_RECOVERY);
+    bytes
 }
 
 fn append_styled_transcript(screen: &mut TerminalScreen, text: &str, ansi: &str) {

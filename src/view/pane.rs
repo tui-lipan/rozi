@@ -2642,7 +2642,7 @@ mod tests {
     #[test]
     fn osc_error_attention_is_red_and_independent_of_blocked_and_agent_attention() {
         let mut pane = alert_test_pane();
-        let mut screen = TerminalScreen::new(24, 80, 100);
+        let mut screen = crate::pane::engine::screen(24, 80, 100);
         screen.set_program_status_enabled(true);
         screen.process_bytes(b"\x1b]7501;state=blocked\x07");
         pane.terminal.program_status = screen.program_status_snapshot();

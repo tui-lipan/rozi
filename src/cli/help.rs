@@ -614,6 +614,11 @@ pub(super) fn version_text() -> String {
         text.push_str(&format!("{line}\n"));
     }
     text.push_str(&format!("extension_api={EXTENSION_API_VERSION}\nprotocol_min={MIN_SUPPORTED_PROTOCOL}\nprotocol_max={PROTOCOL_VERSION}\n"));
+    let engines: Vec<_> = crate::pane::engine::TerminalEngine::COMPILED
+        .iter()
+        .map(|engine| engine.name())
+        .collect();
+    text.push_str(&format!("terminal_engines={}\n", engines.join(",")));
     text
 }
 

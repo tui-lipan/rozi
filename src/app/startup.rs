@@ -99,6 +99,10 @@ impl StartupTasks {
             let count_usage = self.count_usage;
             std::thread::spawn(move || check_for_update(update_link, interval, count_usage));
         }
+        #[cfg(feature = "ghostty-engine")]
+        if crate::pane::idle_compression::enabled() {
+            link.send(Msg::IdleCompressionTick);
+        }
         ops::config::spawn_config_watcher(&link);
         ops::config::spawn_extension_store_watcher(&link);
         if self.watch_hangup {

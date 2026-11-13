@@ -328,7 +328,7 @@ mod tests {
     use super::*;
 
     fn screen() -> TerminalScreen {
-        TerminalScreen::new(4, 40, 100)
+        crate::pane::engine::screen(4, 40, 100)
     }
 
     fn wait(text: Option<&str>, settle_ms: Option<u64>) -> PaneWait {

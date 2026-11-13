@@ -110,6 +110,7 @@ format_bytes() {
 SPINNER_FRAMES=('◐' '◓' '◑' '◒')
 SPINNER_INTERVAL=0.05
 SPINNER_PID=''
+CURRENT_OPERATION=''
 readonly SPINNER_FRAMES SPINNER_INTERVAL
 
 status_row() {
@@ -332,10 +333,22 @@ resolve_latest_version() {
   printf '%s\n' "${tag#v}"
 }
 
+require_supported_macos() {
+  local version major
+  version="$(sw_vers -productVersion)" || fail 'could not determine the macOS version'
+  major="${version%%.*}"
+  [[ "$major" =~ ^[0-9]+$ ]] || fail "could not determine the macOS version: $version"
+  ((10#$major >= 13)) ||
+    fail 'prebuilt rozi releases require macOS 13 or newer; build from source on older macOS'
+}
+
 target_triple() {
   local os machine
   os="$(uname -s)"
   machine="$(uname -m)"
+  if [[ "$os" == Darwin ]]; then
+    require_supported_macos
+  fi
   case "$os:$machine" in
     Linux:x86_64) printf '%s\n' 'x86_64-unknown-linux-gnu' ;;
     Linux:aarch64|Linux:arm64) printf '%s\n' 'aarch64-unknown-linux-gnu' ;;
@@ -565,6 +578,7 @@ main() {
     shift
   done
 
+  target="$(target_triple)"
   require_command curl
   require_command tar
   require_command mktemp
@@ -579,7 +593,6 @@ main() {
     resolved_detail="release $version"
   fi
   validate_version "$version"
-  target="$(target_triple)"
   # The Resolve row is still active and its subshell is still turning: erasing the line and writing
   # the header underneath a live spinner puts the frame and the header on the same row.
   stop_spinner

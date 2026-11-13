@@ -1,0 +1,43 @@
+name: libghostty-vt build cache
+description: >-
+  Restores the libghostty-vt static library that the `ghostty-engine` feature builds through
+  tui-lipan-ghostty-vt-sys, and installs Zig only when the library has to be built. Adapted from
+  tui-lipan's action of the same name. A cold build takes about 1.5 min on Linux.
+
+runs:
+  using: composite
+  steps:
+    - name: Point the libghostty-vt build at a cacheable directory
+      shell: bash
+      run: echo "GHOSTTY_VT_CACHE_DIR=$RUNNER_TEMP/ghostty-vt" >> "$GITHUB_ENV"
+
+    # The sys crate keys its own cache entries on its build recipe, pinned source and Zig settings,
+    # so a restored entry from another recipe is never reused. This key only has to change when
+    # the locked sys or source crate does: their Cargo.lock entries name the version and, for a git
+    # dependency, the revision.
+    - name: Key on the locked libghostty-vt crates
+      id: key
+      shell: bash
+      run: |
+        set -euo pipefail
+        digest="$(awk '/^\[\[package\]\]/ { keep = 0 }
+          /^name = "tui-lipan-ghostty-vt-(sys|src)"$/ { keep = 1 }
+          keep' Cargo.lock | sha256sum | cut -c1-16)"
+        echo "lock=$digest" >> "$GITHUB_OUTPUT"
+
+    - name: Cache libghostty-vt
+      id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/ghostty-vt
+        key: ghostty-vt-${{ runner.os }}-${{ runner.arch }}-zig0.17.1-${{ steps.key.outputs.lock }}
+
+    # setup-zig verifies the tarball's minisign signature. Its own Zig caches are off: the build
+    # script uses private ones and deletes them, and the built library is cached above. Keep the
+    # version in step with scripts/install-zig.sh and the sys crate's ZIG_VERSION.
+    - name: Install Zig 0.17.1
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+      with:
+        version: 0.17.1
+        use-cache: false

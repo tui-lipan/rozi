@@ -1646,7 +1646,7 @@ mod tests {
             workspace_marker(&workspace, &alert, &Default::default()),
             Some(WorkspaceMarker::Finished)
         );
-        let mut screen = tui_lipan::prelude::TerminalScreen::new(24, 80, 100);
+        let mut screen = crate::pane::engine::screen(24, 80, 100);
         screen.set_program_status_enabled(true);
         screen.process_bytes(b"\x1b]7501;state=error:app=cargo\x07");
         workspace.panes[0].terminal.program_status = screen.program_status_snapshot();

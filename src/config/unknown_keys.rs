@@ -40,6 +40,7 @@ const TOP_LEVEL_KEYS: &[&str] = &[
     "logging",
     "capture",
     "recording",
+    "experimental",
     "keys",
 ];
 
@@ -363,6 +364,7 @@ fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
         &["dir", "max_fps", "duration", "max_bytes", "ui_indicator"],
         unknown,
     );
+    collect_named_table(table, "", "experimental", &["terminal_engine"], unknown);
     collect_keys(table, unknown);
 }
 

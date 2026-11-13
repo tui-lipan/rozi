@@ -4205,7 +4205,7 @@ mod tests {
             },
             pty: None,
             pty_resize_pending: false,
-            terminal: TerminalScreen::new(5, 40, 100),
+            terminal: crate::pane::engine::screen(5, 40, 100),
             content_generation: 0,
             output_sequence: 0,
             output_coalesce_epoch: 0,

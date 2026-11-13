@@ -1,0 +1,10 @@
+{
+  "request_id": 1,
+  "response": {
+    "code": "invalid-request",
+    "data": null,
+    "error": "example",
+    "ok": false
+  },
+  "type": "agent-report-result"
+}

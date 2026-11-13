@@ -3331,6 +3331,23 @@ mod tests {
             // Free the raced port, close the form, retry the failed entry, and confirm the
             // recovered queued activation still opens on Ready.
             drop(racing_listener);
+            // A concurrent PTY fork can retain the listener until exec, even after our handle
+            // closes. Wait for that child to release it before exercising RetrySelected.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                match crate::session::remote::forward::exact_local_port(raced_port) {
+                    Ok(_) => break,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::AddrInUse
+                            && std::time::Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => panic!(
+                        "port {raced_port} is still taken after its listener closed: {error:?}"
+                    ),
+                }
+            }
             backend
                 .dispatch(crate::Msg::Ports(PortMsg::CloseAddForm))
                 .unwrap();

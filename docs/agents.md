@@ -12,6 +12,9 @@ connected hosts. The [Activity tab](sidebar.md#activity) lists things that are n
 a build that sets `rozi status`, and lists the session's agents too when its **Agents** setting is
 on; see [Activities and agents](control-protocol.md#activities-and-agents).
 
+An agent that reports its own state over [OSC 7501](terminal.md#program-status), as Claude Code
+does, is shown in that state rather than in the one rozi reads on its screen.
+
 rozi ships definitions for common agent CLIs in
 [`src/agent_detection/builtin.toml`](../src/agent_detection/builtin.toml). Add an `[[agents]]` entry
 to `config.toml` when rozi does not recognize a tool, or override a built-in when its screen rules do
@@ -19,27 +22,6 @@ not match the version you run.
 
 **Focus next blocked pane** jumps to the next pane waiting for input, across workspaces. The command
 palette lists it only while a pane other than the focused one is blocked.
-
-## Integrate Claude Code hooks
-
-The [Claude Code plugin](../plugins/claude-code/README.md) reports activity directly from Claude's
-hooks, including permission waits, questions, response completion, and the conversation ID used
-by [native resume](sessions.md#reopen-an-agent-conversation).
-
-Install it in Claude Code:
-
-```text
-/plugin marketplace add tui-lipan/rozi
-/plugin install rozi@rozi
-```
-
-Restart Claude Code inside a rozi pane. The plugin needs Python 3.10 or newer available as
-`python` and a recent Claude Code; no rozi extension is needed. It also reports from remote panes
-and from sessions with no window attached, as long as the pane's host runs the same rozi version.
-
-The plugin reports one activity for the main conversation; sub-agents and background tasks do not
-mark it done early. See the plugin README for the event mapping, checkout installation, and
-verification steps.
 
 ## Integrate Codex hooks
 
@@ -563,10 +545,12 @@ unsent text, a dialog, or a streaming response. Install it from the **Discover**
 **Extensions…**, or with
 `rozi extensions install https://github.com/tui-lipan/claude-rozi-sessions.git`.
 
-It works with or without the [Claude Code hook plugin](#integrate-claude-code-hooks). With it, the
-hooks' state drives the row for the conversation they report on, matched by `native_session`, and
-the other rows stay listed. The extension works in local panes on Linux and macOS, not on Windows
-or in remote panes.
+Each row shows the conversation's state as Claude reports it, including permission waits and
+questions, and carries the conversation ID that
+[native resume](sessions.md#reopen-an-agent-conversation) reopens. The extension works on Linux
+and macOS, in local and remote panes. It does not work on Windows, where rozi cannot tell which
+process a pane runs, so Claude Code panes there show what screen detection reads and do not reopen
+their conversation.
 
 ### Codex threads
 

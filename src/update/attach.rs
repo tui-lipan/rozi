@@ -59,7 +59,7 @@ fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protoco
     pane.terminal.runtime_sequence = meta.runtime.sequence;
     pane.terminal.program_status = Default::default();
     pane.terminal.program_status_attention = false;
-    pane.terminal.program_status_notification_at = None;
+    pane.terminal.program_status_notified = None;
     pane.terminal.child_pid = meta.pid;
     let _ = pane
         .terminal

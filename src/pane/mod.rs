@@ -326,7 +326,8 @@ pub struct TerminalPane {
     pub runtime_sequence: u64,
     pub program_status: tui_lipan::ProgramStatusSnapshot,
     pub program_status_attention: bool,
-    pub program_status_notification_at: Option<std::time::Instant>,
+    /// When this client last alerted for the pane's OSC 7501 status, and for which state.
+    pub program_status_notified: Option<(std::time::Instant, tui_lipan::ProgramStatusState)>,
     pub last_palette: Option<TerminalColorPalette>,
     /// Which out-of-band graphics media this pane's screen will read. It follows the attachment
     /// feeding the pane rather than the pane itself: pixels named as a path only exist for a
@@ -520,7 +521,7 @@ impl TerminalPane {
             runtime_sequence: 0,
             program_status: Default::default(),
             program_status_attention: false,
-            program_status_notification_at: None,
+            program_status_notified: None,
             last_palette: None,
             media_policy: GraphicsMediaPolicy::SHARED,
             cell,
@@ -602,7 +603,7 @@ impl TerminalPane {
             self.published_row_ui.clear();
             self.program_status = Default::default();
             self.program_status_attention = false;
-            self.program_status_notification_at = None;
+            self.program_status_notified = None;
         }
         self.pane_id = pane_id;
         self.generation = generation;
@@ -615,7 +616,7 @@ impl TerminalPane {
         self.runtime_sequence = 0;
         self.program_status = Default::default();
         self.program_status_attention = false;
-        self.program_status_notification_at = None;
+        self.program_status_notified = None;
         self.reset_screen();
     }
 

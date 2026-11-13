@@ -266,6 +266,7 @@ impl AgentScratch {
         let reference_launch = self.reference_launch;
         let retired_integrations = std::mem::take(&mut self.retired_integrations);
         let launches = self.launches;
+        let program_fence = self.program_fence;
         let retained_resume = self.retained_resume.take();
         // A row report belongs to another process than the one detection follows, so a change in
         // what the pane runs says nothing about it.
@@ -277,6 +278,7 @@ impl AgentScratch {
             reference_launch,
             retired_integrations,
             launches,
+            program_fence,
             retained_resume,
             row_reports,
             standby_rows,
@@ -380,7 +382,150 @@ pub(super) struct RowReport {
     seq: u64,
 }
 
+/// The integration token of the report the session server builds from the pane's agent's own
+/// OSC 7501 status. No hook can claim it, so a hook report always takes the pane over from it.
+pub(super) const PROGRAM_STATUS_INTEGRATION: &str = "rozi:program-status";
+
+pub(super) fn is_program_report(report: &protocol::AgentIntegrationReport) -> bool {
+    report.integration == PROGRAM_STATUS_INTEGRATION
+}
+
+/// The integration report a hook holds the pane with: never the one built from OSC 7501, which
+/// gives way to any hook.
+fn hook_owner(runtime: &PaneRuntimeState) -> Option<&protocol::AgentIntegrationReport> {
+    runtime
+        .integration
+        .as_deref()
+        .filter(|report| !is_program_report(report))
+}
+
+/// Which OSC 7501 reports belong to the agent running in a pane now.
+///
+/// A terminal keeps an agent's `done`, `error`, and `idle` records after it exits, so the next
+/// agent launched in the pane starts out with them on screen. Report order only goes up, so the
+/// reports up to the newest one seen before a launch are the earlier agent's.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ProgramFence {
+    /// The agent launch the fence was last moved for.
+    launch: u64,
+    /// Reports up to this order came from an agent launched before.
+    floor: u64,
+    /// The newest report order seen.
+    seen: u64,
+}
+
+impl ProgramFence {
+    fn observe(&mut self, launch: u64, snapshot: &tui_lipan::ProgramStatusSnapshot) {
+        if launch != self.launch {
+            self.floor = self.seen;
+            self.launch = launch;
+        }
+        self.seen = snapshot
+            .records
+            .iter()
+            .map(|record| record.updated)
+            .fold(self.seen, u64::max);
+    }
+}
+
+/// What the pane's detected agent says about itself over OSC 7501, as the pane's integration
+/// report.
+///
+/// The agent's own word is the most precise one there is, so it speaks for the pane exactly like
+/// a hook report: it outranks screen detection, and drives the agent row on screen when the pane
+/// publishes rows. A pane with agent rows but none on screen has no conversation to attach it to,
+/// so it reports nothing. Only a hook, which claims the pane explicitly, outranks it.
+fn program_report(
+    pane: &mut ServerPane,
+    pane_ref: protocol::PaneRef,
+    detected: Option<&DetectedAgent>,
+) -> Option<Box<protocol::AgentIntegrationReport>> {
+    let detected = detected?;
+    let snapshot = pane.screen().program_status_snapshot();
+    let fence = pane.agent.program_fence;
+    let record =
+        crate::agent_detection::agent_program_status(&snapshot, &detected.agent.id, fence.floor)?;
+    let native_session = if pane
+        .runtime
+        .rows
+        .iter()
+        .any(protocol::PublishedRow::is_agent)
+    {
+        let row = protocol::active_agent_row(&pane.runtime.rows)?;
+        Some(agent_reporting_session(row)?.to_string())
+    } else {
+        None
+    };
+    let state = match record.state {
+        tui_lipan::ProgramStatusState::Idle => protocol::AgentState::Idle,
+        tui_lipan::ProgramStatusState::Working => protocol::AgentState::Working,
+        tui_lipan::ProgramStatusState::Blocked => protocol::AgentState::Blocked,
+        tui_lipan::ProgramStatusState::Done => protocol::AgentState::Done,
+        tui_lipan::ProgramStatusState::Error => protocol::AgentState::Error,
+    };
+    // What it waits for, or why it failed. While it works, the message only says what it is doing
+    // right now, which the record itself already shows.
+    let reason = matches!(
+        state,
+        protocol::AgentState::Blocked | protocol::AgentState::Error
+    )
+    .then_some(record.msg.as_deref())
+    .flatten()
+    .and_then(|msg| clean_text(msg, PANE_STATUS_REASON_MAX_LEN));
+    // A launch the pane-level reference has not caught up with is another process: a new
+    // incarnation, whatever its name. Detection renews the reference itself only while nothing
+    // reports for the pane, and from here on this report does.
+    let relaunched = pane.agent.reference_launch != pane.agent.launches;
+    let previous = pane
+        .runtime
+        .integration
+        .as_deref()
+        .filter(|report| {
+            !relaunched && is_program_report(report) && report.identity.id == detected.agent.id
+        })
+        .cloned();
+    if relaunched {
+        pane.agent.references.remove(&None);
+    }
+    let reference = previous.as_ref().map_or_else(
+        || {
+            pane.agent
+                .ensure_reference(pane_ref, None, &detected.agent.id)
+        },
+        |previous| previous.reference.clone(),
+    );
+    let unchanged = previous.as_ref().filter(|previous| {
+        previous.state == state
+            && previous.reason == reason
+            && previous.native_session == native_session
+    });
+    Some(Box::new(protocol::AgentIntegrationReport {
+        integration: PROGRAM_STATUS_INTEGRATION.to_string(),
+        identity: detected.agent.as_ref().clone(),
+        reference,
+        state,
+        reason,
+        native_session,
+        unless_quiet: None,
+        seq: match (unchanged, previous.as_ref()) {
+            (Some(unchanged), _) => unchanged.seq,
+            (None, Some(previous)) => previous.seq.wrapping_add(1),
+            (None, None) => 1,
+        },
+        reported_at_unix_ms: unchanged
+            .map_or_else(crate::runtime_metrics::unix_time_millis, |unchanged| {
+                unchanged.reported_at_unix_ms
+            }),
+    }))
+}
+
 fn validate_integration_token(integration: &str) -> IntegrationResult<()> {
+    if integration == PROGRAM_STATUS_INTEGRATION {
+        return Err((
+            "invalid-argument",
+            format!("integration token `{PROGRAM_STATUS_INTEGRATION}` is reserved"),
+        ));
+    }
     if integration.is_empty()
         || integration.len() > 256
         || integration.chars().any(char::is_control)
@@ -404,6 +549,8 @@ fn routes_to_row(
     report: Option<&IntegrationPayload>,
     seq: u64,
 ) -> IntegrationResult<bool> {
+    // The report built from OSC 7501 counts here: a hook naming the conversation it speaks for
+    // takes the pane over from it, and one naming another row still reports for that row.
     let owner = pane.runtime.integration.as_deref();
     if owner.is_some_and(|owner| owner.integration == integration) {
         return Ok(false);
@@ -527,7 +674,7 @@ fn validate_integration_update(
         ));
     }
     validate_native_session(report.and_then(|(_, _, native_session)| native_session.as_deref()))?;
-    match pane.runtime.integration.as_ref() {
+    match hook_owner(&pane.runtime) {
         Some(previous) if previous.integration != integration => Err((
             "conflict",
             format!(
@@ -1210,7 +1357,16 @@ impl SessionServer {
             // lifetime, and withdraws them when it closes.
         } else {
             pane.agent.retire_integration(integration);
+            // The agent's own word speaks for the pane again from this same change, so nothing
+            // observes the pane in between with only its screen to go on.
+            let pane_ref = protocol::PaneRef {
+                session_instance,
+                pane_id,
+                generation,
+            };
+            let detected = pane.runtime.detected_agent.clone();
             pane.runtime.integration = None;
+            pane.runtime.integration = program_report(pane, pane_ref, detected.as_ref());
         }
         // The row the report speaks for runs on the report's clock.
         restamp_row_clocks(
@@ -1467,13 +1623,20 @@ impl SessionServer {
         }
         pane.agent.history_frozen = history_leased;
         let inspector = PlatformProcessInspector::default();
-        let mut next = compute_runtime_state(
+        let pane_ref = protocol::PaneRef {
+            session_instance: session_instance.clone(),
+            pane_id,
+            generation,
+        };
+        let mut next = compute_pane_runtime(
             pane,
+            Some(pane_ref),
             &inspector,
             detect_agent.then(|| agents.as_ref()),
             scan,
         );
-        let integration_replaced = next.integration.as_deref().is_some_and(|integration| {
+        // A report built from the agent's own status follows the agent by itself.
+        let integration_replaced = hook_owner(&next).is_some_and(|integration| {
             integration_has_strong_replacement_evidence(integration, &next)
         });
         if integration_replaced && let Some(integration) = next.integration.take() {
@@ -1724,11 +1887,24 @@ fn resurrection_foreground_changed(
         || current.foreground_arguments != candidate.foreground_arguments
 }
 
-/// Build the candidate [`PaneRuntimeState`] for `pane`, bumping `sequence` past its previous value
-/// only when some other field actually differs (a no-op recompute must not burn a sequence number,
-/// or every idle heartbeat tick would look like a change to clients).
+/// [`compute_pane_runtime`] for a pane with no reference, whose agent's own status is left alone.
+#[cfg(test)]
 fn compute_runtime_state(
     pane: &mut ServerPane,
+    inspector: &impl ProcessInspector,
+    agents: Option<&AgentCatalog>,
+    scan: &mut LazyProcessScan,
+) -> PaneRuntimeState {
+    compute_pane_runtime(pane, None, inspector, agents, scan)
+}
+
+/// Build the candidate [`PaneRuntimeState`] for `pane`, bumping `sequence` past its previous value
+/// only when some other field actually differs (a no-op recompute must not burn a sequence number,
+/// or every idle heartbeat tick would look like a change to clients). With `pane_ref`, the agent's
+/// own OSC 7501 status speaks for the pane while no hook does; see [`program_report`].
+fn compute_pane_runtime(
+    pane: &mut ServerPane,
+    pane_ref: Option<protocol::PaneRef>,
     inspector: &impl ProcessInspector,
     agents: Option<&AgentCatalog>,
     scan: &mut LazyProcessScan,
@@ -1783,11 +1959,21 @@ fn compute_runtime_state(
         foreground_job.as_ref(),
         process_refreshed,
     );
-    let integration = settle_quiet_report(
-        pane.runtime.integration.clone(),
-        screen_reading(&pane.runtime, detected_agent.as_ref()),
-        crate::runtime_metrics::unix_time_millis(),
-    );
+    if pane_ref.is_some() {
+        let snapshot = pane.screen().program_status_snapshot();
+        let launch = pane.agent.launches;
+        pane.agent.program_fence.observe(launch, &snapshot);
+    }
+    let integration = match pane_ref {
+        Some(pane_ref) if hook_owner(&pane.runtime).is_none() => {
+            program_report(pane, pane_ref, detected_agent.as_ref())
+        }
+        _ => settle_quiet_report(
+            pane.runtime.integration.clone(),
+            screen_reading(&pane.runtime, detected_agent.as_ref()),
+            crate::runtime_metrics::unix_time_millis(),
+        ),
+    };
 
     let work_started_at = next_work_started_at(
         &pane.runtime,

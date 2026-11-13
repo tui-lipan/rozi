@@ -96,7 +96,8 @@ exclude = [
 # 0.43.1: path links (`Terminal::link_paths`, `TerminalLinkKind`) and bare file-name hints.
 # 0.44.0: the experimental libghostty-vt engine
 # (`terminal-ghostty`, `TerminalScreen::with_engine`, `compress_idle`).
-tui-lipan = { version = "0.44.0", features = [
+# 0.44.1: a history read returns a scroll-up the application answered late.
+tui-lipan = { version = "0.44.1", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

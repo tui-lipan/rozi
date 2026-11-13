@@ -981,13 +981,21 @@ list, set `report_query` and send the rows that match what is typed. rozi then w
 text each time it changes, without closing, with the tab in a tabbed picker:
 
 ```json
-{"query":"api"}
-{"query":"api","tab":"files"}
+{"query":"api","query_seq":3}
+{"query":"api","query_seq":3,"tab":"files"}
 ```
 
-Answer with a row snapshot holding the best matches. rozi still filters and ranks the rows it holds
-against the current text, so a snapshot that arrives after more typing never shows a row that no
-longer matches. An empty `query` means the field was cleared.
+`query_seq` counts the changes on that tab, starting at 1. An empty `query` means the field was
+cleared. Answer with a row snapshot holding the best matches, and echo the number:
+
+```json
+{"query_seq":3,"rows":[{"id":"src/api/mod.rs","label":"src/api/mod.rs"}]}
+```
+
+rozi ignores a snapshot whose `query_seq` is lower than the latest it reported for that tab, so a
+slow search that finishes after a newer one cannot replace the newer rows. A snapshot without
+`query_seq` always applies; use that for rows that answer no search, such as a refresh after an
+action. rozi also filters and ranks the rows it holds against the current text.
 
 ### CLI bridge
 

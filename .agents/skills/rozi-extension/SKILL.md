@@ -327,8 +327,10 @@ first. Each tab keeps its own filter. Replies from a tabbed picker carry `"tab"`
 need to be unique within a tab. Actions are shared by every tab; read `tab` to act on the right one.
 
 A picker holds 512 rows and filters them itself. For a longer list, set `"report_query":true`,
-read `{"query":"…"}` (with `"tab"` in a tabbed picker) on each change, and reply with a snapshot of
-the best matches for that text. Send the default rows again for an empty query. This requires the
+read `{"query":"…","query_seq":N}` (with `"tab"` in a tabbed picker) on each change, and reply with
+`{"query_seq":N,"rows":[…]}` holding the best matches for that text. Always echo `query_seq`: rozi
+drops an answer older than the latest text, which is what keeps a slow search from replacing a
+newer one's rows. Send the default rows again for an empty query. This requires the
 `pick-query-events` capability from `rozi api describe`; an older rozi reports nothing, so keep the
 unfiltered rows useful.
 

@@ -932,8 +932,9 @@ pub enum ControlCommand {
         /// Id of the tab to open on. Omitted or unknown opens the first.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tab: Option<String>,
-        /// Report the filter text as `{"query":…}` each time it changes, so the caller can send
-        /// rows for it: the way past the row limit for a list too long to send whole.
+        /// Report the filter text as `{"query":…,"query_seq":N}` each time it changes, so the
+        /// caller can send rows for it: the way past the row limit for a list too long to send
+        /// whole. A row snapshot that echoes an older `query_seq` is dropped.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         report_query: bool,
     },

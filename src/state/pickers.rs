@@ -1568,6 +1568,9 @@ pub struct PickPage {
     /// typing - feeding the live mirror back as `initial_query` would change that prop on every
     /// keystroke and risk re-seeding the field mid-edit.
     pub restore_query: String,
+    /// How many times this page's filter text has been reported to the caller. Each report
+    /// carries the new count, and rows answering an earlier one are dropped.
+    pub query_seq: u64,
 }
 
 impl PickState {

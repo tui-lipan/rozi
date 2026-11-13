@@ -343,6 +343,7 @@ fn run_pick_stream(
                 id,
                 tab: report.tab,
                 rows,
+                query_seq: report.query_seq,
             });
         }
     }
@@ -369,6 +370,10 @@ struct PickReport {
     tab: Option<String>,
     #[serde(default)]
     rows: Vec<crate::control::pick::PickRow>,
+    /// The `query_seq` of the search text these rows answer. Rows for text that has since
+    /// changed are dropped; rows without it always apply.
+    #[serde(default)]
+    query_seq: Option<u64>,
 }
 
 fn write_control_response(stream: &mut IpcConnection, response: &ControlResponse) {

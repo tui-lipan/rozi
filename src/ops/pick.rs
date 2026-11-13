@@ -204,6 +204,7 @@ pub(crate) fn rows_reported(
     id: u64,
     tab: Option<String>,
     rows: Vec<PickRow>,
+    query_seq: Option<u64>,
 ) -> Update {
     let Some(pick) = ctx.state.pick.as_mut().filter(|p| p.id == id) else {
         return Update::none();
@@ -212,6 +213,11 @@ pub(crate) fn rows_reported(
         return Update::none();
     };
     let page = &mut pick.pages[index];
+    // An answer to text that has since changed: a slower search finishing after a newer one
+    // would otherwise replace the newer rows, and nothing would bring them back.
+    if query_seq.is_some_and(|seq| seq < page.query_seq) {
+        return Update::none();
+    }
     page.rows = rows;
     if page.selected >= page.rows.len() {
         page.selected = 0;
@@ -335,8 +341,10 @@ pub(crate) fn query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update
         return Update::none();
     };
     if pick.report_query && pick.page().query != query {
-        let payload = with_tab(pick, serde_json::json!({ "query": query }));
-        pick.reply.event(&payload);
+        let page = pick.page_mut();
+        page.query_seq += 1;
+        let payload = serde_json::json!({ "query": query, "query_seq": page.query_seq });
+        pick.reply.event(&with_tab(pick, payload));
     }
     pick.page_mut().query = query;
     let is_empty = pick.page().query.trim().is_empty();
@@ -602,6 +610,7 @@ mod tests {
 
             backend
                 .dispatch(crate::Msg::PickRowsReported {
+                    query_seq: None,
                     id: 1,
                     tab: None,
                     rows: vec![PickRow {
@@ -695,6 +704,7 @@ mod tests {
 
             backend
                 .dispatch(crate::Msg::PickRowsReported {
+                    query_seq: None,
                     id: 1,
                     tab: None,
                     rows: vec![PickRow {
@@ -874,6 +884,7 @@ mod tests {
             .expect("dispatch open");
         backend
             .dispatch(crate::Msg::PickRowsReported {
+                query_seq: None,
                 id: 1,
                 tab: None,
                 rows: vec![PickRow {
@@ -1073,6 +1084,7 @@ mod tests {
 
             backend
                 .dispatch(crate::Msg::PickRowsReported {
+                    query_seq: None,
                     id: 1,
                     tab: None,
                     rows: vec![PickRow {
@@ -1331,6 +1343,7 @@ mod tests {
 
             backend
                 .dispatch(crate::Msg::PickRowsReported {
+                    query_seq: None,
                     id: 1,
                     tab: None,
                     rows: vec![PickRow {
@@ -1490,6 +1503,7 @@ mod tests {
     fn report(backend: &mut TestBackend<crate::AppRoot>, tab: Option<&str>, ids: &[&str]) {
         backend
             .dispatch(crate::Msg::PickRowsReported {
+                query_seq: None,
                 id: 1,
                 tab: tab.map(str::to_string),
                 rows: ids.iter().map(|id| row(id)).collect(),
@@ -1602,10 +1616,10 @@ mod tests {
         });
     }
 
-    /// A caller that asked for the filter text hears each change with the tab it was typed on,
-    /// and nothing when a page is rebuilt around text it has already heard.
+    /// A caller that asked for the filter text hears each change once, numbered, with the tab it
+    /// was typed on, and rows answering an earlier number never replace newer ones.
     #[test]
-    fn a_reporting_picker_sends_each_filter_change_once() {
+    fn a_reporting_picker_numbers_each_filter_change_and_drops_stale_rows() {
         with_backend(|backend| {
             let rx = open_reporting(
                 backend,
@@ -1621,13 +1635,31 @@ mod tests {
             }
             assert_eq!(
                 rx.try_recv().unwrap().trim(),
-                r#"{"query":"sr","tab":"files"}"#
+                r#"{"query":"sr","query_seq":1,"tab":"files"}"#
             );
             assert_eq!(
                 rx.try_recv().unwrap().trim(),
-                r#"{"query":"src","tab":"files"}"#
+                r#"{"query":"src","query_seq":2,"tab":"files"}"#
             );
             assert!(rx.try_recv().is_none());
+
+            // The search for "sr" finishes after the one for "src": its rows are stale. Rows that
+            // answer no search, such as a refresh after an action, always apply.
+            for (query_seq, label, shown) in [
+                (Some(2), "src", "src"),
+                (Some(1), "sr", "src"),
+                (None, "refreshed", "refreshed"),
+            ] {
+                backend
+                    .dispatch(crate::Msg::PickRowsReported {
+                        id: 1,
+                        tab: Some("files".into()),
+                        rows: vec![row(label)],
+                        query_seq,
+                    })
+                    .unwrap();
+                assert_eq!(page_ids(backend)[0], [shown]);
+            }
 
             backend.dispatch(crate::Msg::PickTabSelected(1)).unwrap();
             assert_eq!(rx.try_recv().unwrap().trim(), r#"{"tab":"dirs"}"#);

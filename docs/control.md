@@ -1182,8 +1182,9 @@ first shown:
 Selections and actions from a tabbed picker carry the tab: `{"selected":"main","tab":"branches"}`.
 
 A list longer than the picker's 512 rows can follow the search field: with `"report_query":true`,
-JSON mode prints `{"query":"…"}` each time the text changes, and the producer sends the rows that
-match it.
+JSON mode prints `{"query":"…","query_seq":N}` each time the text changes, and the producer sends
+the rows that match it, echoing `query_seq` so rozi can drop an answer to text that has since
+changed.
 See [Picker protocol](control-protocol.md#picker-stream).
 
 ## Prompts

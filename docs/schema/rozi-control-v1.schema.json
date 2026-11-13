@@ -3084,7 +3084,7 @@
               ]
             },
             "report_query": {
-              "description": "Report the filter text as `{\"query\":…}` each time it changes, so the caller can send\nrows for it: the way past the row limit for a list too long to send whole.",
+              "description": "Report the filter text as `{\"query\":…,\"query_seq\":N}` each time it changes, so the\ncaller can send rows for it: the way past the row limit for a list too long to send\nwhole. A row snapshot that echoes an older `query_seq` is dropped.",
               "type": "boolean"
             },
             "tab": {
@@ -5063,7 +5063,7 @@
               ]
             },
             "report_query": {
-              "description": "Report the filter text as `{\"query\":…}` each time it changes, so the caller can send\nrows for it: the way past the row limit for a list too long to send whole.",
+              "description": "Report the filter text as `{\"query\":…,\"query_seq\":N}` each time it changes, so the\ncaller can send rows for it: the way past the row limit for a list too long to send\nwhole. A row snapshot that echoes an older `query_seq` is dropped.",
               "type": "boolean"
             },
             "tab": {

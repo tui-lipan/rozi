@@ -36,15 +36,17 @@ pub fn program_status_names_agent(app: &str, agent_id: &str) -> bool {
 }
 
 /// What the agent `agent_id` says about itself over OSC 7501: the most urgent of the records it
-/// reports, its child records included, since they inherit its `app`.
+/// reported after report order `after`, its child records included, since they inherit its `app`.
 pub fn agent_program_status<'a>(
     snapshot: &'a tui_lipan::ProgramStatusSnapshot,
     agent_id: &str,
+    after: u64,
 ) -> Option<&'a tui_lipan::ProgramStatusRecord> {
     crate::session::protocol::most_urgent_program_status(snapshot.records.iter().filter(|record| {
-        snapshot
-            .app_for(record)
-            .is_some_and(|app| program_status_names_agent(app, agent_id))
+        record.updated > after
+            && snapshot
+                .app_for(record)
+                .is_some_and(|app| program_status_names_agent(app, agent_id))
     }))
 }
 

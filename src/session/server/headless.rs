@@ -3174,7 +3174,7 @@ mod tests {
                 .apply_agent_integration(None, 7, 1, report("hook-a", None, 2))
                 .is_ok()
         );
-        server.sync_pane_runtime(None, 7, 1);
+        // Released, the agent's word speaks again in that same change, with no poll in between.
         assert_eq!(states(&server), [(None, protocol::AgentState::Done)]);
 
         // With rows, it speaks for the conversation on screen only.
@@ -3203,6 +3203,32 @@ mod tests {
                 (Some("other".into()), Idle)
             ]
         );
+        // A hook of the conversation in the background reports for its own row, and leaves the
+        // pane to the one on screen.
+        let background = super::super::runtime::AgentIntegrationUpdate {
+            native_session: Some("conversation-other".into()),
+            ..report("hook-b", Some(Blocked), 1)
+        };
+        assert!(
+            server
+                .apply_agent_integration(None, 7, 1, background)
+                .is_ok()
+        );
+        assert_eq!(
+            states(&server),
+            [
+                (Some("shown".into()), Working),
+                (Some("other".into()), Blocked)
+            ]
+        );
+        assert!(
+            server.panes[&7]
+                .runtime
+                .integration
+                .as_deref()
+                .is_some_and(|report| report.integration
+                    == super::super::runtime::PROGRAM_STATUS_INTEGRATION)
+        );
         // A client showing none of its conversations: nothing to attach the report to.
         server.panes.get_mut(&7).unwrap().runtime.rows =
             vec![row("shown", false), row("other", false)];
@@ -3211,6 +3237,42 @@ mod tests {
             states(&server),
             [(Some("shown".into()), Idle), (Some("other".into()), Idle)]
         );
+    }
+
+    /// A terminal keeps an agent's `error` after it exits. The next agent launched in the pane has
+    /// not said anything yet, and is a new incarnation, not the one that failed.
+    #[test]
+    fn an_agent_launched_after_another_does_not_inherit_its_program_status() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        let print = |server: &mut SessionServer, bytes: &[u8]| {
+            let screen = server.panes.get_mut(&7).unwrap().screen_mut();
+            screen.set_program_status_enabled(true);
+            screen.process_bytes(bytes);
+            server.sync_pane_runtime(None, 7, 1);
+        };
+        let state = |server: &SessionServer| {
+            let runtime = &server.panes[&7].runtime;
+            (
+                protocol::agent_signature(runtime)[0].2,
+                runtime
+                    .integration
+                    .as_deref()
+                    .map(|report| report.reference.incarnation),
+            )
+        };
+        print(&mut server, b"\x1b]7501;state=error:app=claude-code\x07");
+        let (failed, first) = state(&server);
+        assert_eq!(failed, protocol::AgentState::Error);
+
+        server.panes.get_mut(&7).unwrap().agent.launches += 1;
+        server.sync_pane_runtime(None, 7, 1);
+        assert_eq!(state(&server), (protocol::AgentState::Idle, None));
+
+        print(&mut server, b"\x1b]7501;state=working:app=claude-code\x07");
+        let (working, second) = state(&server);
+        assert_eq!(working, protocol::AgentState::Working);
+        assert_ne!(first, second, "a relaunch is a new incarnation");
     }
 
     /// A pane with no UI finds its server by instance, then asks by name. A request naming another

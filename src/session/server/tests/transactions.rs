@@ -701,6 +701,7 @@ fn a_parked_failed_spawn_is_removed_and_repairs_scrollable_focus_on_return() {
             ui.dispatch(crate::Msg::SidebarSessionActivate(DiscoveredSession {
                 name: name.into(),
                 status: DiscoveredSessionStatus::Running {
+                    terminal_engine: None,
                     panes: 1,
                     clients: 1,
                     has_layout: true,

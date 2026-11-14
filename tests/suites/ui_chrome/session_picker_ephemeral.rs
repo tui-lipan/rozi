@@ -22,6 +22,7 @@ fn session_row(name: &str) -> DiscoveredSession {
         host: None,
         remote_target: None,
         status: DiscoveredSessionStatus::Running {
+            terminal_engine: None,
             panes: 1,
             has_layout: true,
             clients: 1,
@@ -258,6 +259,7 @@ fn padded_selection_insets_the_current_marker() {
                 host: None,
                 remote_target: None,
                 status: DiscoveredSessionStatus::Running {
+                    terminal_engine: None,
                     panes: 1,
                     has_layout: true,
                     clients: 1,

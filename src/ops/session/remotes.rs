@@ -994,6 +994,7 @@ mod tests {
                 .push(crate::session::discovery::DiscoveredSession {
                     name: name.into(),
                     status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                        terminal_engine: None,
                         panes: 1,
                         clients: 0,
                         has_layout: true,
@@ -1362,6 +1363,7 @@ mod tests {
                         host: Some("buildbox".into()),
                         remote_target: Some(other.clone()),
                         status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                            terminal_engine: None,
                             panes: 1,
                             clients: 0,
                             has_layout: false,
@@ -1428,6 +1430,7 @@ mod tests {
                 host: Some(target.display_label()),
                 remote_target: Some(target.clone()),
                 status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                    terminal_engine: None,
                     panes: 2,
                     clients: 0,
                     has_layout: true,
@@ -1580,6 +1583,7 @@ mod tests {
                         host: Some("workbox".into()),
                         remote_target: Some(target.clone()),
                         status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                            terminal_engine: None,
                             panes: 1,
                             clients: 0,
                             has_layout: false,
@@ -1636,6 +1640,7 @@ mod tests {
                         host: Some("workbox".into()),
                         remote_target: Some(target.clone()),
                         status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                            terminal_engine: None,
                             panes: 2,
                             clients: 0,
                             has_layout: false,

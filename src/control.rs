@@ -29,7 +29,7 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// third-party software validates against, and no two development builds negotiate with it, so
 /// intermediate commits need no revisions of their own. Any change counts; the common one is a
 /// closed vocabulary such as commands, error codes, or event names gaining a value.
-pub const API_SCHEMA_VERSION: u32 = 5;
+pub const API_SCHEMA_VERSION: u32 = 6;
 
 /// The published JSON Schema, as `rozi api schema` prints it. CI fails when the checked-in file
 /// differs from what the wire types generate, so embedding the file gives every build the schema
@@ -2718,6 +2718,10 @@ pub struct CallerContext {
 pub struct CallerSession {
     pub name: String,
     pub instance: crate::session::protocol::SessionInstanceId,
+    /// The emulator engine the session server's panes run on (`alacritty`, `ghostty`), fixed
+    /// when the server started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_engine: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -2726,6 +2730,9 @@ pub struct CallerUi {
     pub available: bool,
     pub displays_session: Option<bool>,
     pub holds_session: Option<bool>,
+    /// The emulator engine the UI draws panes with, fixed when the UI started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_engine: Option<String>,
 }
 
 /// Attachment identities supplied by a UI, independent of verified caller identity.
@@ -2734,6 +2741,9 @@ pub struct CallerUi {
 pub struct UiContextMetadata {
     pub displayed_session: Option<crate::session::protocol::SessionInstanceId>,
     pub held_sessions: Vec<crate::session::protocol::SessionInstanceId>,
+    /// The emulator engine this UI draws panes with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_engine: Option<String>,
 }
 
 /// What `metrics` answers with from a session server.

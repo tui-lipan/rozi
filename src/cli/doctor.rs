@@ -82,13 +82,7 @@ pub(crate) fn run() {
         let versions = counts
             .running_versions
             .iter()
-            .map(|(version, protocol)| {
-                let version = version.as_deref().unwrap_or("unknown");
-                match protocol {
-                    Some(protocol) => format!("{version} (protocol {protocol})"),
-                    None => version.to_string(),
-                }
-            })
+            .map(running_server_label)
             .collect::<Vec<_>>()
             .join(", ");
         fields.push(("sessions_versions".into(), versions));
@@ -101,6 +95,23 @@ pub(crate) fn run() {
         .map(|(key, value)| format!("{key:width$}  {value}\n"))
         .collect();
     print_or_stop(&report);
+}
+
+/// One running server in `sessions_versions`: its release, then the protocol and terminal engine
+/// it reported, such as `0.0.47 (protocol 52, ghostty)`.
+fn running_server_label(server: &crate::session::discovery::RunningServer) -> String {
+    let version = server.rozi_version.as_deref().unwrap_or("unknown");
+    let details: Vec<String> = server
+        .effective_protocol
+        .map(|protocol| format!("protocol {protocol}"))
+        .into_iter()
+        .chain(server.terminal_engine.clone())
+        .collect();
+    if details.is_empty() {
+        version.to_string()
+    } else {
+        format!("{version} ({})", details.join(", "))
+    }
 }
 
 /// Recognize terminal names rather than echoing an arbitrary value supplied by the environment.

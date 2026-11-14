@@ -1008,6 +1008,13 @@
         },
         "name": {
           "type": "string"
+        },
+        "terminal_engine": {
+          "description": "The emulator engine the session server's panes run on (`alacritty`, `ghostty`), fixed\nwhen the server started.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -1030,6 +1037,13 @@
         "holds_session": {
           "type": [
             "boolean",
+            "null"
+          ]
+        },
+        "terminal_engine": {
+          "description": "The emulator engine the UI draws panes with, fixed when the UI started.",
+          "type": [
+            "string",
             "null"
           ]
         }
@@ -9333,6 +9347,13 @@
             "$ref": "#/$defs/SessionInstanceId"
           },
           "type": "array"
+        },
+        "terminal_engine": {
+          "description": "The emulator engine this UI draws panes with.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -9540,5 +9561,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 5
+  "x-rozi-schema-version": 6
 }

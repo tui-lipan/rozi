@@ -567,6 +567,7 @@ mv "$4.tmp" "$4"
         ui.0.dispatch(Msg::SidebarSessionActivate(DiscoveredSession {
             name: server.session().into(),
             status: DiscoveredSessionStatus::Running {
+                terminal_engine: None,
                 panes: 1,
                 clients: 0,
                 has_layout: true,

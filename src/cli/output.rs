@@ -1580,7 +1580,7 @@ fn format_caller_context_text(data: Option<&serde_json::Value>) -> String {
         return String::new();
     };
     let mut text = format!("{}\n", context.status);
-    if let Some(session) = context.session {
+    if let Some(session) = &context.session {
         text.push_str(&format!(
             "Session: {} ({})\n",
             session.name,
@@ -1605,6 +1605,22 @@ fn format_caller_context_text(data: Option<&serde_json::Value>) -> String {
     } else {
         "UI: unavailable\n"
     });
+    let engines: Vec<String> = [
+        (
+            "session",
+            context
+                .session
+                .as_ref()
+                .and_then(|s| s.terminal_engine.as_deref()),
+        ),
+        ("UI", context.ui.terminal_engine.as_deref()),
+    ]
+    .into_iter()
+    .filter_map(|(holder, engine)| Some(format!("{} ({holder})", engine?)))
+    .collect();
+    if !engines.is_empty() {
+        text.push_str(&format!("Terminal engine: {}\n", engines.join(", ")));
+    }
     text
 }
 

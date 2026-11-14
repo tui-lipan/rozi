@@ -15,6 +15,7 @@ fn session(name: &str, panes: usize, clients: u32, host: Option<&str>) -> Discov
         name: name.into(),
         origin: Default::default(),
         status: DiscoveredSessionStatus::Running {
+            terminal_engine: None,
             panes,
             clients,
             has_layout: true,

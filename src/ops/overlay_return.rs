@@ -394,6 +394,7 @@ mod tests {
                 host: Some("host-b".into()),
                 remote_target: Some(browsed.clone()),
                 status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                    terminal_engine: None,
                     panes: 1,
                     has_layout: true,
                     clients: 1,

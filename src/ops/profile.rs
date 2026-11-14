@@ -193,6 +193,7 @@ fn push_local_current_session(
         host: None,
         remote_target: None,
         status: crate::session::discovery::DiscoveredSessionStatus::Running {
+            terminal_engine: None,
             panes: ctx
                 .state
                 .current()

@@ -451,6 +451,7 @@ pub(crate) fn handle_control_request(
             ControlResponse::ok(crate::control::UiContextMetadata {
                 displayed_session: displayed,
                 held_sessions: held,
+                terminal_engine: Some(crate::pane::engine::active().name().to_string()),
             })
         }
         ControlCommand::Invoke { .. }

@@ -23,6 +23,9 @@ pub enum DiscoveredSessionStatus {
         has_layout: bool,
         effective_protocol: Option<u32>,
         rozi_version: Option<String>,
+        /// The emulator engine the server's panes run on, as it reported it. `None` from servers
+        /// that predate the report.
+        terminal_engine: Option<String>,
     },
     /// No server is running, but a resurrection snapshot can seed one under this name.
     Restorable,
@@ -236,15 +239,20 @@ pub(crate) struct SessionDiagnosticCounts {
     pub incompatible: usize,
     pub restorable: usize,
     pub unknown: usize,
-    pub running_versions: Vec<(Option<String>, Option<u32>)>,
+    pub running_versions: Vec<RunningServer>,
+}
+
+/// What one running server reported about itself.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct RunningServer {
+    pub rozi_version: Option<String>,
+    pub effective_protocol: Option<u32>,
+    pub terminal_engine: Option<String>,
 }
 
 #[derive(Clone)]
 enum DiagnosticSessionStatus {
-    Running {
-        rozi_version: Option<String>,
-        effective_protocol: Option<u32>,
-    },
+    Running(RunningServer),
     Incompatible,
     Unknown,
 }
@@ -271,14 +279,9 @@ pub(crate) fn diagnostic_counts() -> std::io::Result<SessionDiagnosticCounts> {
         };
         live_names.insert(name);
         match status {
-            DiagnosticSessionStatus::Running {
-                rozi_version,
-                effective_protocol,
-            } => {
+            DiagnosticSessionStatus::Running(server) => {
                 counts.running += 1;
-                counts
-                    .running_versions
-                    .push((rozi_version, effective_protocol));
+                counts.running_versions.push(server);
             }
             DiagnosticSessionStatus::Incompatible => counts.incompatible += 1,
             DiagnosticSessionStatus::Unknown => counts.unknown += 1,
@@ -311,13 +314,15 @@ fn diagnostic_session_status(
                 DiscoveredSessionStatus::Running {
                     rozi_version,
                     effective_protocol,
+                    terminal_engine,
                     ..
                 },
             ..
-        }) => Some(DiagnosticSessionStatus::Running {
+        }) => Some(DiagnosticSessionStatus::Running(RunningServer {
             rozi_version,
             effective_protocol,
-        }),
+            terminal_engine,
+        })),
         Err(err) if peer_hung_up(err.kind()) => None,
         _ => Some(DiagnosticSessionStatus::Unknown),
     }
@@ -672,6 +677,7 @@ fn query_status_within(
             has_layout,
             effective_protocol,
             rozi_version,
+            terminal_engine,
             origin,
             agents,
             projects,
@@ -683,8 +689,8 @@ fn query_status_within(
                 clients,
                 has_layout,
                 effective_protocol: Some(effective_protocol),
-                rozi_version: rozi_version
-                    .filter(|v| !v.is_empty() && !v.chars().any(char::is_control)),
+                rozi_version: printable_label(rozi_version),
+                terminal_engine: printable_label(terminal_engine),
             },
             origin,
             agents,
@@ -1200,6 +1206,8 @@ pub fn parse_remote_list_json(
         #[serde(default)]
         rozi_version: Option<String>,
         #[serde(default)]
+        terminal_engine: Option<String>,
+        #[serde(default)]
         origin: crate::session::origin::SessionOrigin,
         #[serde(default)]
         ephemeral: bool,
@@ -1214,9 +1222,8 @@ pub fn parse_remote_list_json(
                     clients: row.clients.unwrap_or(0),
                     has_layout: row.layout.unwrap_or(false),
                     effective_protocol: row.effective_protocol,
-                    rozi_version: row
-                        .rozi_version
-                        .filter(|v| !v.is_empty() && !v.chars().any(char::is_control)),
+                    rozi_version: printable_label(row.rozi_version),
+                    terminal_engine: printable_label(row.terminal_engine),
                 },
                 "restorable" => DiscoveredSessionStatus::Restorable,
                 "unreadable" => DiscoveredSessionStatus::Unreadable,
@@ -1233,6 +1240,11 @@ pub fn parse_remote_list_json(
             }
         })
         .collect())
+}
+
+/// A short label a peer reported, kept only when it is safe to print.
+fn printable_label(label: Option<String>) -> Option<String> {
+    label.filter(|label| !label.is_empty() && !label.chars().any(char::is_control))
 }
 
 /// Serialize discovered sessions as JSON (for `sessions list --format json`).
@@ -1257,6 +1269,7 @@ pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json
                     has_layout,
                     effective_protocol,
                     rozi_version,
+                    terminal_engine,
                 } => {
                     obj["status"] = serde_json::json!("running");
                     obj["panes"] = serde_json::json!(panes);
@@ -1267,6 +1280,9 @@ pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json
                     }
                     if let Some(version) = rozi_version {
                         obj["rozi_version"] = serde_json::json!(version);
+                    }
+                    if let Some(engine) = terminal_engine {
+                        obj["terminal_engine"] = serde_json::json!(engine);
                     }
                 }
                 // The CLI probes live and never reads the client's host cache, so this does not
@@ -1690,6 +1706,7 @@ mod tests {
                 host: Some("workbox".into()),
                 remote_target: None,
                 status: DiscoveredSessionStatus::Running {
+                    terminal_engine: None,
                     panes: 2,
                     clients: 1,
                     has_layout: true,

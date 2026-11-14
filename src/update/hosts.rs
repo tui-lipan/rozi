@@ -328,6 +328,7 @@ mod tests {
                 remote_target: Some(target.clone()),
                 ephemeral: false,
                 status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                    terminal_engine: None,
                     panes: 2,
                     clients: 0,
                     has_layout: false,
@@ -399,6 +400,7 @@ mod tests {
                 remote_target: Some(target.clone()),
                 ephemeral: false,
                 status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                    terminal_engine: None,
                     panes: 2,
                     clients: 0,
                     has_layout: true,

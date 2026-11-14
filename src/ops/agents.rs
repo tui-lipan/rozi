@@ -473,6 +473,7 @@ mod tests {
             .push(crate::session::discovery::DiscoveredSession {
                 name: "backend".into(),
                 status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                    terminal_engine: None,
                     panes: 1,
                     clients: 0,
                     has_layout: true,
@@ -680,6 +681,7 @@ mod tests {
         let row = |remote_target| crate::session::discovery::DiscoveredSession {
             name: "dev".into(),
             status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                terminal_engine: None,
                 panes: 1,
                 clients: 0,
                 has_layout: true,

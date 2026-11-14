@@ -1219,6 +1219,7 @@ impl SessionServer {
             session: Some(CallerSession {
                 name: self.session_name.clone(),
                 instance: self.instance_id.clone(),
+                terminal_engine: Some(crate::pane::engine::active().name().to_string()),
             }),
             pane: reference,
             agent,

@@ -11,6 +11,7 @@ fn running(name: &str, clients: u32, target: &RemoteTarget) -> DiscoveredSession
         name: name.to_string(),
         origin: Default::default(),
         status: DiscoveredSessionStatus::Running {
+            terminal_engine: None,
             panes: 1,
             clients,
             has_layout: false,

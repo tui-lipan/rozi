@@ -107,6 +107,7 @@ fn backend_with_sessions() -> TestBackend<AppRoot> {
             name: "dev".into(),
             origin: Default::default(),
             status: DiscoveredSessionStatus::Running {
+                terminal_engine: None,
                 panes: 2,
                 clients: 0,
                 has_layout: true,

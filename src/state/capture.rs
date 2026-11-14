@@ -153,17 +153,27 @@ struct HandoffBurst {
     pane: PaneId,
     /// The effect tick the ripple started on.
     start_tick: u64,
+    direction: HandoffDirection,
     revision: u64,
+}
+
+/// Which end of a handoff a pane is: its ripple runs outward when it sends, inward when it
+/// receives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HandoffDirection {
+    Send,
+    Receive,
 }
 
 impl AgentHandoff {
     /// Start, or restart, `pane`'s ripple at `start_tick`. Returns the revision its end names.
-    pub fn start(&mut self, pane: PaneId, start_tick: u64) -> u64 {
+    pub fn start(&mut self, pane: PaneId, start_tick: u64, direction: HandoffDirection) -> u64 {
         self.revision = self.revision.wrapping_add(1);
         self.bursts.retain(|burst| burst.pane != pane);
         self.bursts.push(HandoffBurst {
             pane,
             start_tick,
+            direction,
             revision: self.revision,
         });
         self.revision
@@ -177,12 +187,12 @@ impl AgentHandoff {
         self.bursts.len() != before
     }
 
-    /// The tick `pane`'s ripple started on, while it runs.
-    pub fn start_tick(&self, pane: PaneId) -> Option<u64> {
+    /// The tick `pane`'s ripple started on and which way it runs, while it runs.
+    pub fn ripple(&self, pane: PaneId) -> Option<(u64, HandoffDirection)> {
         self.bursts
             .iter()
             .find(|burst| burst.pane == pane)
-            .map(|burst| burst.start_tick)
+            .map(|burst| (burst.start_tick, burst.direction))
     }
 }
 
@@ -196,26 +206,26 @@ pub struct RecordingMarkBlink {
 
 #[cfg(test)]
 mod agent_handoff_tests {
-    use super::AgentHandoff;
+    use super::{AgentHandoff, HandoffDirection::Receive};
 
     #[test]
     fn a_pane_restarts_its_own_ripple_and_never_cuts_another_short() {
         let mut handoff = AgentHandoff::default();
-        let first = handoff.start(1, 10);
-        let second = handoff.start(2, 12);
+        let first = handoff.start(1, 10, Receive);
+        let second = handoff.start(2, 12, Receive);
         assert_eq!(
-            handoff.start_tick(1),
-            Some(10),
+            handoff.ripple(1),
+            Some((10, Receive)),
             "pane 2 leaves pane 1's ripple running"
         );
 
-        let restarted = handoff.start(1, 20);
-        assert_eq!(handoff.start_tick(1), Some(20));
+        let restarted = handoff.start(1, 20, Receive);
+        assert_eq!(handoff.ripple(1), Some((20, Receive)));
         assert!(!handoff.end(1, first), "the first ripple's end is stale");
-        assert_eq!(handoff.start_tick(1), Some(20));
+        assert_eq!(handoff.ripple(1), Some((20, Receive)));
 
         assert!(handoff.end(2, second));
         assert!(handoff.end(1, restarted));
-        assert_eq!(handoff.start_tick(1), None);
+        assert_eq!(handoff.ripple(1), None);
     }
 }

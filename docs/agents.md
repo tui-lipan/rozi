@@ -461,8 +461,9 @@ survive a session restart.
 ### Watch agents talk
 
 A pane's title shows its agent's open requests: `→2` for two it asked and waits on, `←1` for one it
-was asked. When a request reaches an agent, or its answer comes back to the asker, light runs
-along that pane's border from the marks.
+was asked. When a request is delivered or answered, light runs along the borders of both panes at
+once: outward from the marks of the pane that sent it, and inward into the marks of the pane that
+received it.
 
 **Agent conversations…** in the command palette (`agent-conversations`) lists the session's
 requests, each chain together with the requests asked while answering another nested under it,

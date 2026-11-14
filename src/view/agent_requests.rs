@@ -76,20 +76,33 @@ fn links(requests: &[AgentRequestSummary], panes: &[PaneRef]) -> PaneLinks {
     links
 }
 
-/// The agents a change from `old` to `new` hands a turn to: the agent a request was just typed
-/// into, and the asker whose answer just arrived. Failures and cancellations hand nothing over.
+/// Something one agent just sent another: a request typed into its target, or an answer back to
+/// its asker. The sender is `None` for a request asked from outside any agent.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Handoff<'a> {
+    pub(crate) sender: Option<&'a AgentRef>,
+    pub(crate) receiver: &'a AgentRef,
+}
+
+/// What a change from `old` to `new` hands over: each request just delivered, sent by its asker
+/// to its target, and each just answered, sent back by its target to its asker. Failures and
+/// cancellations hand nothing over.
 pub(crate) fn handoffs<'a>(
     old: &[AgentRequestSummary],
     new: &'a [AgentRequestSummary],
-) -> Vec<&'a AgentRef> {
+) -> Vec<Handoff<'a>> {
     new.iter()
         .filter_map(|request| {
             let before = old.iter().find(|previous| previous.id == request.id)?.state;
             match (before, request.state) {
-                (AgentRequestState::Queued, AgentRequestState::Active) => Some(&request.to),
-                (before, AgentRequestState::Answered) if !before.is_resolved() => {
-                    request.from.as_ref()
-                }
+                (AgentRequestState::Queued, AgentRequestState::Active) => Some(Handoff {
+                    sender: request.from.as_ref(),
+                    receiver: &request.to,
+                }),
+                (before, AgentRequestState::Answered) if !before.is_resolved() => Some(Handoff {
+                    sender: Some(&request.to),
+                    receiver: request.from.as_ref()?,
+                }),
                 _ => None,
             }
         })
@@ -298,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn a_delivery_marks_the_target_and_an_answer_marks_the_asker() {
+    fn a_delivery_goes_asker_to_target_and_an_answer_comes_back() {
         let before = [
             request("a", Some(1), 2, AgentRequestState::Queued),
             request("b", Some(1), 3, AgentRequestState::Active),
@@ -312,11 +325,18 @@ mod tests {
             request("d", None, 3, AgentRequestState::Answered),
             request("e", Some(3), 1, AgentRequestState::Active),
         ];
-        let panes: Vec<u32> = handoffs(&before, &after)
+        let pairs: Vec<(Option<u32>, u32)> = handoffs(&before, &after)
             .into_iter()
-            .map(|agent| agent.pane.pane_id)
+            .map(|handoff| {
+                (
+                    handoff.sender.map(|agent| agent.pane.pane_id),
+                    handoff.receiver.pane.pane_id,
+                )
+            })
             .collect();
-        assert_eq!(panes, [2, 1]);
+        // `a` delivered from 1 to 2; `b` answered by 3 back to 1; `d` answered to the CLI, which
+        // has no pane to receive it.
+        assert_eq!(pairs, [(Some(1), 2), (Some(3), 1)]);
         assert!(handoffs(&after, &after).is_empty());
     }
 

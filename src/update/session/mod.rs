@@ -164,18 +164,29 @@ pub(crate) fn agent_requests_changed(
     {
         return Update::full();
     }
-    let panes: Vec<_> =
+    use crate::state::HandoffDirection::{Receive, Send};
+    let mut panes = Vec::new();
+    for handoff in
         crate::view::agent_requests::handoffs(&previous, &ctx.state.attachment.agent_requests)
-            .into_iter()
-            .filter_map(|agent| crate::view::agent_requests::pane_of(&ctx.state, agent))
-            .collect();
+    {
+        let pane = |agent| crate::view::agent_requests::pane_of(&ctx.state, agent);
+        // Senders first, so a pane that sends and receives in one change shows the receiving.
+        panes.extend(handoff.sender.and_then(pane).map(|pane| (pane, Send)));
+        panes.extend(pane(handoff.receiver).map(|pane| (pane, Receive)));
+    }
+    panes.sort_by_key(|(_, direction)| *direction == Receive);
     if panes.is_empty() {
         return Update::full();
     }
     let start_tick = ctx.effect_phase();
     let ends: Vec<_> = panes
         .into_iter()
-        .map(|pane| (pane, ctx.state.agent_handoff.start(pane, start_tick)))
+        .map(|(pane, direction)| {
+            (
+                pane,
+                ctx.state.agent_handoff.start(pane, start_tick, direction),
+            )
+        })
         .collect();
     Update::full().merge(Update::with_command(Command::spawn(
         move |link: CommandLink<crate::Msg>| {

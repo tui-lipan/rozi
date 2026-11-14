@@ -20,7 +20,7 @@ pub(crate) fn particle_pane(
     seed: u64,
     key: Key,
     theme: &Theme,
-    handoff: Option<u64>,
+    handoff: Option<(u64, crate::state::HandoffDirection)>,
 ) -> (FloatRect, Element) {
     // Keep this wrapper mounted at rest as well: changing terminal ancestry on the final frame
     // would lose focus and force a terminal remount. Only the effect itself comes and goes.
@@ -53,8 +53,13 @@ pub(crate) fn particle_pane(
             theme.border_active,
         ));
     }
-    if let Some(start_tick) = handoff {
-        scope = scope.effect(handoff_ripple(inner, start_tick, theme.border_active));
+    if let Some((start_tick, direction)) = handoff {
+        scope = scope.effect(handoff_ripple(
+            inner,
+            start_tick,
+            direction,
+            theme.border_active,
+        ));
     }
     let outer = FloatRect {
         x: f32::from(left),
@@ -68,22 +73,44 @@ pub(crate) fn particle_pane(
 /// How long a handoff ripple runs, in effect ticks of 16 ms.
 pub(crate) const HANDOFF_RIPPLE_TICKS: u32 = 54;
 
-/// Light running along `pane`'s border from the request marks at its top right, where a request
-/// just arrived or its answer came back. One burst: the ring grows to the far corner and fades.
-fn handoff_ripple(pane: Rect, start_tick: u64, color: Color) -> VisualEffect {
+/// Light running along `pane`'s border, anchored at the request marks in its top right. A pane
+/// that sent a request or an answer lets it run outward from the marks; the pane that received it
+/// gathers it inward into them, at full strength, so the receiver leads and a pair started on the
+/// same tick reads as one exchange.
+fn handoff_ripple(
+    pane: Rect,
+    start_tick: u64,
+    direction: crate::state::HandoffDirection,
+    color: Color,
+) -> VisualEffect {
+    use crate::state::HandoffDirection;
     let (w, h) = (f32::from(pane.w), f32::from(pane.h));
+    let reach = w.hypot(h) + 2.0;
+    let (radius, strength) = match direction {
+        HandoffDirection::Receive => (
+            RippleRadius::Collapse {
+                max_radius: reach,
+                duration_ticks: HANDOFF_RIPPLE_TICKS,
+                start_tick,
+            },
+            1.0,
+        ),
+        HandoffDirection::Send => (
+            RippleRadius::Once {
+                max_radius: reach * 0.75,
+                duration_ticks: HANDOFF_RIPPLE_TICKS,
+                start_tick,
+            },
+            0.7,
+        ),
+    };
     let ripple = VisualEffect::Ripple {
         origin: EffectOrigin::cell(f32::from(pane.x) + (w - 4.0).max(0.0), f32::from(pane.y)),
-        radius: RippleRadius::Once {
-            max_radius: w.hypot(h) + 2.0,
-            duration_ticks: HANDOFF_RIPPLE_TICKS,
-            start_tick,
-        },
-        // A wide ring crosses the one-cell border as a streak rather than a dot, and lighting
-        // only the glyphs keeps it a line of light instead of a block of colour.
+        radius,
+        // A wide ring crosses the one-cell border as a streak of light rather than a dot.
         ring_width: 8.0,
         tint: color,
-        strength: 1.0,
+        strength,
     };
     VisualEffect::Clipped {
         bounds: Some(pane),

@@ -128,6 +128,18 @@ enum WaitEvaluation {
 }
 
 impl SessionServer {
+    pub(super) fn handoff_agent_waits(
+        &mut self,
+        old: &protocol::AgentRef,
+        new: &protocol::AgentRef,
+    ) {
+        for wait in self.agent_waits.values_mut() {
+            if matches!(&wait.subject, WaitSubject::Agent(reference) if reference == old) {
+                wait.subject = WaitSubject::Agent(new.clone());
+            }
+        }
+    }
+
     /// Whether another prompt is in flight for `reference`: a history read on its pane, a prompt
     /// wait, or, for a `result` prompt, a request it is answering.
     pub(super) fn has_conflicting_prompt(

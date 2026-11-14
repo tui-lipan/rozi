@@ -143,6 +143,31 @@ fn rendered_payload(
 }
 
 impl SessionServer {
+    pub(super) fn handoff_agent_history(
+        &mut self,
+        old: &protocol::AgentRef,
+        new: &protocol::AgentRef,
+    ) {
+        for read in self.agent_history.values_mut() {
+            match &mut read.wait.consumer {
+                HistoryConsumer::Request { reference, .. } if reference == old => {
+                    *reference = new.clone();
+                }
+                HistoryConsumer::Reply { result, .. } => {
+                    if result.reference.as_ref() == Some(old) {
+                        result.reference = Some(new.clone());
+                    }
+                    if let Some(agent) = &mut result.agent
+                        && agent.reference == *old
+                    {
+                        agent.reference = new.clone();
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Answer `wait` from what `subject`'s turn left on its terminal: the alternate screen's
     /// history through a leased traversal when the pane qualifies, else the visible screen. Without
     /// a subject, `wait` is answered with no terminal text.

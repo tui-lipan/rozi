@@ -98,6 +98,28 @@ enum TurnOutcome {
 }
 
 impl AgentRequestStore {
+    pub(super) fn handoff(&mut self, old: &protocol::AgentRef, new: &protocol::AgentRef) {
+        for stored in &mut self.requests {
+            if stored.info.to == *old {
+                stored.info.to = new.clone();
+            }
+            if stored.info.from.as_ref() == Some(old) {
+                stored.info.from = Some(new.clone());
+            }
+        }
+        for pending in self.awaits.values_mut() {
+            if pending.caller.as_ref() == Some(old) {
+                pending.caller = Some(new.clone());
+            }
+        }
+        if let Some(slot) = self.slots.remove(old) {
+            self.slots.insert(new.clone(), slot);
+        }
+        if let Some(since) = self.stopped_since.remove(old) {
+            self.stopped_since.insert(new.clone(), since);
+        }
+    }
+
     pub(super) fn note_pane_input(&mut self, pane: PaneId) {
         self.pane_input.insert(pane, Instant::now());
     }

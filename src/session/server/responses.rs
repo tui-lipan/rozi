@@ -27,6 +27,12 @@ pub(super) struct AgentResponseFence {
 }
 
 impl AgentResponseStore {
+    pub(super) fn handoff(&mut self, old: &AgentRef, new: &AgentRef) {
+        if let Some(entries) = self.entries.remove(old) {
+            self.entries.insert(new.clone(), entries);
+        }
+    }
+
     pub fn fence(&self, native_session: Option<String>) -> AgentResponseFence {
         AgentResponseFence {
             generation: self.generation,

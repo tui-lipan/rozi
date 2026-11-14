@@ -106,6 +106,108 @@ fn code(response: ControlResponse) -> Option<ControlErrorCode> {
 }
 
 #[test]
+fn a_request_follows_a_detected_agent_into_its_published_row() {
+    for scenario in [
+        "handoff",
+        "background",
+        "several",
+        "different agent",
+        "new launch",
+    ] {
+        let mut rig = Rig::new(&[3]);
+        let (client, _stream) = super::super::tests::attach_client(&mut rig.server);
+        let detected = rig.agent(3);
+        let request = rig.ask(None, 3, "What is 2+3?");
+        assert_eq!(request.state, AgentRequestState::Active);
+        assert!(rig.typed_into(3, "What is 2+3?"));
+        rig.set_state(3, DetectedAgentState::Working);
+
+        let row = protocol::PublishedRow {
+            publisher: String::new(),
+            kind: protocol::PublisherKind::Agent,
+            id: "first-thread".into(),
+            title: "First question".into(),
+            status: "working".into(),
+            active: true,
+            native_session: Some("first-thread".into()),
+            live_session: None,
+            reported: false,
+            reason: None,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+        };
+        let publisher = || super::super::runtime::PanePublisher {
+            id: "sessions".into(),
+            kind: protocol::PublisherKind::Agent,
+            epoch: 1,
+            responses: Vec::new(),
+        };
+        let mut rows = vec![row.clone()];
+        match scenario {
+            "background" => rows[0].active = false,
+            "several" => rows.push(protocol::PublishedRow {
+                id: "background".into(),
+                active: false,
+                ..row.clone()
+            }),
+            "different agent" => {
+                rig.server
+                    .panes
+                    .get_mut(&3)
+                    .unwrap()
+                    .runtime
+                    .detected_agent
+                    .as_mut()
+                    .unwrap()
+                    .agent = protocol::AgentIdentity::new("codex", "Codex").into();
+            }
+            "new launch" => rig.server.panes.get_mut(&3).unwrap().runtime.agent_launch += 1,
+            _ => {}
+        }
+        rig.server
+            .report_pane_rows(client, 3, 1, false, publisher(), rows)
+            .unwrap();
+        if scenario != "handoff" {
+            assert_eq!(
+                rig.request(&request.id).state,
+                AgentRequestState::Failed,
+                "{scenario}"
+            );
+            continue;
+        }
+        let published = rig.agent(3);
+        assert!(published.slot.is_some());
+        assert_eq!(published.incarnation, detected.incarnation);
+        assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
+        assert_eq!(rig.request(&request.id).to, published);
+
+        rig.server
+            .panes
+            .get_mut(&3)
+            .unwrap()
+            .screen_mut()
+            .process_bytes(b"5");
+        rig.server
+            .report_pane_rows(
+                client,
+                3,
+                1,
+                false,
+                publisher(),
+                vec![protocol::PublishedRow {
+                    status: "idle".into(),
+                    ..row
+                }],
+            )
+            .unwrap();
+        let answered = rig.request(&request.id);
+        assert_eq!(answered.state, AgentRequestState::Answered);
+        assert!(answered.response.unwrap().content.text.contains('5'));
+    }
+}
+
+#[test]
 fn requests_reach_a_target_one_turn_at_a_time() {
     let mut rig = Rig::new(&[2, 3, 4]);
 

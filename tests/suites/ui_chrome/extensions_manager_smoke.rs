@@ -1138,7 +1138,7 @@ fn installed_info(id: &str) -> rozi::config::ExtensionInfo {
 }
 
 #[test]
-fn installed_and_catalog_detail_modals_retain_their_closing_animation() {
+fn closing_an_installed_or_catalog_detail_returns_to_the_list_at_once() {
     rozi::test_support::on_large_stack(|| {
         rozi::test_support::isolate_user_dirs();
         for style in [
@@ -1195,19 +1195,23 @@ fn installed_and_catalog_detail_modals_retain_their_closing_animation() {
                     "rozi-extension-detail"
                 );
                 backend.dispatch(rozi::Msg::CloseExtensionDetail).unwrap();
-                backend.advance_frame(std::time::Duration::from_millis(30));
-                assert!(
-                    backend.rect_of_key(&key).is_some(),
-                    "{style:?}: detail must retain its exit"
-                );
-                assert_ne!(
-                    backend.focused_key().map(|key| key.as_ref()),
-                    Some("rozi-extension-detail")
-                );
-                backend.advance(std::time::Duration::from_millis(500));
+                // The list replaces the detail, so neither animates: the swap takes one frame.
+                let returning = backend.capture_frame().to_ansi_text();
                 assert!(
                     backend.rect_of_key(&key).is_none(),
-                    "{style:?}: detail must be pruned after exit"
+                    "{style:?}: detail must leave at once"
+                );
+                assert!(
+                    backend
+                        .rect_of_key(&tui_lipan::prelude::Key::from("rozi-extensions-modal"))
+                        .is_some(),
+                    "{style:?}: the list is back"
+                );
+                backend.advance(std::time::Duration::from_millis(500));
+                assert_eq!(
+                    backend.capture_frame().to_ansi_text(),
+                    returning,
+                    "{style:?}: the list must arrive settled"
                 );
             }
         }

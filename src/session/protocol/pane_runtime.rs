@@ -55,7 +55,12 @@ pub struct PaneMeta {
     pub cols: u16,
     pub rows: u16,
     pub pid: Option<u32>,
+    /// What the pane shows as its title: the program's own, else the name the user gave it.
     pub title: Option<String>,
+    /// The title the program set, absent when it set none. A client reads it only under
+    /// [`super::Capability::PaneProgramTitle`]; an older server never sends it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program_title: Option<String>,
     /// Account that owns the session server and launched the pane's original shell. Additive and
     /// optional so protocol-12/13 peers that predate this field remain compatible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -82,6 +87,7 @@ impl PaneMeta {
             rows: 24,
             pid: None,
             title: None,
+            program_title: None,
             original_user: None,
             exited: None,
             logging: false,

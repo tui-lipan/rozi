@@ -1271,6 +1271,7 @@ impl SessionServer {
 
     pub(super) fn session_pane_report(&self) -> Vec<PaneInfo> {
         let workspaces = self.layout_workspace_index();
+        let names = self.layout_pane_names();
         let mut panes: Vec<PaneInfo> = self
             .panes
             .iter()
@@ -1294,8 +1295,13 @@ impl SessionServer {
                     id: *id,
                     reference: Some(reference),
                     agent_ref: runtime.as_ref().map(|runtime| runtime.reference.clone()),
-                    title: pane
-                        .effective_title()
+                    // The user's name for the pane wins, as on a UI endpoint: the layout carries a
+                    // rename, the pane only the name it was started with.
+                    title: names
+                        .get(id)
+                        .cloned()
+                        .or_else(|| pane.title.clone())
+                        .or_else(|| pane.program_title())
                         .unwrap_or_else(|| format!("pane {id}")),
                     program_title: pane.program_title(),
                     workspace: workspaces.get(id).copied().unwrap_or(0),
@@ -1593,6 +1599,16 @@ impl SessionServer {
     }
 
     /// One-based workspace number per pane, read from the shared layout document.
+    /// The name the user gave each pane the layout places, where they gave one.
+    fn layout_pane_names(&self) -> HashMap<PaneId, String> {
+        self.layout
+            .iter()
+            .flat_map(|layout| &layout.workspaces)
+            .flat_map(|workspace| &workspace.panes)
+            .filter_map(|pane| Some((pane.pane_id, pane.title.clone()?)))
+            .collect()
+    }
+
     fn layout_workspace_index(&self) -> HashMap<PaneId, usize> {
         let mut index = HashMap::new();
         let Some(layout) = &self.layout else {

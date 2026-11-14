@@ -157,6 +157,7 @@ pub fn attached_message() -> ServerMessage {
                 rows: 60,
                 pid: Some(10_000 + pane.pane_id),
                 title: pane.title.clone(),
+                program_title: None,
                 original_user: Some("benchmark".to_string()),
                 exited: None,
                 logging: pane.pane_id.is_multiple_of(3),

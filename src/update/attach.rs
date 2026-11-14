@@ -22,7 +22,13 @@ pub(super) fn reset_state_for_shared_seed(state: &mut State) {
     state.current_mut().next_pty_generation = 1;
 }
 
-fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protocol::PaneMeta) {
+/// `program_titles` says the server sends the program's own title apart from the pane's name. An
+/// older server sends only the title the pane shows, which may be that name.
+fn apply_pane_meta(
+    pane: &mut crate::state::Pane,
+    meta: &crate::session::protocol::PaneMeta,
+    program_titles: bool,
+) {
     pane.terminal.use_server_scrollback(meta.scrollback);
     pane.opening = false;
     pane.terminal_active = true;
@@ -32,8 +38,12 @@ fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protoco
     pane.terminal.rows = meta.rows.max(1);
     pane.terminal
         .bind_server_backend(meta.pane_id, meta.generation);
-    pane.terminal.title = meta
-        .title
+    let title = if program_titles {
+        &meta.program_title
+    } else {
+        &meta.title
+    };
+    pane.terminal.title = title
         .as_deref()
         .filter(|t| !t.trim().is_empty())
         .map(String::from);
@@ -77,9 +87,17 @@ pub(super) fn bind_attached_pane_backends(
     ctx: &mut Context<AppRoot>,
     panes: Vec<crate::session::protocol::PaneMeta>,
 ) {
+    let program_titles = ctx
+        .state
+        .current()
+        .session_client
+        .as_ref()
+        .is_some_and(|client| {
+            client.supports(crate::session::protocol::Capability::PaneProgramTitle)
+        });
     for meta in panes {
         if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, meta.pane_id, false) {
-            apply_pane_meta(pane, &meta);
+            apply_pane_meta(pane, &meta, program_titles);
         }
         ctx.state
             .agent_attention
@@ -287,6 +305,19 @@ mod tests {
     }
 
     #[test]
+    fn a_pane_name_from_the_server_is_never_the_programs_title() {
+        let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
+        let mut meta = PaneMeta::for_test(1, 7, 100);
+        // A named pane whose program set no title: the server shows the name as its title.
+        meta.title = Some("ci".to_string());
+        apply_pane_meta(&mut pane, &meta, true);
+        assert_eq!(pane.terminal.title(), None);
+        // An older server sends no program title, so its title is all there is.
+        apply_pane_meta(&mut pane, &meta, false);
+        assert_eq!(pane.terminal.title().as_deref(), Some("ci"));
+    }
+
+    #[test]
     fn attaching_to_a_working_agent_preserves_its_first_completion() {
         let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
         let mut runtime = PaneRuntimeState {
@@ -309,11 +340,13 @@ mod tests {
                 rows: 24,
                 pid: Some(101),
                 title: None,
+                program_title: None,
                 original_user: None,
                 exited: None,
                 logging: false,
                 runtime: runtime.clone(),
             },
+            true,
         );
         assert_eq!(pane.terminal.agent_launch, 4);
         assert!(pane.terminal.is_working());

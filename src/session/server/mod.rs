@@ -2338,7 +2338,7 @@ impl ServerPane {
         self.program_title().or_else(|| self.title.clone())
     }
 
-    fn program_title(&self) -> Option<String> {
+    pub(super) fn program_title(&self) -> Option<String> {
         self.terminal
             .title()
             .and_then(crate::pane::sanitize_terminal_title)

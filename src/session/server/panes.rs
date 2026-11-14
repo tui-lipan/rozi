@@ -1105,6 +1105,7 @@ impl SessionServer {
             rows: pane.rows,
             pid: pane.pty.as_ref().and_then(TerminalPty::pid),
             title: pane.effective_title(),
+            program_title: pane.program_title(),
             original_user: Some(crate::platform::user::current_user_label()),
             exited: pane.exited,
             logging: pane.log.is_some(),

@@ -9785,6 +9785,29 @@ fn shared_pane_cwd_change_is_recorded() {
 }
 
 #[test]
+fn a_named_pane_reports_its_name_and_its_programs_title_apart() {
+    let mut server = SessionServer::new_named("titles");
+    let mut pane = test_pane(1);
+    pane.title = Some("ci".to_string());
+    server.panes.insert(1, pane);
+
+    // A client attaching now must not take the name for a title the program set.
+    let meta = server.pane_metadata(None, 1).expect("pane metadata");
+    assert_eq!(meta.title.as_deref(), Some("ci"));
+    assert_eq!(meta.program_title, None);
+
+    server.handle_event(ServerEvent::Pty(
+        None,
+        1,
+        1,
+        TerminalPtyEvent::Output(b"\x1b]0;build\x07".to_vec().into()),
+    ));
+    let report = server.session_pane_report();
+    assert_eq!(report[0].title, "ci");
+    assert_eq!(report[0].program_title.as_deref(), Some("build"));
+}
+
+#[test]
 fn shared_pane_title_change_is_recorded_once_it_settles() {
     let mut server = SessionServer::new_named("title-events");
     server.panes.insert(1, test_pane(1));

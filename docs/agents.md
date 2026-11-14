@@ -430,14 +430,16 @@ and nobody has typed into its pane for two seconds. The typed text names the req
 answer it: `rozi agents reply <ID> --stdin`, with the answer on stdin. An agent receives one
 request at a time, and an approval prompt does not end its turn. Without a reply, the answer is the
 agent's [integration response](#read-the-agents-response), or else its terminal when the turn
-ends, read the same way, including an alternate-screen transcript.
+ends, read the same way, including an alternate-screen transcript. An agent that will answer after
+its turn, such as when a background command finishes, runs `rozi agents reply <ID> --later` first:
+the request then stays `active` past the turn, and the agent can take the next request meanwhile.
 
 | State | Meaning |
 | --- | --- |
 | `queued` | Not typed yet; `reason` says what it waits for. A reply answers it without typing it. |
-| `active` | Typed into the agent. |
+| `active` | Typed into the agent, or promised a later reply. |
 | `answered` | `response` holds the answer. The first answer stands, except that the agent's reply replaces one read from its terminal; a different reply is refused with `conflict`. |
-| `failed` | The agent exited, was replaced, or moved to another conversation. |
+| `failed` | The agent exited, was replaced, or moved to another conversation before answering. |
 | `cancelled` | Cancelled by whoever asked, or the asking agent left or changed conversation before delivery. |
 
 `agents await` prints the answer, or the request's state when it failed or was cancelled. A

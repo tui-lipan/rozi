@@ -3603,6 +3603,23 @@
           "type": "object"
         },
         {
+          "description": "Keep a request sent to the calling agent open for a reply after its turn ends, instead of\nanswering it from the terminal when the turn ends.",
+          "properties": {
+            "cmd": {
+              "const": "agent-reply-later",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Hold the reply until a request is answered, failed, or cancelled.",
           "properties": {
             "cmd": {
@@ -8929,6 +8946,7 @@
   "description": "Control frames exchanged between a rozi session server and its clients, CLI callers, and remote proxies. Generated; see dev/wire-compatibility.md for the rules every change to it follows.",
   "title": "Rozi session wire protocol",
   "x-rozi-capabilities": [
+    "agent-reply-later",
     "agent-requests",
     "agent-summaries",
     "client-handoff",

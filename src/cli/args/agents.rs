@@ -56,6 +56,10 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Answer a request sent to you, text on stdin",
             ),
             row(
+                "reply <ID> --later",
+                "Keep a request open to answer after your turn",
+            ),
+            row(
                 "await <ID> --timeout <DUR>",
                 "Wait until a request is answered",
             ),
@@ -527,8 +531,14 @@ fn parse_reply(
     args: Vec<String>,
 ) -> std::result::Result<(ControlCommand, Option<ListFormat>), String> {
     let (id, format, rest) = take_request_id(args, "agents reply")?;
+    if rest == ["--later"] {
+        return Ok((ControlCommand::AgentReplyLater { id }, format));
+    }
     if rest != ["--stdin"] {
-        return Err("agents reply reads the answer from stdin: agents reply <ID> --stdin".into());
+        return Err(
+            "agents reply reads the answer from stdin: agents reply <ID> --stdin, or agents reply <ID> --later"
+                .into(),
+        );
     }
     use std::io::Read;
     let limit = crate::session::protocol::MAX_AGENT_RESPONSE_BYTES;

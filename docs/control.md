@@ -245,6 +245,7 @@ attached.
 | `agents ask TARGET [--format text\|json] -- TEXT` | [Ask another agent](agents.md#ask-another-agent) without waiting; prints the request. | yes |
 | `agents ask TARGET --wait --timeout DUR [--format text\|json] -- TEXT` | Ask, then wait for the answer as `agents await` does. | yes |
 | `agents reply ID --stdin` | Answer a request sent to the calling agent with the text on stdin. | yes |
+| `agents reply ID --later` | Keep a delivered request open for a reply after the calling agent's turn ends. | yes |
 | `agents await ID --timeout DURATION [--format text\|json]` | Wait until a request is answered, failed, or cancelled, and print its answer. | yes |
 | `agents request ID [--format text\|json]` | Show one request. | yes |
 | `agents requests [--incoming\|--outgoing] [--format text\|json]` | List the session's requests, or those to or from the calling agent. | yes |

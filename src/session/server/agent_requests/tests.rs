@@ -190,6 +190,57 @@ fn requests_reach_a_target_one_turn_at_a_time() {
 }
 
 #[test]
+fn a_request_answered_later_outlives_its_turn_until_the_reply() {
+    let mut rig = Rig::new(&[2, 3]);
+    let first = rig.ask(Some(2), 3, "run the slow suite");
+    let second = rig.ask(Some(2), 3, "and then this");
+    assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", first.id)));
+    rig.set_state(3, DetectedAgentState::Working);
+
+    // Only the agent the request went to can promise a later answer.
+    let caller = rig.agent(2);
+    assert_eq!(
+        code(rig.server.reply_later(Some(caller), &first.id)),
+        Some(ControlErrorCode::NotPermitted)
+    );
+    let target = rig.agent(3);
+    let deferred = info(rig.server.reply_later(Some(target.clone()), &first.id));
+    assert_eq!(deferred.state, AgentRequestState::Active);
+    assert_eq!(
+        code(rig.server.reply_later(Some(target), &second.id)),
+        Some(ControlErrorCode::Conflict),
+        "a queued request is not delivered yet"
+    );
+
+    // The turn ends on a background command: nothing is read from the screen, and the agent is
+    // free to take the next request.
+    rig.server
+        .panes
+        .get_mut(&3)
+        .unwrap()
+        .screen_mut()
+        .process_bytes(b"started the suite in the background");
+    rig.set_state(3, DetectedAgentState::Idle);
+    let waiting = rig.request(&first.id);
+    assert_eq!(waiting.state, AgentRequestState::Active);
+    assert!(waiting.response.is_none());
+    assert_eq!(rig.request(&second.id).state, AgentRequestState::Active);
+
+    let answered = info(rig.reply(3, &first.id, "the suite passed"));
+    assert_eq!(answered.state, AgentRequestState::Answered);
+    assert_eq!(answered.response.unwrap().content.text, "the suite passed");
+
+    // A promised answer fails once its agent is replaced.
+    let target = rig.agent(3);
+    rig.server.reply_later(Some(target), &second.id);
+    let pane = rig.server.panes.get_mut(&3).unwrap();
+    pane.runtime.agent_launch += 1;
+    pane.agent.sync_references(&pane.runtime);
+    rig.server.pump_agent_requests();
+    assert_eq!(rig.request(&second.id).state, AgentRequestState::Failed);
+}
+
+#[test]
 fn a_locked_or_replaced_target_is_never_typed_into() {
     let mut rig = Rig::new(&[2, 3]);
     rig.server.input_locked = true;
@@ -361,6 +412,7 @@ fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
                 updated_at_unix_ms: 0,
             },
             depth: 1,
+            later: false,
         });
         store.slots.insert(
             to,

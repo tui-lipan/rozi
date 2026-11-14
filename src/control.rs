@@ -157,6 +157,9 @@ impl ControlCommand {
             | Self::RecordUiMark { .. }
             | Self::Pick { .. }
             | Self::Prompt { .. } => None,
+            Self::AgentReplyLater { .. } => {
+                Some(crate::session::protocol::Capability::AgentReplyLater)
+            }
             Self::AgentAsk { .. }
             | Self::AgentReply { .. }
             | Self::AgentAwait { .. }
@@ -768,6 +771,9 @@ pub enum ControlCommand {
     AgentAsk { target: AgentTarget, prompt: String },
     /// Answer a request sent to the calling agent.
     AgentReply { id: String, text: String },
+    /// Keep a request sent to the calling agent open for a reply after its turn ends, instead of
+    /// answering it from the terminal when the turn ends.
+    AgentReplyLater { id: String },
     /// Hold the reply until a request is answered, failed, or cancelled.
     AgentAwait {
         id: String,
@@ -3220,6 +3226,7 @@ mod tests {
             let expected = match cap {
                 crate::session::protocol::Capability::DragAndDrop => "0.0.46",
                 crate::session::protocol::Capability::AgentRequests => "0.0.47",
+                crate::session::protocol::Capability::AgentReplyLater => "0.0.48",
                 _ => "0.0.44",
             };
             assert_eq!(cap.introduced_in(), expected, "{cap}");

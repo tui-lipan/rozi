@@ -316,10 +316,10 @@ The parser is fine; the lexer drops a trailing newline in src/lex.rs.
 EOF
 ```
 
-- Reply before your turn ends when you can. If the turn ends first, Rozi answers with your
-  terminal, and your reply replaces that answer when you send it, such as after a background
-  command finishes. An `await` that already returned does not see the replacement;
-  `agents request <ID>` does.
+- To answer after your turn ends, such as when a background command finishes, run
+  `rozi agents reply <ID> --later` before the turn ends, then `reply` when you have the answer.
+  Otherwise the end of your turn answers the request with your terminal. You can take other
+  requests meanwhile.
 - If `await` refuses because the other agent has asked you something (a wait cycle), read that
   request with `rozi agents request <ID>`, `reply` to it, then await again. A background `ask
   --wait` leaves your turn free, so requests to you still arrive.

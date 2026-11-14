@@ -431,6 +431,7 @@ fn session_worker_permitted(command: &ControlCommand) -> bool {
         | ControlCommand::RecordMark { .. }
         | ControlCommand::AgentAsk { .. }
         | ControlCommand::AgentReply { .. }
+        | ControlCommand::AgentReplyLater { .. }
         | ControlCommand::AgentAwait { .. }
         | ControlCommand::AgentRequest { .. }
         | ControlCommand::AgentRequests { .. }

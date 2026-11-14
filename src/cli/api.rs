@@ -54,6 +54,7 @@ const REPLY_PAYLOADS: &[(&str, &[&str])] = &[
     ("agent-cancel", &["AgentRequestInfo"]),
     ("agent-get", &["AgentInfo"]),
     ("agent-reply", &["AgentRequestInfo"]),
+    ("agent-reply-later", &["AgentRequestInfo"]),
     ("agent-request", &["AgentRequestInfo"]),
     ("agent-requests", &["AgentRequestList"]),
     ("agent-response", &["AgentResponseLookup"]),

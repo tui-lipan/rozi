@@ -208,6 +208,7 @@ pub(crate) fn handle_control_request(
         // caller is outside any session.
         ControlCommand::AgentAsk { .. }
         | ControlCommand::AgentReply { .. }
+        | ControlCommand::AgentReplyLater { .. }
         | ControlCommand::AgentAwait { .. }
         | ControlCommand::AgentRequest { .. }
         | ControlCommand::AgentRequests { .. }

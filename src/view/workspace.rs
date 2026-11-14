@@ -498,9 +498,11 @@ pub(crate) fn render_workspace_panes(
             format!("{}-presentation", layer.pane_clip_key(pane.id)).into(),
             theme,
             // A request just reached this pane's agent, or its answer came back.
-            ctx.state
-                .agent_handoff
-                .ripple(ctx.state.runtime_epoch, pane.id),
+            ctx.state.agent_handoff.ripple(crate::state::HandoffTarget {
+                attachment: ctx.state.runtime_epoch,
+                pane: pane.id,
+                pty_generation: pane.pty_generation,
+            }),
         );
         if title_on_seam && let Some(seam) = seam_title_element(ctx, pane, focused_pane) {
             seam_titles.push((

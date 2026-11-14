@@ -141,19 +141,25 @@ pub struct UiRecordingSeen {
 
 /// The ripples running around panes whose agent just sent or received a request or an answer.
 /// Each pane has at most one, so a burst of traffic restarts a pane's ripple rather than stacking
-/// them, and each ends on its own, so one pane's handoff never cuts another's short. A pane is
-/// named with the attachment it belongs to: pane ids repeat across sessions, and a ripple must not
-/// follow the user into another session.
+/// them, and each ends on its own, so one pane's handoff never cuts another's short.
 #[derive(Clone, Debug, Default)]
 pub struct AgentHandoff {
     bursts: Vec<HandoffBurst>,
     revision: u64,
 }
 
+/// The pane a ripple runs around, down to the program in it: pane ids repeat across sessions, and
+/// a respawned pane keeps its id with a new PTY generation, and neither may inherit a ripple.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HandoffTarget {
+    pub attachment: AttachmentId,
+    pub pane: PaneId,
+    pub pty_generation: u64,
+}
+
 #[derive(Clone, Debug)]
 struct HandoffBurst {
-    attachment: AttachmentId,
-    pane: PaneId,
+    target: HandoffTarget,
     /// The effect tick the ripple started on.
     start_tick: u64,
     direction: HandoffDirection,
@@ -169,20 +175,17 @@ pub enum HandoffDirection {
 }
 
 impl AgentHandoff {
-    /// Start, or restart, `pane`'s ripple at `start_tick`. Returns the revision its end names.
+    /// Start, or restart, `target`'s ripple at `start_tick`. Returns the revision its end names.
     pub fn start(
         &mut self,
-        attachment: AttachmentId,
-        pane: PaneId,
+        target: HandoffTarget,
         start_tick: u64,
         direction: HandoffDirection,
     ) -> u64 {
         self.revision = self.revision.wrapping_add(1);
-        self.bursts
-            .retain(|burst| (burst.attachment, burst.pane) != (attachment, pane));
+        self.bursts.retain(|burst| burst.target != target);
         self.bursts.push(HandoffBurst {
-            attachment,
-            pane,
+            target,
             start_tick,
             direction,
             revision: self.revision,
@@ -190,24 +193,19 @@ impl AgentHandoff {
         self.revision
     }
 
-    /// End `pane`'s ripple, unless a later handoff restarted it. Whether anything ended.
-    pub fn end(&mut self, attachment: AttachmentId, pane: PaneId, revision: u64) -> bool {
+    /// End `target`'s ripple, unless a later handoff restarted it. Whether anything ended.
+    pub fn end(&mut self, target: HandoffTarget, revision: u64) -> bool {
         let before = self.bursts.len();
-        self.bursts.retain(|burst| {
-            (burst.attachment, burst.pane, burst.revision) != (attachment, pane, revision)
-        });
+        self.bursts
+            .retain(|burst| (burst.target, burst.revision) != (target, revision));
         self.bursts.len() != before
     }
 
-    /// The tick `pane`'s ripple started on and which way it runs, while it runs.
-    pub fn ripple(
-        &self,
-        attachment: AttachmentId,
-        pane: PaneId,
-    ) -> Option<(u64, HandoffDirection)> {
+    /// The tick `target`'s ripple started on and which way it runs, while it runs.
+    pub fn ripple(&self, target: HandoffTarget) -> Option<(u64, HandoffDirection)> {
         self.bursts
             .iter()
-            .find(|burst| (burst.attachment, burst.pane) == (attachment, pane))
+            .find(|burst| burst.target == target)
             .map(|burst| (burst.start_tick, burst.direction))
     }
 }
@@ -222,39 +220,59 @@ pub struct RecordingMarkBlink {
 
 #[cfg(test)]
 mod agent_handoff_tests {
-    use super::{AgentHandoff, HandoffDirection::Receive};
+    use super::{AgentHandoff, HandoffDirection::Receive, HandoffTarget};
+
+    fn target(attachment: u64, pane: u32, pty_generation: u64) -> HandoffTarget {
+        HandoffTarget {
+            attachment,
+            pane,
+            pty_generation,
+        }
+    }
 
     #[test]
     fn a_pane_restarts_its_own_ripple_and_never_cuts_another_short() {
+        let (one, two) = (target(0, 1, 1), target(0, 2, 1));
         let mut handoff = AgentHandoff::default();
-        let first = handoff.start(0, 1, 10, Receive);
-        let second = handoff.start(0, 2, 12, Receive);
+        let first = handoff.start(one, 10, Receive);
+        let second = handoff.start(two, 12, Receive);
         assert_eq!(
-            handoff.ripple(0, 1),
+            handoff.ripple(one),
             Some((10, Receive)),
             "pane 2 leaves pane 1's ripple running"
         );
 
-        let restarted = handoff.start(0, 1, 20, Receive);
-        assert_eq!(handoff.ripple(0, 1), Some((20, Receive)));
-        assert!(!handoff.end(0, 1, first), "the first ripple's end is stale");
-        assert_eq!(handoff.ripple(0, 1), Some((20, Receive)));
+        let restarted = handoff.start(one, 20, Receive);
+        assert_eq!(handoff.ripple(one), Some((20, Receive)));
+        assert!(!handoff.end(one, first), "the first ripple's end is stale");
+        assert_eq!(handoff.ripple(one), Some((20, Receive)));
 
-        assert!(handoff.end(0, 2, second));
-        assert!(handoff.end(0, 1, restarted));
-        assert_eq!(handoff.ripple(0, 1), None);
+        assert!(handoff.end(two, second));
+        assert!(handoff.end(one, restarted));
+        assert_eq!(handoff.ripple(one), None);
     }
 
     #[test]
-    fn a_ripple_stays_with_its_session_when_another_has_the_same_pane() {
+    fn a_ripple_stays_with_its_session_and_its_program() {
         let mut handoff = AgentHandoff::default();
-        let revision = handoff.start(0, 2, 10, Receive);
+        let revision = handoff.start(target(0, 2, 7), 10, Receive);
         assert_eq!(
-            handoff.ripple(1, 2),
+            handoff.ripple(target(1, 2, 7)),
             None,
             "session 1's pane 2 is another pane"
         );
-        assert!(!handoff.end(1, 2, revision));
-        assert_eq!(handoff.ripple(0, 2), Some((10, Receive)));
+        assert_eq!(
+            handoff.ripple(target(0, 2, 8)),
+            None,
+            "a respawned pane is another program"
+        );
+        let respawned = handoff.start(target(0, 2, 8), 30, Receive);
+        assert!(handoff.end(target(0, 2, 7), revision));
+        assert_eq!(
+            handoff.ripple(target(0, 2, 8)),
+            Some((30, Receive)),
+            "the old program's end leaves the new one's ripple"
+        );
+        assert!(handoff.end(target(0, 2, 8), respawned));
     }
 }

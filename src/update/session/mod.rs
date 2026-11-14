@@ -171,7 +171,15 @@ pub(crate) fn agent_requests_changed(
     for handoff in
         crate::view::agent_requests::handoffs(&previous, &ctx.state.attachment.agent_requests)
     {
-        let pane = |agent| crate::view::agent_requests::pane_of(&ctx.state, agent);
+        let pane = |agent| {
+            let pane = crate::view::agent_requests::pane_of(&ctx.state, agent)?;
+            let pty_generation = crate::view::agent_requests::pty_generation(&ctx.state, pane)?;
+            Some(crate::state::HandoffTarget {
+                attachment: epoch,
+                pane,
+                pty_generation,
+            })
+        };
         // Senders first, so a pane that sends and receives in one change shows the receiving.
         panes.extend(handoff.sender.and_then(pane).map(|pane| (pane, Send)));
         panes.extend(pane(handoff.receiver).map(|pane| (pane, Receive)));
@@ -183,25 +191,19 @@ pub(crate) fn agent_requests_changed(
     let start_tick = ctx.effect_phase();
     let ends: Vec<_> = panes
         .into_iter()
-        .map(|(pane, direction)| {
+        .map(|(target, direction)| {
             (
-                pane,
-                ctx.state
-                    .agent_handoff
-                    .start(epoch, pane, start_tick, direction),
+                target,
+                ctx.state.agent_handoff.start(target, start_tick, direction),
             )
         })
         .collect();
     Update::full().merge(Update::with_command(Command::spawn(
         move |link: CommandLink<crate::Msg>| {
-            for (pane, revision) in ends {
+            for (target, revision) in ends {
                 link.send_after(
                     AGENT_HANDOFF,
-                    crate::Msg::AgentHandoffEnded {
-                        attachment: epoch,
-                        pane,
-                        revision,
-                    },
+                    crate::Msg::AgentHandoffEnded { target, revision },
                 );
             }
         },
@@ -216,11 +218,10 @@ const AGENT_HANDOFF: std::time::Duration = std::time::Duration::from_millis(
 /// The ripple has played: drop it, so its pane stops asking for effect ticks.
 pub(crate) fn agent_handoff_ended(
     ctx: &mut Context<crate::app::AppRoot>,
-    attachment: crate::state::AttachmentId,
-    pane: crate::pane::id::PaneId,
+    target: crate::state::HandoffTarget,
     revision: u64,
 ) -> Update {
-    if ctx.state.agent_handoff.end(attachment, pane, revision) {
+    if ctx.state.agent_handoff.end(target, revision) {
         Update::full()
     } else {
         Update::none()

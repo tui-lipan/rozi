@@ -133,6 +133,13 @@ pub(crate) fn pane_of(state: &State, agent: &AgentRef) -> Option<PaneId> {
         .map(|pane| pane.id)
 }
 
+/// The PTY generation running in `pane` on screen now.
+pub(crate) fn pty_generation(state: &State, pane: PaneId) -> Option<u64> {
+    panes(state)
+        .find(|candidate| candidate.id == pane)
+        .map(|pane| pane.pty_generation)
+}
+
 /// What a request calls one side of it: the name the server recorded when it was asked, else the
 /// agent's name while that exact agent still runs, with its pane either way; [`OUTSIDE`] for a
 /// request asked from outside any agent. Never the name of whatever runs in that pane now: a

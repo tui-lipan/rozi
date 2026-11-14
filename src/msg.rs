@@ -631,8 +631,7 @@ pub enum Msg {
     SubmitRecordingMark,
     /// A mark's blink on the recording dot is over, unless a later mark restarted it.
     AgentHandoffEnded {
-        attachment: crate::state::AttachmentId,
-        pane: crate::pane::id::PaneId,
+        target: crate::state::HandoffTarget,
         revision: u64,
     },
     RecordingMarkBlinkEnded {

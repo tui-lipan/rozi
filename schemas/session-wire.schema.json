@@ -3561,11 +3561,17 @@
           "type": "object"
         },
         {
-          "description": "Ask another agent of the caller's session, without waiting: the session delivers the prompt\nwhen the agent is ready and keeps the answer. The caller is derived from the request's\n`source_session` and `source_pane`.",
+          "description": "Ask another agent of the caller's session, without waiting: the session delivers the prompt\nwhen the agent is ready and keeps the answer. The caller is derived from the request's\n`source_session` and `source_pane`. `parent` names the request the caller asks on behalf\nof; without it, the session infers it when the caller owes exactly one.",
           "properties": {
             "cmd": {
               "const": "agent-ask",
               "type": "string"
+            },
+            "parent": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "prompt": {
               "type": "string"
@@ -3599,6 +3605,23 @@
             "cmd",
             "id",
             "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Keep a request sent to the calling agent open for a reply after its turn ends, instead of\nanswering it from the terminal when the turn ends.",
+          "properties": {
+            "cmd": {
+              "const": "agent-reply-later",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
           ],
           "type": "object"
         },
@@ -8929,6 +8952,7 @@
   "description": "Control frames exchanged between a rozi session server and its clients, CLI callers, and remote proxies. Generated; see dev/wire-compatibility.md for the rules every change to it follows.",
   "title": "Rozi session wire protocol",
   "x-rozi-capabilities": [
+    "agent-reply-later",
     "agent-requests",
     "agent-summaries",
     "client-handoff",

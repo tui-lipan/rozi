@@ -55,14 +55,14 @@ impl Rig {
         let from = from.map(|pane| self.agent(pane));
         info(
             self.server
-                .ask_agent(from, AgentTarget::Pane(to), text.into()),
+                .ask_agent(from, AgentTarget::Pane(to), text.into(), None),
         )
     }
 
     fn try_ask(&mut self, from: PaneId, to: PaneId) -> ControlResponse {
         let from = self.agent(from);
         self.server
-            .ask_agent(Some(from), AgentTarget::Pane(to), "another".into())
+            .ask_agent(Some(from), AgentTarget::Pane(to), "another".into(), None)
     }
 
     fn request(&self, id: &str) -> AgentRequestInfo {
@@ -161,15 +161,6 @@ fn requests_reach_a_target_one_turn_at_a_time() {
     assert!(response.content.text.contains("parser is fine"));
     assert_eq!(rig.request(&second.id).state, AgentRequestState::Active);
 
-    // A reply after the turn ended replaces what was read from the screen, and then stands.
-    let replied = info(rig.reply(3, &first.id, "the parser is fine"));
-    assert_eq!(replied.state, AgentRequestState::Answered);
-    assert_eq!(replied.response.unwrap().content.text, "the parser is fine");
-    assert_eq!(
-        code(rig.reply(3, &first.id, "something else")),
-        Some(ControlErrorCode::Conflict)
-    );
-
     // An integration's answer published after delivery beats the screen, without the turn ending.
     rig.server.agent_responses.insert(
         rig.agent(3),
@@ -187,6 +178,135 @@ fn requests_reach_a_target_one_turn_at_a_time() {
     let answered = rig.request(&second.id);
     assert_eq!(answered.state, AgentRequestState::Answered);
     assert_eq!(answered.response.unwrap().content.text, "the lexer is fine");
+}
+
+#[test]
+fn a_request_answered_later_outlives_its_turn_until_the_reply() {
+    let mut rig = Rig::new(&[2, 3]);
+    let first = rig.ask(Some(2), 3, "run the slow suite");
+    let second = rig.ask(Some(2), 3, "and then this");
+    assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", first.id)));
+    rig.set_state(3, DetectedAgentState::Working);
+
+    // Only the agent the request went to can promise a later answer.
+    let caller = rig.agent(2);
+    assert_eq!(
+        code(rig.server.reply_later(Some(caller), &first.id)),
+        Some(ControlErrorCode::NotPermitted)
+    );
+    let target = rig.agent(3);
+    let deferred = info(rig.server.reply_later(Some(target.clone()), &first.id));
+    assert_eq!(deferred.state, AgentRequestState::Active);
+    assert_eq!(
+        code(rig.server.reply_later(Some(target), &second.id)),
+        Some(ControlErrorCode::Conflict),
+        "a queued request is not delivered yet"
+    );
+    // What the agent asks while it owes the answer belongs to the request it owes.
+    let follow_up = rig.ask(Some(3), 2, "which tests are slow?");
+    assert_eq!(follow_up.parent.as_deref(), Some(first.id.as_str()));
+
+    // The turn ends on a background command: nothing is read from the screen, and the agent is
+    // free to take the next request.
+    rig.server
+        .panes
+        .get_mut(&3)
+        .unwrap()
+        .screen_mut()
+        .process_bytes(b"started the suite in the background");
+    rig.set_state(3, DetectedAgentState::Idle);
+    let waiting = rig.request(&first.id);
+    assert_eq!(waiting.state, AgentRequestState::Active);
+    assert!(waiting.response.is_none());
+    assert_eq!(rig.request(&second.id).state, AgentRequestState::Active);
+
+    let answered = info(rig.reply(3, &first.id, "the suite passed"));
+    assert_eq!(answered.state, AgentRequestState::Answered);
+    assert_eq!(answered.response.unwrap().content.text, "the suite passed");
+
+    // A promised answer fails once its agent is replaced.
+    let target = rig.agent(3);
+    rig.server.reply_later(Some(target), &second.id);
+    let pane = rig.server.panes.get_mut(&3).unwrap();
+    pane.runtime.agent_launch += 1;
+    pane.agent.sync_references(&pane.runtime);
+    rig.server.pump_agent_requests();
+    assert_eq!(rig.request(&second.id).state, AgentRequestState::Failed);
+}
+
+#[test]
+fn an_agent_owing_several_requests_names_the_one_it_asks_for() {
+    let mut rig = Rig::new(&[2, 3, 4]);
+    let first = rig.ask(Some(2), 3, "run the slow suite");
+    assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", first.id)));
+    info(rig.server.reply_later(Some(rig.agent(3)), &first.id));
+    let second = rig.ask(Some(4), 3, "run the fuzzer");
+    assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", second.id)));
+    info(rig.server.reply_later(Some(rig.agent(3)), &second.id));
+
+    // Either promise could be the one asking, so the ask must say which.
+    let from = rig.agent(3);
+    let mut ask = |parent: Option<&str>| {
+        rig.server.ask_agent(
+            Some(from.clone()),
+            AgentTarget::Pane(2),
+            "which tests are slow?".into(),
+            parent,
+        )
+    };
+    assert_eq!(code(ask(None)), Some(ControlErrorCode::InvalidArgument));
+    assert_eq!(
+        code(ask(Some("elsewhere"))),
+        Some(ControlErrorCode::NotPermitted)
+    );
+    let follow_up = info(ask(Some(&first.id)));
+    assert_eq!(follow_up.parent.as_deref(), Some(first.id.as_str()));
+    // So the asker of the first request cannot wait for it while it blocks the answer.
+    let asker = rig.agent(2);
+    assert_eq!(
+        rig.server
+            .agent_requests
+            .await_cycle(Some(&asker), &first.id),
+        Some(follow_up.id.as_str())
+    );
+}
+
+#[test]
+fn a_promised_answer_fails_when_its_agent_changes_conversation() {
+    let mut rig = Rig::new(&[3]);
+    let request = rig.ask(None, 3, "run the slow suite");
+    assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", request.id)));
+    let target = rig.agent(3);
+    info(rig.server.reply_later(Some(target.clone()), &request.id));
+
+    let generation = rig.server.panes[&3].generation;
+    let mut report = |seq, native_session: &str| {
+        let update = super::super::runtime::AgentIntegrationUpdate {
+            agent: Some("claude".into()),
+            integration: "hooks".into(),
+            state: Some(protocol::AgentState::Working),
+            reason: None,
+            native_session: Some(native_session.into()),
+            unless_quiet: None,
+            ended: false,
+            seq,
+            response: None,
+        };
+        rig.server
+            .apply_agent_integration(None, 3, generation, update)
+            .unwrap();
+    };
+    // Delivered before the agent named its conversation, the request binds to the first one. Two
+    // reports read in one server iteration still see it bound in between.
+    report(1, "conversation a");
+    report(2, "conversation b");
+    rig.server.pump_agent_requests();
+    let failed = rig.request(&request.id);
+    assert_eq!(failed.state, AgentRequestState::Failed);
+    assert_eq!(
+        failed.reason.as_deref(),
+        Some("the agent moved to another conversation")
+    );
 }
 
 #[test]
@@ -361,6 +481,7 @@ fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
                 updated_at_unix_ms: 0,
             },
             depth: 1,
+            later: false,
         });
         store.slots.insert(
             to,

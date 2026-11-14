@@ -65,6 +65,9 @@ struct StoredRequest {
     info: AgentRequestInfo,
     /// 1 for a request asked outside any other.
     depth: usize,
+    /// Its agent will reply after the turn it was delivered in, so that turn's end does not
+    /// answer it from the terminal.
+    later: bool,
 }
 
 struct DeliverySlot {
@@ -138,20 +141,63 @@ impl AgentRequestStore {
     fn has_work(&self) -> bool {
         !self.slots.is_empty()
             || !self.awaits.is_empty()
-            || self
-                .requests
-                .iter()
-                .any(|stored| stored.info.state == AgentRequestState::Queued)
+            || self.requests.iter().any(|stored| {
+                stored.info.state == AgentRequestState::Queued
+                    || (stored.later && stored.info.state == AgentRequestState::Active)
+            })
     }
 
-    /// Where a request asked by `from` sits in the lineage: under the request `from` is answering.
-    fn lineage(&self, from: Option<&protocol::AgentRef>) -> Option<(String, String, usize)> {
-        let parent = self.get(self.answering(from?)?)?;
-        Some((
+    /// Where a request asked by `from` sits in the lineage: under `parent` when it names one,
+    /// else under the one request `from` owes, whether it is answering it now or promised to
+    /// answer it later. Several owed requests make the parent ambiguous, so the ask must name it.
+    fn lineage(
+        &self,
+        from: Option<&protocol::AgentRef>,
+        parent: Option<&str>,
+    ) -> std::result::Result<Option<(String, String, usize)>, ControlResponse> {
+        let Some(from) = from else {
+            return match parent {
+                Some(_) => Err(invalid("only an agent can ask on behalf of a request")),
+                None => Ok(None),
+            };
+        };
+        let owed: Vec<&StoredRequest> = self
+            .requests
+            .iter()
+            .filter(|stored| {
+                self.answering(from) == Some(stored.info.id.as_str())
+                    || (stored.later
+                        && stored.info.state == AgentRequestState::Active
+                        && stored.info.to == *from)
+            })
+            .collect();
+        let parent = match (parent, owed.as_slice()) {
+            (Some(id), _) => *owed
+                .iter()
+                .find(|stored| stored.info.id == id)
+                .ok_or_else(|| {
+                    not_permitted(format!(
+                        "request `{id}` is not one this agent is answering or promised to answer"
+                    ))
+                })?,
+            (None, []) => return Ok(None),
+            (None, [only]) => only,
+            (None, several) => {
+                let ids = several
+                    .iter()
+                    .map(|stored| format!("`{}`", stored.info.id))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(invalid(format!(
+                    "this agent owes requests {ids}; pass --for <ID> to say which one this ask is for"
+                )));
+            }
+        };
+        Ok(Some((
             parent.info.id.clone(),
             parent.info.root.clone(),
             parent.depth + 1,
-        ))
+        )))
     }
 
     fn admit(
@@ -366,6 +412,7 @@ impl SessionServer {
         from: Option<protocol::AgentRef>,
         target: AgentTarget,
         prompt: String,
+        parent: Option<&str>,
     ) -> ControlResponse {
         if prompt.trim().is_empty() {
             return invalid("a request needs prompt text");
@@ -383,7 +430,10 @@ impl SessionServer {
         if from.as_ref() == Some(&to) {
             return invalid("an agent cannot ask itself");
         }
-        let lineage = self.agent_requests.lineage(from.as_ref());
+        let lineage = match self.agent_requests.lineage(from.as_ref(), parent) {
+            Ok(lineage) => lineage,
+            Err(response) => return response,
+        };
         if let Err(response) = self.agent_requests.admit(&to, lineage.as_ref()) {
             return response;
         }
@@ -410,9 +460,11 @@ impl SessionServer {
             created_at_unix_ms: now,
             updated_at_unix_ms: now,
         };
-        self.agent_requests
-            .requests
-            .push(StoredRequest { info, depth });
+        self.agent_requests.requests.push(StoredRequest {
+            info,
+            depth,
+            later: false,
+        });
         self.pump_agent_requests();
         self.agent_request(&id)
     }
@@ -461,6 +513,95 @@ impl SessionServer {
         ControlResponse::ok(answered)
     }
 
+    /// Keep request `id` open for its agent to reply after the turn it was delivered in: that
+    /// turn's end no longer answers it from the terminal, and the agent can take the next request.
+    pub(super) fn reply_later(
+        &mut self,
+        caller: Option<protocol::AgentRef>,
+        id: &str,
+    ) -> ControlResponse {
+        let request = match self.agent_requests.lookup(id) {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        if let Some(refusal) = self.settled_reply(caller.as_ref(), request, "") {
+            return refusal;
+        }
+        if request.state != AgentRequestState::Active {
+            return conflict(format!(
+                "request `{id}` is {}; only a delivered request can be answered later",
+                state_name(request.state)
+            ));
+        }
+        let to = request.to.clone();
+        // The conversation the turn bound itself to, so the reply comes from the same one.
+        let mut turn_session = None;
+        if self.agent_requests.answering(&to) == Some(id) {
+            let slot = self
+                .agent_requests
+                .slots
+                .remove(&to)
+                .expect("answering slot");
+            turn_session = slot
+                .tracker
+                .fence()
+                .and_then(|fence| fence.native_session.clone());
+        }
+        let stored = self
+            .agent_requests
+            .requests
+            .iter_mut()
+            .find(|stored| stored.info.id == id)
+            .expect("looked up above");
+        stored.later = true;
+        if stored.info.to_native_session.is_none() {
+            stored.info.to_native_session = turn_session;
+        }
+        settle(
+            &mut stored.info,
+            AgentRequestState::Active,
+            Some("the agent will reply later".into()),
+        );
+        let deferred = stored.info.clone();
+        self.pump_agent_requests();
+        ControlResponse::ok(deferred)
+    }
+
+    /// Fail a request its agent promised to answer later once that agent can no longer reply.
+    fn check_deferred_requests(&mut self) {
+        let deferred: Vec<(String, protocol::AgentRef, Option<String>)> = self
+            .agent_requests
+            .requests
+            .iter()
+            .filter(|stored| stored.later && stored.info.state == AgentRequestState::Active)
+            .map(|stored| {
+                (
+                    stored.info.id.clone(),
+                    stored.info.to.clone(),
+                    stored.info.to_native_session.clone(),
+                )
+            })
+            .collect();
+        for (id, to, recorded_session) in deferred {
+            let native_session = self.response_native_session(&to);
+            let agent = self.request_agent(&to);
+            let info = self.agent_requests.info_mut(&id).expect("listed above");
+            let reason = match agent {
+                Err(reason) => reason,
+                // Bound to the first conversation the agent reports, as a turn's fence is.
+                Ok(_) if recorded_session.is_none() => {
+                    info.to_native_session = native_session;
+                    continue;
+                }
+                Ok(_) if native_session != recorded_session => {
+                    "the agent moved to another conversation".to_string()
+                }
+                Ok(_) => continue,
+            };
+            settle(info, AgentRequestState::Failed, Some(reason));
+        }
+    }
+
     /// The answer to a reply that stores nothing: a refusal, or an identical repeat.
     fn settled_reply(
         &self,
@@ -481,11 +622,7 @@ impl SessionServer {
                 "the agent has moved to another conversation since request `{id}` was sent"
             )));
         }
-        let from_screen = request
-            .response
-            .as_ref()
-            .is_some_and(|existing| existing.content.fidelity == AgentResponseFidelity::Rendered);
-        if let Some(existing) = request.response.as_ref().filter(|_| !from_screen) {
+        if let Some(existing) = &request.response {
             let repeat = existing.content.source == AgentResponseSource::AgentCli
                 && existing.content.text == text;
             return Some(if repeat {
@@ -494,9 +631,7 @@ impl SessionServer {
                 conflict(format!("request `{id}` is already answered"))
             });
         }
-        // A turn can end before the agent replies, such as while a command it started in the
-        // background still runs. Its reply then replaces what was read from its terminal.
-        if request.state.is_resolved() && !from_screen {
+        if request.state.is_resolved() {
             return Some(conflict(format!(
                 "request `{id}` is {}",
                 state_name(request.state)
@@ -641,6 +776,7 @@ impl SessionServer {
             for target in targets {
                 self.settle_request_turn(&target);
             }
+            self.check_deferred_requests();
             self.deliver_queued_requests();
             self.answer_request_awaits();
         }
@@ -928,7 +1064,7 @@ impl SessionServer {
             })
             .unwrap_or_default();
         format!(
-            "Request {id}{asker}:\n\n{prompt}\n\nAnswer with `rozi agents reply {id} --stdin`.",
+            "Request {id}{asker}:\n\n{prompt}\n\nAnswer with `rozi agents reply {id} --stdin`. To answer after this turn ends, such as when a background command finishes, run `rozi agents reply {id} --later` first.",
             id = request.id,
             prompt = request.prompt,
         )

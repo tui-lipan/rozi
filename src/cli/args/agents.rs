@@ -44,7 +44,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Safely submit a prompt",
             ),
             row(
-                "ask --ref <JSON> -- <TEXT>",
+                "ask --ref <JSON> [--for <ID>] -- <TEXT>",
                 "Ask another agent; returns the request at once",
             ),
             row(
@@ -54,6 +54,10 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
             row(
                 "reply <ID> --stdin",
                 "Answer a request sent to you, text on stdin",
+            ),
+            row(
+                "reply <ID> --later",
+                "Keep a request open to answer after your turn",
             ),
             row(
                 "await <ID> --timeout <DUR>",
@@ -475,11 +479,18 @@ fn parse_ask(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
     let mut format = None;
     let mut wait = false;
     let mut timeout_ms = None;
+    let mut parent = None;
     let mut iter = args.into_iter();
     while let Some(argument) = iter.next() {
         match argument.as_str() {
             "--target" | "--ref" => set_target(&mut target, &argument, &mut iter)?,
             "--format" => set_format(&mut format, &mut iter, "agents ask")?,
+            "--for" => {
+                let id = super::require_value(&mut iter, "--for requires a request id")?;
+                if parent.replace(id).is_some() {
+                    return Err("agents ask --for specified more than once".into());
+                }
+            }
             "--wait" => wait = true,
             "--timeout" => {
                 let value = super::require_value(&mut iter, "--timeout requires a duration")?;
@@ -517,6 +528,7 @@ fn parse_ask(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
             prompt: prompt.ok_or_else(|| {
                 "agents ask requires text: agents ask --ref <JSON> -- <TEXT>".to_string()
             })?,
+            parent,
         },
         format,
         await_ms,
@@ -527,8 +539,14 @@ fn parse_reply(
     args: Vec<String>,
 ) -> std::result::Result<(ControlCommand, Option<ListFormat>), String> {
     let (id, format, rest) = take_request_id(args, "agents reply")?;
+    if rest == ["--later"] {
+        return Ok((ControlCommand::AgentReplyLater { id }, format));
+    }
     if rest != ["--stdin"] {
-        return Err("agents reply reads the answer from stdin: agents reply <ID> --stdin".into());
+        return Err(
+            "agents reply reads the answer from stdin: agents reply <ID> --stdin, or agents reply <ID> --later"
+                .into(),
+        );
     }
     use std::io::Read;
     let limit = crate::session::protocol::MAX_AGENT_RESPONSE_BYTES;
@@ -1236,6 +1254,7 @@ mod tests {
             ControlCommand::AgentAsk {
                 target: AgentTarget::Pane(3),
                 prompt: "--why not?".into(),
+                parent: None,
             }
         );
         assert_eq!(parsed.await_ms, None);

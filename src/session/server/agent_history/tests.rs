@@ -888,7 +888,7 @@ fn an_explicit_reply_during_a_requests_history_read_wins_and_restores() {
     let original = rig.screen();
     let asked = rig
         .server
-        .ask_agent(None, AgentTarget::Pane(3), "summarize".into());
+        .ask_agent(None, AgentTarget::Pane(3), "summarize".into(), None);
     let id = asked.data.unwrap()["id"].as_str().unwrap().to_owned();
     rig.state(protocol::DetectedAgentState::Working);
     rig.state(protocol::DetectedAgentState::Idle);

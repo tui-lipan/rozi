@@ -173,14 +173,18 @@ pub(crate) fn agent_requests_changed(
         return Update::full();
     }
     let start_tick = ctx.effect_phase();
-    let handoff = &mut ctx.state.agent_handoff;
-    handoff.revision = handoff.revision.wrapping_add(1);
-    handoff.panes = panes;
-    handoff.start_tick = start_tick;
-    let revision = handoff.revision;
+    let ends: Vec<_> = panes
+        .into_iter()
+        .map(|pane| (pane, ctx.state.agent_handoff.start(pane, start_tick)))
+        .collect();
     Update::full().merge(Update::with_command(Command::spawn(
         move |link: CommandLink<crate::Msg>| {
-            link.send_after(AGENT_HANDOFF, crate::Msg::AgentHandoffEnded { revision });
+            for (pane, revision) in ends {
+                link.send_after(
+                    AGENT_HANDOFF,
+                    crate::Msg::AgentHandoffEnded { pane, revision },
+                );
+            }
         },
     )))
 }
@@ -191,13 +195,16 @@ const AGENT_HANDOFF: std::time::Duration = std::time::Duration::from_millis(
 );
 
 /// The ripple has played: drop it, so its pane stops asking for effect ticks.
-pub(crate) fn agent_handoff_ended(ctx: &mut Context<crate::app::AppRoot>, revision: u64) -> Update {
-    let handoff = &mut ctx.state.agent_handoff;
-    if handoff.revision != revision || handoff.panes.is_empty() {
-        return Update::none();
+pub(crate) fn agent_handoff_ended(
+    ctx: &mut Context<crate::app::AppRoot>,
+    pane: crate::pane::id::PaneId,
+    revision: u64,
+) -> Update {
+    if ctx.state.agent_handoff.end(pane, revision) {
+        Update::full()
+    } else {
+        Update::none()
     }
-    handoff.panes.clear();
-    Update::full()
 }
 
 pub(crate) fn session_notifications(

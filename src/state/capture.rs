@@ -139,14 +139,51 @@ pub struct UiRecordingSeen {
     pub overlay: Option<&'static str>,
 }
 
-/// The panes a ripple runs around: a request just reached their agent, or its answer just came
-/// back. Cleared once the ripple has played, so nothing keeps ticking.
+/// The ripples running around panes whose agent just received a request or an answer. Each pane
+/// has at most one, so a burst of traffic restarts a pane's ripple rather than stacking them, and
+/// each ends on its own, so one pane's handoff never cuts another's short.
 #[derive(Clone, Debug, Default)]
 pub struct AgentHandoff {
-    pub panes: Vec<PaneId>,
+    bursts: Vec<HandoffBurst>,
+    revision: u64,
+}
+
+#[derive(Clone, Debug)]
+struct HandoffBurst {
+    pane: PaneId,
     /// The effect tick the ripple started on.
-    pub start_tick: u64,
-    pub revision: u64,
+    start_tick: u64,
+    revision: u64,
+}
+
+impl AgentHandoff {
+    /// Start, or restart, `pane`'s ripple at `start_tick`. Returns the revision its end names.
+    pub fn start(&mut self, pane: PaneId, start_tick: u64) -> u64 {
+        self.revision = self.revision.wrapping_add(1);
+        self.bursts.retain(|burst| burst.pane != pane);
+        self.bursts.push(HandoffBurst {
+            pane,
+            start_tick,
+            revision: self.revision,
+        });
+        self.revision
+    }
+
+    /// End `pane`'s ripple, unless a later handoff restarted it. Whether anything ended.
+    pub fn end(&mut self, pane: PaneId, revision: u64) -> bool {
+        let before = self.bursts.len();
+        self.bursts
+            .retain(|burst| burst.pane != pane || burst.revision != revision);
+        self.bursts.len() != before
+    }
+
+    /// The tick `pane`'s ripple started on, while it runs.
+    pub fn start_tick(&self, pane: PaneId) -> Option<u64> {
+        self.bursts
+            .iter()
+            .find(|burst| burst.pane == pane)
+            .map(|burst| burst.start_tick)
+    }
 }
 
 /// The blink that confirms a mark landed.
@@ -155,4 +192,30 @@ pub struct RecordingMarkBlink {
     /// The pane whose dot is blinking, until the blink `revision` names ends.
     pub pane: Option<PaneId>,
     pub revision: u64,
+}
+
+#[cfg(test)]
+mod agent_handoff_tests {
+    use super::AgentHandoff;
+
+    #[test]
+    fn a_pane_restarts_its_own_ripple_and_never_cuts_another_short() {
+        let mut handoff = AgentHandoff::default();
+        let first = handoff.start(1, 10);
+        let second = handoff.start(2, 12);
+        assert_eq!(
+            handoff.start_tick(1),
+            Some(10),
+            "pane 2 leaves pane 1's ripple running"
+        );
+
+        let restarted = handoff.start(1, 20);
+        assert_eq!(handoff.start_tick(1), Some(20));
+        assert!(!handoff.end(1, first), "the first ripple's end is stale");
+        assert_eq!(handoff.start_tick(1), Some(20));
+
+        assert!(handoff.end(2, second));
+        assert!(handoff.end(1, restarted));
+        assert_eq!(handoff.start_tick(1), None);
+    }
 }

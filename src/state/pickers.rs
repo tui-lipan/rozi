@@ -392,6 +392,9 @@ pub struct WorktreeOperation {
     pub connection: crate::session::client::ConnectionToken,
     pub cwd: String,
     pub kind: WorktreeOperationKind,
+    /// The request, held until every operation started before this one has finished. `None` once
+    /// it has been sent.
+    pub queued: Option<crate::session::protocol::WorktreeRequest>,
     /// Open the new checkout's session when the create finishes, as long as its attachment is
     /// still in front. Set when the create was submitted from a form nothing else stays open for.
     pub open_when_done: bool,

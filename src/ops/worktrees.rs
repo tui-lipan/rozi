@@ -25,17 +25,56 @@ fn writable(ctx: &Context<AppRoot>) -> bool {
         .is_none_or(|shared| !shared.read_only)
 }
 
-/// Whether a started create or remove is still running. One whose attachment has gone, or has
-/// reconnected, can never be answered: its Git work may still have finished on the host, so it
-/// is retired with a note to look, rather than blocking every later operation.
-fn operation_in_flight(ctx: &mut Context<AppRoot>) -> bool {
-    if ctx.state.worktree_operation.is_none() {
-        return false;
-    }
-    if ctx.state.worktree_operation_reachable() {
-        return true;
-    }
-    if let Some(operation) = ctx.state.worktree_operation.take() {
+/// Start a create, remove, or unlock on the current session's host. It runs once every operation
+/// started before it has finished, so the user can go on to the next one without waiting.
+fn enqueue(
+    ctx: &mut Context<AppRoot>,
+    cwd: String,
+    kind: WorktreeOperationKind,
+    open_when_done: bool,
+    request: WorktreeRequest,
+) -> Update {
+    let Some(client) = ctx.state.current().session_client.clone() else {
+        return Update::none();
+    };
+    let operation = WorktreeOperation {
+        request_id: request_id(ctx),
+        epoch: ctx.state.runtime_epoch,
+        connection: client.connection_token(),
+        cwd,
+        kind,
+        queued: Some(request),
+        open_when_done,
+    };
+    ctx.state.worktree_operations.push_back(operation);
+    advance_operations(ctx);
+    Update::full()
+}
+
+/// Send the oldest operation if it is still waiting. One whose attachment has gone, or has
+/// reconnected, can never be answered: its Git work may still have finished on the host, so it is
+/// retired with a note to look, rather than holding back every later operation. Returns whether
+/// any was retired.
+pub(crate) fn advance_operations(ctx: &mut Context<AppRoot>) -> bool {
+    let mut retired = false;
+    while let Some(operation) = ctx.state.worktree_operations.front() {
+        if ctx.state.worktree_operation_reachable(operation) {
+            let client = ctx
+                .state
+                .worktree_operation_attachment(operation)
+                .and_then(|attachment| attachment.session_client.clone());
+            if let Some(operation) = ctx.state.worktree_operations.front_mut()
+                && let Some(request) = operation.queued.take()
+                && let Some(client) = client
+            {
+                client.worktree(operation.request_id, request);
+            }
+            break;
+        }
+        let Some(operation) = ctx.state.worktree_operations.pop_front() else {
+            break;
+        };
+        retired = true;
         let what = match operation.kind {
             WorktreeOperationKind::Create { branch } => format!("creating `{branch}`"),
             WorktreeOperationKind::Remove { path, .. } => format!("removing {path}"),
@@ -43,10 +82,23 @@ fn operation_in_flight(ctx: &mut Context<AppRoot>) -> bool {
         };
         crate::pane::pty_events::notify_info(
             ctx,
-            format!("Lost the session that was {what}; refresh Worktrees to see the result"),
+            if operation.queued.is_some() {
+                format!("Lost the session before {what}")
+            } else {
+                format!("Lost the session that was {what}; refresh Worktrees to see the result")
+            },
         );
     }
-    false
+    retired
+}
+
+/// Whether the picker's selected checkout is being removed, or is queued to be.
+fn selected_removing(state: &crate::state::State) -> bool {
+    state.worktree_picker.as_ref().is_some_and(|picker| {
+        picker
+            .selected_entry()
+            .is_some_and(|tree| state.worktree_removing(&tree.path, picker.target.as_ref()))
+    })
 }
 
 /// The repository Worktrees acts on: the focused pane's project root, on the session's host.
@@ -121,7 +173,7 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     let Some(client) = ctx.state.current().session_client.clone() else {
         return Update::none();
     };
-    operation_in_flight(ctx);
+    advance_operations(ctx);
     let mut picker = WorktreePickerState::new(cwd.clone(), target.clone());
     picker.repository = repository_display_root(&ctx.state, &cwd);
     picker.statuses = ctx.state.worktree_statuses.get(target.as_ref(), &cwd);
@@ -179,6 +231,15 @@ pub(crate) fn select(ctx: &mut Context<AppRoot>, index: usize) -> Update {
 }
 
 pub(crate) fn refresh(ctx: &mut Context<AppRoot>) -> Update {
+    if let Some(picker) = ctx.state.worktree_picker.as_mut() {
+        picker.pending_remove = None;
+    }
+    relist(ctx)
+}
+
+/// Ask for the picker's list and statuses again. Unlike a manual refresh, a removal the user has
+/// armed on another row meanwhile stays armed.
+fn relist(ctx: &mut Context<AppRoot>) -> Update {
     let Some((client, cwd)) = ctx.state.worktree_picker.as_ref().and_then(|picker| {
         Some((
             ctx.state.current().session_client.clone()?,
@@ -201,7 +262,6 @@ pub(crate) fn refresh(ctx: &mut Context<AppRoot>) -> Update {
         picker.list_refresh = Default::default();
         picker.status_refresh = Default::default();
         picker.pending_list = Some(id);
-        picker.pending_remove = None;
         picker.error = None;
     }
     client.worktree(id, WorktreeRequest::List { cwd });
@@ -252,7 +312,7 @@ fn reads_visible(ctx: &Context<AppRoot>) -> bool {
 
 pub(crate) fn ensure_tick(ctx: &mut Context<AppRoot>) {
     if !ctx.state.worktree_tick_armed
-        && reads_visible(ctx)
+        && (reads_visible(ctx) || !ctx.state.worktree_operations.is_empty())
         && let Some(link) = ctx.state.command_link.as_ref()
     {
         ctx.state.worktree_tick_armed = true;
@@ -261,9 +321,15 @@ pub(crate) fn ensure_tick(ctx: &mut Context<AppRoot>) {
 }
 
 pub(crate) fn tick(ctx: &mut Context<AppRoot>) -> Update {
-    if !reads_visible(ctx) {
+    // A queued operation must not wait on a session that went away while nothing was looking.
+    let retired = advance_operations(ctx);
+    if !reads_visible(ctx) && ctx.state.worktree_operations.is_empty() {
         ctx.state.worktree_tick_armed = false;
-        return Update::none();
+        return if retired {
+            Update::full()
+        } else {
+            Update::none()
+        };
     }
     if ctx.state.worktree_picker.as_ref().is_some_and(|picker| {
         !picker.standalone_form && picker.list_refresh.ready() && picker.pending_list.is_none()
@@ -297,9 +363,14 @@ pub(crate) fn tick(ctx: &mut Context<AppRoot>) -> Update {
             crate::update::sidebar::worktrees::request_list(ctx);
         }
     }
-    Update::command_only(Command::after(std::time::Duration::from_secs(1), |link| {
+    let again = Command::after(std::time::Duration::from_secs(1), |link| {
         link.send(Msg::WorktreeTick)
-    }))
+    });
+    if retired {
+        Update::with_command(again)
+    } else {
+        Update::command_only(again)
+    }
 }
 
 pub(crate) fn copy_path(ctx: &mut Context<AppRoot>) -> Update {
@@ -485,10 +556,6 @@ fn open_pane_from_sidebar(
         );
         return Update::full();
     }
-    if operation_in_flight(ctx) {
-        crate::pane::pty_events::notify_info(ctx, "Worktree operation in progress");
-        return Update::full();
-    }
     spawn_pane_at(ctx, tree.path)
 }
 
@@ -497,10 +564,6 @@ fn open_pane_from_sidebar(
 pub(crate) fn open_form_from_sidebar(ctx: &mut Context<AppRoot>) -> Update {
     if !writable(ctx) {
         crate::pane::pty_events::notify_error(ctx, "Create failed", "Client is read-only");
-        return Update::full();
-    }
-    if operation_in_flight(ctx) {
-        crate::pane::pty_events::notify_info(ctx, "Worktree operation in progress");
         return Update::full();
     }
     let Some((_, cwd)) = ctx.state.sidebar.worktrees.source.clone() else {
@@ -519,9 +582,9 @@ pub(crate) fn open_form_from_sidebar(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(crate) fn open_selected(ctx: &mut Context<AppRoot>) -> Update {
-    if operation_in_flight(ctx) {
-        crate::pane::pty_events::notify_info(ctx, "Worktree operation in progress");
-        return Update::full();
+    // A session started in a checkout that is being removed would outlive the directory.
+    if selected_removing(&ctx.state) {
+        return Update::none();
     }
     let tree = ctx
         .state
@@ -557,7 +620,7 @@ pub(crate) fn can_open_pane(state: &crate::state::State) -> bool {
 
 /// Open an ordinary interactive pane in this session; host paths pass unchanged to its server.
 pub(crate) fn open_pane(ctx: &mut Context<AppRoot>) -> Update {
-    if !can_open_pane(&ctx.state) || operation_in_flight(ctx) {
+    if !can_open_pane(&ctx.state) || selected_removing(&ctx.state) {
         return Update::none();
     }
     let picker = ctx.state.worktree_picker.as_ref().unwrap();
@@ -591,10 +654,6 @@ pub(crate) fn activate(ctx: &mut Context<AppRoot>, index: usize) -> Update {
 pub(crate) fn open_form(ctx: &mut Context<AppRoot>) -> Update {
     if !writable(ctx) {
         crate::pane::pty_events::notify_error(ctx, "Create failed", "Client is read-only");
-        return Update::full();
-    }
-    if operation_in_flight(ctx) {
-        crate::pane::pty_events::notify_info(ctx, "Worktree operation in progress");
         return Update::full();
     }
     if let Some(picker) = ctx.state.worktree_picker.as_mut() {
@@ -826,25 +885,14 @@ pub(crate) fn submit_form(ctx: &mut Context<AppRoot>) -> Update {
         }
         return Update::full();
     }
-    let Some(client) = ctx.state.current().session_client.clone() else {
+    if ctx.state.current().session_client.is_none() {
         return Update::none();
-    };
+    }
     let standalone = ctx
         .state
         .worktree_picker
         .as_ref()
         .is_some_and(|picker| picker.standalone_form);
-    let id = request_id(ctx);
-    ctx.state.worktree_operation = Some(WorktreeOperation {
-        request_id: id,
-        epoch: ctx.state.runtime_epoch,
-        connection: client.connection_token(),
-        cwd: cwd.clone(),
-        kind: WorktreeOperationKind::Create {
-            branch: branch.clone(),
-        },
-        open_when_done: standalone,
-    });
     if standalone {
         // Nothing stays open for the result: the Worktrees tab shows the checkout being created,
         // and its session opens when Git is done.
@@ -856,16 +904,20 @@ pub(crate) fn submit_form(ctx: &mut Context<AppRoot>) -> Update {
         }
         crate::ops::focus::request_worktree_picker_focus(ctx);
     }
-    client.worktree(
-        id,
+    enqueue(
+        ctx,
+        cwd.clone(),
+        WorktreeOperationKind::Create {
+            branch: branch.clone(),
+        },
+        standalone,
         WorktreeRequest::Create {
             cwd,
             branch,
             base,
             path: (!path.is_empty()).then_some(path),
         },
-    );
-    Update::full()
+    )
 }
 
 /// Ctrl+K in the picker. The first press arms, like every other destructive picker action, and
@@ -886,7 +938,7 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
     let stale = tree.lock.as_ref().is_some_and(|lock| lock.stale);
     // A checkout that cannot be removed skips the arming and goes straight to the refusal toast.
     let removable = tree.linked && !tree.bare && (tree.lock.is_none() || stale);
-    if armed.is_none() && removable && writable(ctx) && !operation_in_flight(ctx) {
+    if armed.is_none() && removable && writable(ctx) && !selected_removing(&ctx.state) {
         if let Some(picker) = ctx.state.worktree_picker.as_mut() {
             picker.pending_remove = Some(PendingWorktreeRemove {
                 path: tree.path,
@@ -921,38 +973,24 @@ pub(crate) fn unlock_selected(ctx: &mut Context<AppRoot>) -> Update {
         crate::pane::pty_events::notify_error(ctx, "Unlock failed", "Client is read-only");
         return Update::full();
     }
-    if operation_in_flight(ctx) {
-        crate::pane::pty_events::notify_info(ctx, "Worktree operation in progress");
-        return Update::full();
-    }
-    if tree.lock.is_none() {
+    if tree.lock.is_none() || selected_removing(&ctx.state) {
         return Update::none();
     }
-    let Some(client) = ctx.state.current().session_client.clone() else {
-        return Update::none();
-    };
-    let id = request_id(ctx);
-    ctx.state.worktree_operation = Some(WorktreeOperation {
-        request_id: id,
-        epoch: ctx.state.runtime_epoch,
-        connection: client.connection_token(),
-        cwd: cwd.clone(),
-        kind: WorktreeOperationKind::Unlock {
-            path: tree.path.clone(),
-        },
-        open_when_done: false,
-    });
     if let Some(picker) = ctx.state.worktree_picker.as_mut() {
         picker.pending_remove = None;
     }
-    client.worktree(
-        id,
+    enqueue(
+        ctx,
+        cwd.clone(),
+        WorktreeOperationKind::Unlock {
+            path: tree.path.clone(),
+        },
+        false,
         WorktreeRequest::Unlock {
             cwd,
             path: tree.path,
         },
-    );
-    Update::full()
+    )
 }
 
 /// A checkout's ✕ in the Worktrees tab was confirmed.
@@ -985,9 +1023,9 @@ fn start_remove(
         crate::pane::pty_events::notify_error(ctx, "Remove failed", "Client is read-only");
         return Update::full();
     }
-    if operation_in_flight(ctx) {
-        crate::pane::pty_events::notify_info(ctx, "Worktree operation in progress");
-        return Update::full();
+    let target = ctx.state.current().remote_target.clone();
+    if ctx.state.worktree_removing(&tree.path, target.as_ref()) {
+        return Update::none();
     }
     let stale = tree.lock.as_ref().is_some_and(|lock| lock.stale);
     if !tree.linked || tree.bare {
@@ -1006,35 +1044,26 @@ fn start_remove(
         );
         return Update::full();
     }
-    let Some(client) = ctx.state.current().session_client.clone() else {
-        return Update::none();
-    };
-    let id = request_id(ctx);
-    ctx.state.worktree_operation = Some(WorktreeOperation {
-        request_id: id,
-        epoch: ctx.state.runtime_epoch,
-        connection: client.connection_token(),
-        cwd: cwd.clone(),
-        kind: WorktreeOperationKind::Remove {
-            path: tree.path.clone(),
-            force,
-        },
-        open_when_done: false,
-    });
     if let Some(picker) = ctx.state.worktree_picker.as_mut() {
         picker.pending_remove = None;
     }
-    client.worktree(
-        id,
+    let delete_branch = ctx.state.config.worktrees.delete_branch;
+    enqueue(
+        ctx,
+        cwd.clone(),
+        WorktreeOperationKind::Remove {
+            path: tree.path.clone(),
+            force,
+        },
+        false,
         WorktreeRequest::Remove {
             cwd,
             path: tree.path,
             force,
             unlock_stale: stale,
-            delete_branch: ctx.state.config.worktrees.delete_branch,
+            delete_branch,
         },
-    );
-    Update::full()
+    )
 }
 
 pub(crate) fn apply_result(
@@ -1048,9 +1077,13 @@ pub(crate) fn apply_result(
     // would stay "in progress" forever.
     let operation = ctx
         .state
-        .worktree_operation
-        .take_if(|op| op.epoch == epoch && op.request_id == request_id);
+        .worktree_operations
+        .iter()
+        .position(|op| op.epoch == epoch && op.request_id == request_id && op.queued.is_none())
+        .and_then(|index| ctx.state.worktree_operations.remove(index));
     if let Some(operation) = operation {
+        // The next one starts before this result can switch sessions or return.
+        advance_operations(ctx);
         let foreground = epoch == ctx.state.runtime_epoch;
         let picker_here = foreground
             && ctx
@@ -1103,6 +1136,23 @@ pub(crate) fn apply_result(
                 );
             }
             (WorktreeOperationKind::Remove { .. }, WorktreeResult::Removed { path, branches }) => {
+                // Drop the row now: the list asked for below waits on the host behind whatever
+                // operation is queued next, and until then the checkout would look usable.
+                if sidebar_here {
+                    let listing = &mut ctx.state.sidebar.worktrees;
+                    listing.entries.retain(|tree| tree.path != path);
+                }
+                if picker_here && let Some(picker) = ctx.state.worktree_picker.as_mut() {
+                    let selected = picker
+                        .entries
+                        .get(picker.selected)
+                        .map(|tree| tree.path.clone());
+                    picker.entries.retain(|tree| tree.path != path);
+                    picker.selected = selected
+                        .and_then(|path| picker.entries.iter().position(|tree| tree.path == path))
+                        .unwrap_or(picker.selected)
+                        .min(picker.entries.len().saturating_sub(1));
+                }
                 for outcome in &branches {
                     if let BranchOutcome::Kept { reason, .. } = outcome {
                         // The branch outlived its checkout, which the list alone does not show.
@@ -1113,7 +1163,7 @@ pub(crate) fn apply_result(
                     }
                 }
                 if picker_here {
-                    return refresh(ctx);
+                    return relist(ctx);
                 }
                 // The sidebar row disappearing is the feedback; a toast would repeat it.
                 if !sidebar_here {
@@ -1132,7 +1182,7 @@ pub(crate) fn apply_result(
             }
             (WorktreeOperationKind::Unlock { .. }, WorktreeResult::Unlocked { path }) => {
                 if picker_here {
-                    return refresh(ctx);
+                    return relist(ctx);
                 }
                 crate::pane::pty_events::notify_info(ctx, format!("Unlocked worktree `{path}`"));
             }
@@ -1783,7 +1833,7 @@ mod tests {
     fn start_create(backend: &mut TestBackend<AppRoot>, client: &SessionClient) -> u64 {
         let state = backend.state_mut();
         state.current_mut().session_client = Some(client.clone());
-        state.worktree_operation = Some(WorktreeOperation {
+        state.worktree_operations.push_back(WorktreeOperation {
             request_id: 41,
             epoch: state.runtime_epoch,
             connection: client.connection_token(),
@@ -1791,6 +1841,7 @@ mod tests {
             kind: WorktreeOperationKind::Create {
                 branch: "feat/x".into(),
             },
+            queued: None,
             open_when_done: false,
         });
         state.runtime_epoch
@@ -1809,7 +1860,8 @@ mod tests {
                 state.park_current(origin, crate::state::Attachment::new());
                 state.runtime_epoch = origin + 100;
             }
-            assert!(backend.state().worktree_operation_reachable());
+            let state = backend.state();
+            assert!(state.worktree_operation_reachable(&state.worktree_operations[0]));
 
             backend
                 .dispatch(Msg::SessionWorktreeResult {
@@ -1830,40 +1882,43 @@ mod tests {
                 })
                 .unwrap();
             assert!(
-                backend.state().worktree_operation.is_none(),
+                backend.state().worktree_operations.is_empty(),
                 "a background completion must retire the operation"
             );
         });
     }
 
+    /// An operation whose attachment reconnected can never be answered. It must not hold back
+    /// the ones queued behind it.
     #[test]
-    fn an_operation_whose_connection_is_gone_stops_blocking_new_ones() {
+    fn an_operation_whose_connection_is_gone_lets_the_queue_move_on() {
         crate::test_support::on_large_stack(|| {
-            crate::test_support::isolate_user_dirs();
-            let mut backend = TestBackend::new(AppRoot::default());
-            let (sent_on, _outbound) = SessionClient::test_channel();
-            start_create(&mut backend, &sent_on);
-            // The attachment reconnected: its reply can no longer arrive on the old connection.
-            let (reconnected, _outbound) = SessionClient::test_channel();
-            {
-                let state = backend.state_mut();
-                state.current_mut().session_client = Some(reconnected);
-                state.worktree_picker = Some(WorktreePickerState::new("/src/repo".into(), None));
-            }
-            assert!(!backend.state().worktree_operation_reachable());
+            let (mut backend, outbound) = reads_backend();
+            let (sent_on, _old_outbound) = SessionClient::test_channel();
+            let state = backend.state_mut();
+            state.worktree_operations.push_back(WorktreeOperation {
+                request_id: 41,
+                epoch: state.runtime_epoch,
+                connection: sent_on.connection_token(),
+                cwd: "/src/repo".into(),
+                kind: WorktreeOperationKind::Create {
+                    branch: "feat/x".into(),
+                },
+                queued: None,
+                open_when_done: false,
+            });
 
-            backend.dispatch(Msg::WorktreeNew).unwrap();
+            backend.dispatch(Msg::WorktreeRemoveSelected).unwrap();
+            backend.dispatch(Msg::WorktreeRemoveSelected).unwrap();
             let state = backend.state();
-            assert!(state.worktree_operation.is_none());
-            assert!(
-                state
-                    .worktree_picker
-                    .as_ref()
-                    .is_some_and(|picker| picker.form.is_some()),
-                "the new-worktree form opens instead of reporting an operation in progress"
-            );
+            assert_eq!(state.worktree_operations.len(), 1);
+            assert!(matches!(
+                requests(&outbound).as_slice(),
+                [(_, crate::session::protocol::WorktreeRequest::Remove { .. })]
+            ));
         });
     }
+
     fn reads_backend() -> (
         TestBackend<AppRoot>,
         std::sync::mpsc::Receiver<crate::session::client::ClientOutbound>,
@@ -2255,18 +2310,40 @@ mod tests {
         });
     }
 
+    /// Removals queue: a second one can be started, and other checkouts opened, while the first is
+    /// still running, and the host is sent one at a time.
     #[test]
-    fn worktree_removal_shows_progress_until_the_server_finishes() {
+    fn removals_queue_and_leave_the_other_checkouts_usable() {
         crate::test_support::on_large_stack(|| {
+            use crate::session::protocol::WorktreeRequest;
             let (mut backend, outbound) = reads_backend();
-            backend.dispatch(Msg::WorktreeRemoveSelected).unwrap();
-            backend.dispatch(Msg::WorktreeRemoveSelected).unwrap();
-            assert_eq!(requests(&outbound).len(), 1);
+            let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
+            for branch in ["fix", "docs"] {
+                let mut tree = picker.entries[0].clone();
+                tree.path = format!("/src/repo-worktrees/{branch}");
+                tree.branch = Some(branch.into());
+                picker.entries.push(tree);
+            }
+            for index in [0, 1, 2] {
+                backend.dispatch(Msg::WorktreeSelect(index)).unwrap();
+                backend.dispatch(Msg::WorktreeRemoveSelected).unwrap();
+                backend.dispatch(Msg::WorktreeRemoveSelected).unwrap();
+            }
+            let sent = requests(&outbound);
+            assert!(
+                matches!(
+                    sent.as_slice(),
+                    [(_, WorktreeRequest::Remove { path, .. })] if path == "/src/repo-worktrees/feat"
+                ),
+                "only the first removal reaches the host: {sent:?}"
+            );
             backend.render();
-            let frame = backend.capture_frame().plain_text();
-            assert!(frame.contains("Removing…"), "{frame}");
-            assert!(!frame.contains("again to remove"), "{frame}");
             let rows = backend.capture_frame().to_fixed_grid_lines();
+            assert_eq!(
+                rows.iter().filter(|row| row.contains("Removing…")).count(),
+                3,
+                "{rows:#?}"
+            );
             let (y, row) = rows
                 .iter()
                 .enumerate()
@@ -2277,26 +2354,72 @@ mod tests {
                 backend.pointer_shape_at(x as u16, y as u16),
                 Some(tui_lipan::PointerShape::Default)
             );
-            let operation = backend.state().worktree_operation.as_ref().unwrap();
-            let (epoch, request_id) = (operation.epoch, operation.request_id);
+            // A checkout that is going away cannot be opened; it stays in the picker.
+            backend.dispatch(Msg::WorktreeSelect(0)).unwrap();
+            backend.dispatch(Msg::WorktreeOpenSelected).unwrap();
+            assert!(backend.state().worktree_picker.is_some());
+
+            // The first one failing does not stop the second.
+            let epoch = backend.state().runtime_epoch;
             backend
                 .dispatch(Msg::SessionWorktreeResult {
                     epoch,
-                    request_id,
+                    request_id: sent[0].0,
                     result: WorktreeResult::Failed {
                         message: "permission denied".into(),
                     },
                 })
                 .unwrap();
+            let sent = requests(&outbound);
+            assert!(
+                matches!(
+                    sent.as_slice(),
+                    [(_, WorktreeRequest::Remove { path, .. })] if path == "/src/repo-worktrees/fix"
+                ),
+                "{sent:?}"
+            );
             backend.render();
-            assert!(!backend.capture_frame().plain_text().contains("removing…"));
-            assert!(backend.state().worktree_operation.is_none());
             assert_eq!(
                 backend.pointer_shape_at(x as u16, y as u16),
-                Some(tui_lipan::PointerShape::Pointer)
+                Some(tui_lipan::PointerShape::Pointer),
+                "the checkout whose removal failed is usable again"
             );
+
+            // A finished removal takes its row away at once: the list that confirms it is read
+            // behind the removal that starts next.
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch,
+                    request_id: sent[0].0,
+                    result: WorktreeResult::Removed {
+                        path: "/src/repo-worktrees/fix".into(),
+                        branches: Vec::new(),
+                    },
+                })
+                .unwrap();
+            let paths: Vec<_> = backend
+                .state()
+                .worktree_picker
+                .as_ref()
+                .unwrap()
+                .entries
+                .iter()
+                .map(|tree| tree.path.as_str())
+                .collect();
+            assert_eq!(
+                paths,
+                ["/src/repo-worktrees/feat", "/src/repo-worktrees/docs"]
+            );
+
+            // The remaining checkout opens while the last removal is still running.
+            backend.dispatch(Msg::WorktreeSelect(0)).unwrap();
+            backend.dispatch(Msg::WorktreeOpenSelected).unwrap();
+            let state = backend.state();
+            assert!(state.worktree_picker.is_none());
+            assert_eq!(state.worktree_operations.len(), 1);
         });
     }
+
     #[test]
     fn authentication_failures_wait_for_manual_refresh_instead_of_retrying() {
         crate::test_support::on_large_stack(|| {

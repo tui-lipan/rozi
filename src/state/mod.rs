@@ -355,7 +355,9 @@ pub struct State {
     pub show_profile_picker: bool,
     pub profile_picker: Option<ProfilePickerState>,
     pub worktree_picker: Option<WorktreePickerState>,
-    pub worktree_operation: Option<WorktreeOperation>,
+    /// Started creates, removals, and unlocks, oldest first. Only the front one has been sent to
+    /// its host; the rest wait their turn.
+    pub worktree_operations: std::collections::VecDeque<WorktreeOperation>,
     pub worktree_lists: WorktreeListCache,
     pub worktree_statuses: WorktreeStatusCache,
     pub next_worktree_request_id: u64,
@@ -767,7 +769,7 @@ impl State {
             show_profile_picker: false,
             profile_picker: None,
             worktree_picker: None,
-            worktree_operation: None,
+            worktree_operations: std::collections::VecDeque::new(),
             worktree_lists: WorktreeListCache::default(),
             worktree_statuses: WorktreeStatusCache::default(),
             next_worktree_request_id: 1,
@@ -896,41 +898,38 @@ impl State {
         &mut self.attachment
     }
 
-    /// Whether the started worktree create or remove can still report back: the attachment that
-    /// sent it, foreground or background, still holds the connection its reply will arrive on.
-    pub fn worktree_operation_reachable(&self) -> bool {
-        let Some(operation) = self.worktree_operation.as_ref() else {
-            return false;
-        };
-        let attachment = if operation.epoch == self.runtime_epoch {
-            Some(&self.attachment)
-        } else {
-            self.background.get(&operation.epoch)
-        };
-        attachment
+    /// Whether a started worktree operation can still run and report back: the attachment that
+    /// started it, foreground or background, still holds the connection its reply arrives on.
+    pub fn worktree_operation_reachable(&self, operation: &WorktreeOperation) -> bool {
+        self.worktree_operation_attachment(operation)
             .and_then(|attachment| attachment.session_client.as_ref())
             .is_some_and(|client| operation.connection.is(client))
     }
 
+    pub(crate) fn worktree_operation_attachment(
+        &self,
+        operation: &WorktreeOperation,
+    ) -> Option<&Attachment> {
+        if operation.epoch == self.runtime_epoch {
+            Some(&self.attachment)
+        } else {
+            self.background.get(&operation.epoch)
+        }
+    }
+
+    /// Whether the checkout at `path` on `target` is being removed, or is queued to be.
     pub(crate) fn worktree_removing(
         &self,
         path: &str,
         target: Option<&crate::session::remote::RemoteTarget>,
     ) -> bool {
-        let Some(operation) = self
-            .worktree_operation
-            .as_ref()
-            .filter(|_| self.worktree_operation_reachable())
-        else {
-            return false;
-        };
-        let attachment = if operation.epoch == self.runtime_epoch {
-            Some(self.current())
-        } else {
-            self.background.get(&operation.epoch)
-        };
-        attachment.is_some_and(|attachment| attachment.remote_target.as_ref() == target)
-            && matches!(&operation.kind, WorktreeOperationKind::Remove { path: removing, .. } if removing == path)
+        self.worktree_operations.iter().any(|operation| {
+            matches!(&operation.kind, WorktreeOperationKind::Remove { path: removing, .. } if removing == path)
+                && self.worktree_operation_reachable(operation)
+                && self
+                    .worktree_operation_attachment(operation)
+                    .is_some_and(|attachment| attachment.remote_target.as_ref() == target)
+        })
     }
 
     pub(crate) fn scratch_client(&self) -> Option<crate::session::client::SessionClient> {

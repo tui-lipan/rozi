@@ -296,11 +296,6 @@ impl crate::state::State {
             .map_or_else(|| "local".to_string(), |target| target.display_label());
         let mut items = vec![WorktreeTabItem::Header { repository, host }];
 
-        // Only an operation this attachment can still hear back about is shown as running.
-        let operation = self
-            .worktree_operation
-            .as_ref()
-            .filter(|op| &op.cwd == cwd && self.worktree_operation_reachable());
         if !listing.loaded {
             items.push(WorktreeTabItem::Message("Loading…".to_string()));
         } else if let Some(error) = listing.error.as_ref() {
@@ -320,7 +315,8 @@ impl crate::state::State {
                         && !tree.bare
                         && tree.lock.as_ref().is_none_or(|lock| lock.stale)
                         && sessions.is_empty()
-                        && !removing,
+                        // An unlock in the queue counts too: a removal on top of it is refused.
+                        && !self.worktree_changing(&tree.path, target.as_ref()),
                     force: listing.force_remove.as_ref() == Some(&tree.path),
                     removing,
                     sessions,
@@ -328,12 +324,16 @@ impl crate::state::State {
                 }));
             }
         }
-        if let Some(crate::state::WorktreeOperationKind::Create { branch }) =
-            operation.map(|op| &op.kind)
-        {
-            items.push(WorktreeTabItem::Creating {
-                branch: branch.clone(),
-            });
+        // Only an operation this attachment can still hear back about is shown as running.
+        for operation in &self.worktree_operations {
+            if let crate::state::WorktreeOperationKind::Create { branch } = &operation.kind
+                && &operation.cwd == cwd
+                && self.worktree_operation_reachable(operation)
+            {
+                items.push(WorktreeTabItem::Creating {
+                    branch: branch.clone(),
+                });
+            }
         }
         items.push(WorktreeTabItem::New);
         items

@@ -157,7 +157,9 @@ Removal follows these rules:
 
 In the sidebar's Worktrees tab, the ✕ on a checkout follows the same rules.
 During removal, the checkout shows an animated spinner and `Removing…` in the picker and sidebar
-until the host finishes or reports an error.
+until the host finishes or reports an error. You do not have to wait: remove further checkouts, or
+open, create, and unlock others, in the meantime. The host works through them in the order you
+started them.
 
 ### Delete the branch too
 

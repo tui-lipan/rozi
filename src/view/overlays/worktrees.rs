@@ -19,7 +19,11 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         .shared
         .as_ref()
         .is_none_or(|shared| !shared.read_only);
-    let busy = ctx.state.worktree_operation_reachable();
+    // A checkout being removed takes no further action; every other row stays usable.
+    let idle = selected.is_some_and(|tree| {
+        !ctx.state
+            .worktree_removing(&tree.path, picker.target.as_ref())
+    });
     let armed = picker
         .pending_remove
         .as_ref()
@@ -39,19 +43,18 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         tree.linked && !tree.bare && tree.lock.as_ref().is_none_or(|lock| lock.stale)
     });
     let armed = armed.is_some();
+    // Nor does one already being unlocked take a second unlock, or a removal on top of it.
+    let unchanging = selected.is_some_and(|tree| {
+        !ctx.state
+            .worktree_changing(&tree.path, picker.target.as_ref())
+    });
     let actions = vec![
-        OverlayAction::new(
-            "enter",
-            "open",
-            Msg::WorktreeOpenSelected,
-            selected.is_some() && !busy,
-        )
-        .hint_only(),
+        OverlayAction::new("enter", "open", Msg::WorktreeOpenSelected, idle).hint_only(),
         OverlayAction::new(
             "ctrl-enter",
             "pane",
             Msg::WorktreeOpenPane,
-            selected.is_some() && !busy && crate::ops::worktrees::can_open_pane(&ctx.state),
+            idle && crate::ops::worktrees::can_open_pane(&ctx.state),
         ),
         OverlayAction::new(
             "ctrl-c",
@@ -59,13 +62,13 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
             Msg::WorktreeCopyPath,
             selected.is_some(),
         ),
-        OverlayAction::new("ctrl-n", "new", Msg::WorktreeNew, writable && !busy),
-        OverlayAction::new("ctrl-r", "refresh", Msg::WorktreeRefresh, !busy),
+        OverlayAction::new("ctrl-n", "new", Msg::WorktreeNew, writable),
+        OverlayAction::new("ctrl-r", "refresh", Msg::WorktreeRefresh, true),
         OverlayAction::destructive(
             ctx,
             remove_label,
             Msg::WorktreeRemoveSelected,
-            writable && !busy && removable,
+            writable && unchanging && removable,
             armed,
         )
         .with_confirm_cue(confirm),
@@ -73,7 +76,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
             "ctrl-u",
             "unlock",
             Msg::WorktreeUnlockSelected,
-            writable && !busy && selected.is_some_and(|tree| tree.lock.is_some()),
+            writable && unchanging && selected.is_some_and(|tree| tree.lock.is_some()),
         ),
         OverlayAction::new("esc", "close", Msg::CloseWorktrees, true).hide_hint(),
     ];
@@ -149,11 +152,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
                     .primary_truncate_description_first(false)
                     .primary_min_label_width(Length::Percent(40))
                     .primary_description_gap(PICKER_DESCRIPTION_GAP)
-                    .pointer_shape(if busy {
-                        PointerShape::Default
-                    } else {
-                        PointerShape::Pointer
-                    }),
+                    .pointer_shape(PointerShape::Pointer),
             )
         });
     let empty = if let Some(error) = picker.error.as_deref() {

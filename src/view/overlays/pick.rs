@@ -62,7 +62,6 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
     let restore_query = page.restore_query.clone();
     let rows = page.rows.clone();
     let has_groups = rows.iter().any(|r| r.group.is_some());
-    let selected_index = Some(page.selected);
     let answer = page.rows_seq;
     let item_value = |index: usize, row: &crate::control::pick::PickRow| PickItem {
         answer,
@@ -94,7 +93,15 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
                 item = item.description(picker_description(description));
             }
             let entry = SearchEntry::Item(item);
-            if let Some((_, items)) = groups.iter_mut().find(|(name, _)| *name == group_name) {
+            // A reporting caller sent its rows ranked, so a group gathers only the rows that
+            // follow one another; gathering a later row under an earlier heading would reorder
+            // them.
+            let existing = if rank {
+                groups.iter_mut().find(|(name, _)| *name == group_name)
+            } else {
+                groups.last_mut().filter(|(name, _)| *name == group_name)
+            };
+            if let Some((_, items)) = existing {
                 items.push(entry);
             } else {
                 groups.push((group_name, vec![entry]));
@@ -125,6 +132,16 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
             })
             .collect::<Vec<_>>()
     };
+
+    // Groups can put rows in a different order from the page's, and the palette counts its
+    // selection in its own order.
+    let selected_index = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            SearchEntry::Item(item) => Some(item.value.index),
+            _ => None,
+        })
+        .position(|index| index == page.selected);
 
     let disabled_style = fg_only(&ctx.state.theme.muted);
     let item_style = fg_only(&ctx.state.theme.primary);

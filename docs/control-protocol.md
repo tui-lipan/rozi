@@ -998,6 +998,7 @@ slow search that finishes after a newer one cannot replace the newer rows. A sna
 action.
 
 A picker with `report_query` shows rows in the order they were sent, so send the best match first.
+A `group` heading covers each run of consecutive rows in that group.
 rozi still hides the rows it holds that do not match the current text, but does not reorder them.
 The highlight starts on the first row whenever the text changes or an answer arrives. After a
 snapshot without `query_seq`, it stays on the row it was on.

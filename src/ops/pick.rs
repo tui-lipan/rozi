@@ -1694,6 +1694,53 @@ mod tests {
         });
     }
 
+    /// Rows of a group sent apart: a reporting picker keeps them in the order sent, under a
+    /// heading per run, and any other picker gathers them under one heading. Either way the
+    /// highlight walks the rows as drawn and Enter picks the one it is on.
+    #[test]
+    fn interleaved_groups_keep_the_highlight_on_the_drawn_row() {
+        for (report_query, drawn) in [
+            (true, ["x-a", "x-b", "x-c"]),
+            (false, ["x-a", "x-c", "x-b"]),
+        ] {
+            with_backend(move |backend| {
+                let rx = open_reporting(backend, Vec::new(), None, Vec::new(), report_query);
+                press(backend, tui_lipan::KeyCode::Char('x'));
+                let grouped = |id: &str, group: &str| PickRow {
+                    group: Some(group.into()),
+                    ..row(id)
+                };
+                backend
+                    .dispatch(crate::Msg::PickRowsReported {
+                        id: 1,
+                        tab: None,
+                        rows: vec![
+                            grouped("x-a", "A"),
+                            grouped("x-b", "B"),
+                            grouped("x-c", "A"),
+                        ],
+                        query_seq: report_query.then_some(1),
+                    })
+                    .unwrap();
+                backend.render();
+                backend.advance(std::time::Duration::from_millis(500));
+                let screen = backend.capture_frame().plain_text();
+                let at = |label: &str| screen.find(label).expect(&screen);
+                assert!(
+                    at(drawn[0]) < at(drawn[1]) && at(drawn[1]) < at(drawn[2]),
+                    "{screen}"
+                );
+                press(backend, tui_lipan::KeyCode::Down);
+                press(backend, tui_lipan::KeyCode::Down);
+                press(backend, tui_lipan::KeyCode::Enter);
+                assert_eq!(
+                    drain(&rx).last().unwrap(),
+                    &format!(r#"{{"selected":"{}"}}"#, drawn[2])
+                );
+            });
+        }
+    }
+
     /// Rows can share a label; the highlight follows the row's id through a refresh, so Enter
     /// and the selection in state agree on which row it is on.
     #[test]

@@ -48,6 +48,10 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Ask another agent; returns the request at once",
             ),
             row(
+                "ask --ref <JSON> --wait --timeout <DUR> -- <TEXT>",
+                "Ask, then wait for the answer like await",
+            ),
+            row(
                 "reply <ID> --stdin",
                 "Answer a request sent to you, text on stdin",
             ),
@@ -136,7 +140,26 @@ pub(super) fn wants_help(args: &[String]) -> bool {
     args.is_empty() || args.iter().any(|arg| arg == "-h" || arg == "--help")
 }
 
-pub(super) fn parse_agents_args(
+/// A parsed `agents` command.
+pub(super) struct ParsedAgents {
+    pub(super) command: ControlCommand,
+    pub(super) format: Option<ListFormat>,
+    /// `ask --wait`: await the new request for this long once it is asked.
+    pub(super) await_ms: Option<u64>,
+}
+
+pub(super) fn parse_agents(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
+    if args.first().map(String::as_str) == Some("ask") {
+        return parse_ask(args.into_iter().skip(1).collect());
+    }
+    parse_agents_args(args).map(|(command, format)| ParsedAgents {
+        command,
+        format,
+        await_ms: None,
+    })
+}
+
+fn parse_agents_args(
     args: Vec<String>,
 ) -> std::result::Result<(ControlCommand, Option<ListFormat>), String> {
     let mut iter = args.into_iter();
@@ -191,7 +214,7 @@ pub(super) fn parse_agents_args(
         "read" => parse_read(args),
         "wait" => parse_wait(args),
         "prompt" => parse_prompt(args),
-        "ask" => parse_ask(args),
+        "ask" => unreachable!("parse_agents parses ask with its wait"),
         "reply" => parse_reply(args),
         "await" => parse_await(args),
         "request" => parse_request_id(args, "agents request")
@@ -446,17 +469,27 @@ fn parse_prompt(
     ))
 }
 
-fn parse_ask(
-    args: Vec<String>,
-) -> std::result::Result<(ControlCommand, Option<ListFormat>), String> {
+fn parse_ask(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
     let mut target = None;
     let mut prompt: Option<String> = None;
     let mut format = None;
+    let mut wait = false;
+    let mut timeout_ms = None;
     let mut iter = args.into_iter();
     while let Some(argument) = iter.next() {
         match argument.as_str() {
             "--target" | "--ref" => set_target(&mut target, &argument, &mut iter)?,
             "--format" => set_format(&mut format, &mut iter, "agents ask")?,
+            "--wait" => wait = true,
+            "--timeout" => {
+                let value = super::require_value(&mut iter, "--timeout requires a duration")?;
+                if timeout_ms
+                    .replace(super::parse_duration_ms(&value, "--timeout")?)
+                    .is_some()
+                {
+                    return Err("agents ask --timeout specified more than once".into());
+                }
+            }
             // Everything after `--` is the text, whatever it looks like.
             "--" => {
                 let rest = iter.by_ref().collect::<Vec<_>>().join(" ");
@@ -470,15 +503,24 @@ fn parse_ask(
             other => return Err(unexpected("agents ask", other)),
         }
     }
-    Ok((
-        ControlCommand::AgentAsk {
+    let await_ms = match (wait, timeout_ms) {
+        (true, Some(timeout_ms)) => Some(timeout_ms),
+        (true, None) => {
+            return Err("agents ask --wait requires --timeout, such as --timeout 30m".into());
+        }
+        (false, Some(_)) => return Err("agents ask --timeout needs --wait".into()),
+        (false, None) => None,
+    };
+    Ok(ParsedAgents {
+        command: ControlCommand::AgentAsk {
             target: require_target(target, "agents ask")?,
             prompt: prompt.ok_or_else(|| {
                 "agents ask requires text: agents ask --ref <JSON> -- <TEXT>".to_string()
             })?,
         },
         format,
-    ))
+        await_ms,
+    })
 }
 
 fn parse_reply(
@@ -1188,15 +1230,33 @@ mod tests {
     #[test]
     fn ask_takes_everything_after_the_separator_as_its_text() {
         let args = |list: &[&str]| list.iter().map(|arg| (*arg).to_string()).collect();
-        let (command, _) =
-            parse_agents_args(args(&["ask", "--target", "3", "--", "--why", "not?"])).unwrap();
+        let parsed = parse_agents(args(&["ask", "--target", "3", "--", "--why", "not?"])).unwrap();
         assert_eq!(
-            command,
+            parsed.command,
             ControlCommand::AgentAsk {
                 target: AgentTarget::Pane(3),
                 prompt: "--why not?".into(),
             }
         );
+        assert_eq!(parsed.await_ms, None);
+        let waiting = parse_agents(args(&[
+            "ask",
+            "--target",
+            "3",
+            "--wait",
+            "--timeout",
+            "30m",
+            "--",
+            "review",
+        ]))
+        .unwrap();
+        assert_eq!(waiting.await_ms, Some(30 * 60 * 1000));
+        for incomplete in [&["--wait"][..], &["--timeout", "1m"][..]] {
+            let mut list = vec!["ask", "--target", "3"];
+            list.extend_from_slice(incomplete);
+            list.extend(["--", "review"]);
+            assert!(parse_agents(args(&list)).is_err(), "{incomplete:?}");
+        }
         let error = parse_agents_args(args(&["await", "--timeout", "1m", "rq_1"])).unwrap_err();
         assert!(error.contains("takes a request id first"), "{error}");
     }

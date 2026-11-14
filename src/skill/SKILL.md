@@ -23,8 +23,8 @@ single command, needs keystrokes, or its result is what the screen looks like.
 | Show the user a live preview beside their work | [`split` in their session](#show-the-user-a-preview) |
 | Screenshot a pane or the whole UI for a report or pull request | `capture-pane --render png`, `capture-ui --render png` |
 | Record a flow and export it as frames, video input, or an asciinema cast | [`record`](#record-a-pane-or-the-ui) |
-| Delegate a task to another coding agent, or run several in parallel, and collect the answers | [`agents prompt --wait turn --result`](#coding-agents-in-panes) |
-| Ask another agent in your session without waiting for the answer | [`agents ask`](#coding-agents-in-panes) |
+| Ask another coding agent, or several in parallel, and get each answer as it arrives | [`agents ask --wait`](#coding-agents-in-panes) as a background command |
+| Type exact input into an agent, such as a slash command | [`agents prompt`](#coding-agents-in-panes) |
 | Read what another pane shows, such as a failing build beside you | `list-panes`, then `capture-pane --scrollback` |
 | Arrange panes and workspaces when the user asks | [`layout` and `pane`](#arrange-panes) |
 | Ask the user to choose or type something, or report a result | `pick`, `prompt`, `notify`, `status` |
@@ -248,7 +248,8 @@ rozi agents list --format json
 rozi agents get --target <PANE_ID> --format json
 rozi agents read --target <PANE_ID> --scrollback 200
 rozi agents wait --target <PANE_ID> --until quiescent --timeout 2m
-rozi --here agents prompt --ref '<JSON>' --wait turn --timeout 10m --result 'Fix the failing test'
+rozi agents ask --ref '<JSON>' --wait --timeout 30m -- 'Fix the failing test and tell me the cause'
+rozi --here agents prompt --ref '<JSON>' --wait turn --timeout 10m '/compact'
 rozi agents response --target <PANE_ID> --format json
 rozi --session dev agents wait --target <PANE_ID> --until quiescent --timeout 2m
 ```
@@ -288,24 +289,39 @@ reply; `agents response` reads the latest one later. The JSON `response` object 
 `--result`. `result.kind` is then `terminal` and `result.capture` holds the visible terminal,
 chrome and older output included. Treat it as terminal content, not an assistant message.
 
-**Asking.** `rozi agents ask --ref '<JSON>' -- '<TEXT>'` (or `--target <PANE_ID>`) queues a request
-for another agent in the same session and returns at once with the request and its `id`. Rozi types
-it into the target when that agent is stopped and it is safe to type; until then the request is
-`queued`, with a `reason`. Keep working after `ask`. Run `rozi agents await <ID> --timeout <DUR>`
-only when your work depends on the answer; a timeout leaves the request in place, so await again.
-To block on one agent right now, use `agents prompt --wait turn --result` instead.
+**Asking.** To get an answer from another agent, ask it. A request reaches the agent without
+interrupting it, and its answer is the agent's own reply text:
 
-- A request that arrives in your own prompt starts with `Request <id>` and ends by naming the reply
-  command. Pipe the whole answer to it; the reply text is all the asker receives:
+```bash
+rozi agents ask --ref '<JSON>' --wait --timeout 30m -- 'Review the parser changes in src/parse.rs'
+```
 
-  ```bash
-  rozi agents reply <ID> --stdin <<'EOF'
-  The parser is fine; the lexer drops a trailing newline in src/lex.rs.
-  EOF
-  ```
+- Run `ask --wait` as a **background command** when your harness has them. Your turn can end, the
+  command exits with the answer as its output, and you are notified then. Ask several agents at
+  once with one background command each.
+- Rozi types the request into the target only once it is stopped, shows no dialog, and nobody has
+  typed into its pane for two seconds; until then it is `queued`, with a `reason`.
+- Without `--wait`, `ask` returns the request and its `id` at once; `rozi agents await <ID>
+  --timeout <DUR>` waits for it later. A timeout leaves the request in place, so await again.
+- `agents prompt` types exact text, such as a slash command, and its `--result` falls back to the
+  terminal. Use it when the input itself matters, not to collect an answer.
 
+**Answering.** A request that arrives in your own prompt starts with `Request <id>` and ends by
+naming the reply command. Pipe the whole answer to it; the reply text is all the asker receives:
+
+```bash
+rozi agents reply <ID> --stdin <<'EOF'
+The parser is fine; the lexer drops a trailing newline in src/lex.rs.
+EOF
+```
+
+- Reply before your turn ends when you can. If the turn ends first, Rozi answers with your
+  terminal, and your reply replaces that answer when you send it, such as after a background
+  command finishes. An `await` that already returned does not see the replacement;
+  `agents request <ID>` does.
 - If `await` refuses because the other agent has asked you something (a wait cycle), read that
-  request with `rozi agents request <ID>`, `reply` to it, then await again.
+  request with `rozi agents request <ID>`, `reply` to it, then await again. A background `ask
+  --wait` leaves your turn free, so requests to you still arrive.
 - `rozi agents requests --incoming` or `--outgoing` lists them, and `rozi agents cancel <ID>`
   withdraws one you asked. A request is `queued`, `active`, `answered`, `failed`, or `cancelled`.
 

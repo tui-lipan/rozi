@@ -917,6 +917,31 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
         eprintln!("PNG output is binary; pass --output FILE or redirect stdout");
         std::process::exit(2);
     }
+    let value = send_control(&command)?;
+    report_control(&command, raw_capture, value)
+}
+
+/// `agents ask --wait`: ask, then wait for the answer exactly as `agents await` does. A refused
+/// ask is reported as itself.
+pub(crate) fn run_ask_and_await(mut command: ControlCli, timeout_ms: u64) -> Result<()> {
+    let asked = send_control(&command)?;
+    let id = asked
+        .get("ok")
+        .and_then(serde_json::Value::as_bool)
+        .filter(|ok| *ok)
+        .and_then(|_| asked.pointer("/data/id"))
+        .and_then(serde_json::Value::as_str);
+    let Some(id) = id else {
+        return report_control(&command, None, asked);
+    };
+    command.request.command = control::ControlCommand::AgentAwait {
+        id: id.to_string(),
+        timeout_ms: Some(timeout_ms),
+    };
+    run_control_cli(command)
+}
+
+fn send_control(command: &ControlCli) -> Result<serde_json::Value> {
     // Decided here rather than while parsing, like the discovery of a UI with no socket named: it
     // reads the pane's environment, and a parse must mean the same thing wherever it runs.
     let mut request = command.request.clone();
@@ -928,7 +953,7 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
     if !matches!(endpoint, ControlEndpoint::Remote { .. }) {
         resolve_split_cwd(&mut request.command)?;
     }
-    let mut value = match endpoint {
+    Ok(match endpoint {
         ControlEndpoint::CallerContext => serde_json::to_value(control::ControlResponse::ok(
             super::context::caller_context(&request)?,
         ))
@@ -957,7 +982,16 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
             ask_remote_endpoint(&target, &session, request)?
         }
         ControlEndpoint::OwnSession(instance) => ask_own_session_endpoint(&instance, request)?,
-    };
+    })
+}
+
+fn report_control(
+    command: &ControlCli,
+    raw_capture: Option<RawCapture>,
+    mut value: serde_json::Value,
+) -> Result<()> {
+    use std::io::IsTerminal;
+
     if matches!(
         command.request.command,
         control::ControlCommand::ExtensionsStatus

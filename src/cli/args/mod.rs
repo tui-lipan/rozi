@@ -267,6 +267,8 @@ pub(crate) enum ParsedCli {
     /// relaunch passes it, and always alone.
     ResumeHandoff(String),
     Control(ControlCli),
+    /// `agents ask --wait`: ask, then await the request for this many milliseconds.
+    AskAndAwait(ControlCli, u64),
     Publish(PublishCli),
     Subscribe(SubscribeCli),
     Pick(PickCli),
@@ -697,7 +699,11 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 if agents::wants_help(&args) {
                     return Ok(ParsedCli::AgentsHelp);
                 }
-                let (command, output_format) = agents::parse_agents_args(args)?;
+                let agents::ParsedAgents {
+                    command,
+                    format: output_format,
+                    await_ms,
+                } = agents::parse_agents(args)?;
                 let endpoint = control_endpoint(&cli, socket, &command)?;
                 let request = control_request(command);
                 let command = &request.command;
@@ -714,13 +720,17 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                             .to_string(),
                     );
                 }
-                return Ok(ParsedCli::Control(ControlCli {
+                let control = ControlCli {
                     config_path: cli.config_path.clone(),
                     endpoint,
                     request,
                     output_format,
                     output: None,
-                }));
+                };
+                return Ok(match await_ms {
+                    Some(timeout_ms) => ParsedCli::AskAndAwait(control, timeout_ms),
+                    None => ParsedCli::Control(control),
+                });
             }
             "record" => {
                 let args = iter.collect::<Vec<_>>();

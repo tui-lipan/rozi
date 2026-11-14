@@ -243,6 +243,7 @@ attached.
 | `agents prompt TARGET [--wait STATE --timeout DURATION] [--capture text\|ansi] [--result] [--allow-working] [--format text\|json] TEXT` | Validate, submit, and optionally wait atomically. | yes |
 | `agents response TARGET [--format text\|json]` | Read the latest retained agent response, including its source and fidelity. | yes |
 | `agents ask TARGET [--format text\|json] -- TEXT` | [Ask another agent](agents.md#ask-another-agent) without waiting; prints the request. | yes |
+| `agents ask TARGET --wait --timeout DUR [--format text\|json] -- TEXT` | Ask, then wait for the answer as `agents await` does. | yes |
 | `agents reply ID --stdin` | Answer a request sent to the calling agent with the text on stdin. | yes |
 | `agents await ID --timeout DURATION [--format text\|json]` | Wait until a request is answered, failed, or cancelled, and print its answer. | yes |
 | `agents request ID [--format text\|json]` | Show one request. | yes |

@@ -432,6 +432,8 @@ agent's [integration response](#read-the-agents-response), or else its terminal 
 ends, read the same way, including an alternate-screen transcript. An agent that will answer after
 its turn, such as when a background command finishes, runs `rozi agents reply <ID> --later` first:
 the request then stays `active` past the turn, and the agent can take the next request meanwhile.
+An agent that asks before running commands asks before each reply too; for Claude Code, allow
+`Bash(rozi agents:*)` in its permissions.
 
 | State | Meaning |
 | --- | --- |

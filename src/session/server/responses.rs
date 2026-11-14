@@ -390,6 +390,54 @@ mod tests {
         );
         let snapshot = serde_json::to_string(&server.panes[&7].runtime).unwrap();
         assert!(!snapshot.contains("exact answer"));
+
+        // A publisher that sends no response still answers from the conversation on screen.
+        server
+            .report_pane_rows(
+                client,
+                7,
+                1,
+                false,
+                publisher(0, false),
+                vec![row("working")],
+            )
+            .unwrap();
+        server
+            .register_post_prompt_wait(
+                client,
+                reference.clone(),
+                AgentWaitCondition::Turn,
+                None,
+                None,
+                true,
+                ReplyTo::Attached { request_id: 43 },
+            )
+            .unwrap();
+        server
+            .panes
+            .get_mut(&7)
+            .unwrap()
+            .screen_mut()
+            .process_bytes(b"PONG");
+        server
+            .report_pane_rows(client, 7, 1, false, publisher(0, false), vec![row("done")])
+            .unwrap();
+        server.flush_clients();
+        let response = loop {
+            match protocol::read_frame(&mut stream).unwrap() {
+                protocol::ServerMessage::AttachedControlResult {
+                    request_id: 43,
+                    response,
+                } => break response,
+                protocol::ServerMessage::SessionEvent { .. } => {}
+                message => panic!("{message:?}"),
+            }
+        };
+        let result: AgentWaitResult = serde_json::from_value(response.data.unwrap()).unwrap();
+        let content = result.response.unwrap().content;
+        assert_eq!(content.source, AgentResponseSource::Terminal);
+        assert!(content.text.contains("PONG"), "{}", content.text);
+        assert!(!content.complete);
     }
 
     #[cfg(unix)]

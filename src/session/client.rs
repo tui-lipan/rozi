@@ -317,6 +317,13 @@ pub(crate) enum ClientOutbound {
 }
 
 impl SessionClient {
+    /// This client as one whose server never offered `capability`, as an older server would.
+    #[cfg(test)]
+    pub(crate) fn without_capability(mut self, capability: protocol::Capability) -> Self {
+        self.capabilities = self.capabilities.without(capability);
+        self
+    }
+
     #[cfg(test)]
     pub(crate) fn test_channel() -> (Self, mpsc::Receiver<ClientOutbound>) {
         let outbound = Arc::new(ByteQueue::new(MAX_CLIENT_OUTBOUND_BYTES));

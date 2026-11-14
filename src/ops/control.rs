@@ -1215,12 +1215,20 @@ fn attachment_panes(
             .as_ref()
             .zip(caller)
             .is_some_and(|(target, worker)| worker.binding.host.remote() == Some(target));
+    // A server without the capability sent the title a pane shows, which may be the user's name
+    // for it, so this client cannot tell the program's own title apart.
+    let program_title_known = attachment.session_client.as_ref().is_none_or(|client| {
+        client.supports(crate::session::protocol::Capability::PaneProgramTitle)
+    });
     for (workspace_index, workspace) in attachment.workspaces.iter().enumerate() {
         for pane in workspace.panes.iter().filter(|pane| !pane.closing) {
             let mut info = PaneInfo::new(pane, workspace_index + 1, &session, session_instance);
             info.on_screen = on_screen;
             if !same_host {
                 info.foreground_pid = None;
+            }
+            if !program_title_known {
+                info.program_title = None;
             }
             panes.push(info);
         }
@@ -3773,6 +3781,40 @@ mod tests {
             assert_eq!(data[0]["foreground_program"], "cargo");
             assert_eq!(data[0]["foreground_programs"][1], "rustc");
             assert_eq!(data[0]["foreground_arguments"][0], "test");
+        });
+    }
+
+    #[test]
+    fn list_panes_reports_no_program_title_from_a_server_that_cannot_tell_one() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let (client, _outbound) = crate::session::client::SessionClient::test_channel();
+            backend.state_mut().current_mut().session_client = Some(
+                client.without_capability(crate::session::protocol::Capability::PaneProgramTitle),
+            );
+            // An older server's title for a pane named `ci` whose program set none.
+            backend.state_mut().current_mut().workspaces[0].panes[0]
+                .terminal
+                .title = Some("ci".into());
+            let (reply, response) = mpsc::channel();
+            backend
+                .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                    request: ControlRequest {
+                        command: ControlCommand::ListPanes,
+                        source_pane: None,
+                        source_session: None,
+                        extension: None,
+                        caller_context: None,
+                        credential: None,
+                    },
+                    reply,
+                    worker: None,
+                    caller: None,
+                }))
+                .expect("dispatch list panes");
+            let data = response.recv().unwrap().data.unwrap();
+            assert_eq!(data[0]["title"], "ci");
+            assert!(data[0].get("program_title").is_none());
         });
     }
 

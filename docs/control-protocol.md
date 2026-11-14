@@ -194,7 +194,8 @@ A `list-panes` pane object has these fields; optional values are JSON null:
 - `agent_ref` adds the agent's incarnation, and is null when the pane has no detected agent.
 - Scratch panes use workspace `0` and have no `reference`.
 - `title` is the name the user gave the pane, if any, otherwise the title its program set.
-  `program_title` is always the program's own title, and is omitted when the program set none.
+  `program_title` is always the program's own title. It is omitted when the program set none, and
+  when the session server runs an older rozi that cannot tell the two apart.
 - `foreground_programs` lists the basenames of the pane's foreground processes. Wrappers and
   pipelines can produce more than one entry.
 - `foreground_pid` is the process group ID of the command running in the pane, which is its first

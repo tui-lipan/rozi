@@ -214,6 +214,12 @@
             }
           ]
         },
+        "from_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "id": {
           "type": "string"
         },
@@ -237,6 +243,12 @@
         },
         "to": {
           "$ref": "#/$defs/AgentRef"
+        },
+        "to_label": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "updated_at_unix_ms": {
           "format": "uint64",
@@ -6950,6 +6962,12 @@
               },
               "type": "array"
             },
+            "server_now_unix_ms": {
+              "description": "The server's clock when it sent this, in the same Unix milliseconds as the requests'\ntimestamps, so a client on another machine reckons ages from the server's clock.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
             "type": {
               "const": "agent-requests-changed",
               "type": "string"
@@ -6957,7 +6975,8 @@
           },
           "required": [
             "type",
-            "requests"
+            "requests",
+            "server_now_unix_ms"
           ],
           "type": "object"
         },

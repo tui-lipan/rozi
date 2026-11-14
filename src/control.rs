@@ -2648,6 +2648,12 @@ pub struct AgentRequestInfo {
     pub to: crate::session::protocol::AgentRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to_native_session: Option<String>,
+    /// What the asking and asked agents were called when the request was asked, such as
+    /// `Claude Code`, so the request keeps naming them after they exit or are replaced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_label: Option<String>,
     pub prompt: String,
     pub state: AgentRequestState,
     /// Why the request is still queued, or why it failed or was cancelled.
@@ -2670,6 +2676,10 @@ pub struct AgentRequestSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<crate::session::protocol::AgentRef>,
     pub to: crate::session::protocol::AgentRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_label: Option<String>,
     pub state: AgentRequestState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -2685,6 +2695,8 @@ impl From<&AgentRequestInfo> for AgentRequestSummary {
             parent: request.parent.clone(),
             from: request.from.clone(),
             to: request.to.clone(),
+            from_label: request.from_label.clone(),
+            to_label: request.to_label.clone(),
             state: request.state,
             reason: request.reason.clone(),
             created_at_unix_ms: request.created_at_unix_ms,

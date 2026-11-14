@@ -498,7 +498,9 @@ pub(crate) fn render_workspace_panes(
             format!("{}-presentation", layer.pane_clip_key(pane.id)).into(),
             theme,
             // A request just reached this pane's agent, or its answer came back.
-            ctx.state.agent_handoff.ripple(pane.id),
+            ctx.state
+                .agent_handoff
+                .ripple(ctx.state.runtime_epoch, pane.id),
         );
         if title_on_seam && let Some(seam) = seam_title_element(ctx, pane, focused_pane) {
             seam_titles.push((

@@ -288,6 +288,13 @@
           ],
           "description": "The asking agent, absent when the caller was not an agent."
         },
+        "from_label": {
+          "description": "What the asking and asked agents were called when the request was asked, such as\n`Claude Code`, so the request keeps naming them after they exit or are replaced.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "from_native_session": {
           "type": [
             "string",
@@ -333,6 +340,12 @@
         },
         "to": {
           "$ref": "#/$defs/AgentRef"
+        },
+        "to_label": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "to_native_session": {
           "type": [
@@ -405,6 +418,12 @@
             }
           ]
         },
+        "from_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "id": {
           "type": "string"
         },
@@ -428,6 +447,12 @@
         },
         "to": {
           "$ref": "#/$defs/AgentRef"
+        },
+        "to_label": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "updated_at_unix_ms": {
           "format": "uint64",

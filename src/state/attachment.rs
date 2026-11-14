@@ -80,6 +80,9 @@ pub struct Attachment {
     pub session_actions: Vec<crate::control::PaletteAction>,
     /// The session's live and recently settled agent requests, without their text.
     pub agent_requests: Vec<crate::control::AgentRequestSummary>,
+    /// The server's clock when it last sent them, and when they arrived here, so ages are
+    /// reckoned from the server's clock rather than this machine's.
+    pub agent_requests_clock: Option<(u64, std::time::Instant)>,
     /// When attached via `--remote`, the remote host alias/URL; `None` for local sessions.
     /// Local-filesystem features (file tree, profile path capture) must treat server cwds as
     /// remote when this is set, even if `cwd_host` is `None` (server-relative).
@@ -231,6 +234,7 @@ impl Attachment {
             session_instance: None,
             session_actions: Vec::new(),
             agent_requests: Vec::new(),
+            agent_requests_clock: None,
             remote_host: None,
             path_family: crate::platform::paths::PathFamily::local(),
             ssh_connection: None,

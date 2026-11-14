@@ -925,12 +925,16 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         } => session::session_notifications(ctx, epoch, session_instance, name, notifications),
         Msg::SessionEvent { epoch, event } => session::session_event(ctx, epoch, event),
         Msg::SessionActions { epoch, actions } => session::session_actions(ctx, epoch, actions),
-        Msg::AgentRequestsChanged { epoch, requests } => {
-            session::agent_requests_changed(ctx, epoch, requests)
-        }
-        Msg::AgentHandoffEnded { pane, revision } => {
-            session::agent_handoff_ended(ctx, pane, revision)
-        }
+        Msg::AgentRequestsChanged {
+            epoch,
+            requests,
+            server_now_unix_ms,
+        } => session::agent_requests_changed(ctx, epoch, requests, server_now_unix_ms),
+        Msg::AgentHandoffEnded {
+            attachment,
+            pane,
+            revision,
+        } => session::agent_handoff_ended(ctx, attachment, pane, revision),
         Msg::ControlCallerGone { caller } => crate::ops::attached_control::caller_gone(ctx, caller),
         Msg::RunPaletteAction(id) => crate::ops::attached_control::run_palette_action(ctx, id),
         Msg::SessionInputMarked { epoch: _, token } => {

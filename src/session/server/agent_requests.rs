@@ -441,10 +441,19 @@ impl SessionServer {
             Some((parent, root, depth)) => (Some(parent), root, depth),
             None => (None, id.clone(), 1),
         };
+        let label = |agent: &protocol::AgentRef| {
+            self.current_agent_runtime(agent)
+                .ok()
+                .map(|runtime| runtime.label)
+        };
+        let from_label = from.as_ref().and_then(label);
+        let to_label = label(&to);
         let info = AgentRequestInfo {
             id: id.clone(),
             root,
             parent,
+            from_label,
+            to_label,
             from_native_session: from
                 .as_ref()
                 .and_then(|from| self.response_native_session(from)),
@@ -518,6 +527,7 @@ impl SessionServer {
     pub(super) fn agent_requests_message(&self) -> protocol::ServerMessage {
         protocol::ServerMessage::AgentRequestsChanged {
             requests: self.agent_requests.sent.clone(),
+            server_now_unix_ms: crate::runtime_metrics::unix_time_millis(),
         }
     }
 
@@ -533,7 +543,10 @@ impl SessionServer {
             return;
         }
         store.sent = requests.clone();
-        self.broadcast_control(&protocol::ServerMessage::AgentRequestsChanged { requests });
+        self.broadcast_control(&protocol::ServerMessage::AgentRequestsChanged {
+            requests,
+            server_now_unix_ms: crate::runtime_metrics::unix_time_millis(),
+        });
     }
 
     pub(super) fn reply_later(

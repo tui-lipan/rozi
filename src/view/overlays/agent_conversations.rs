@@ -26,16 +26,11 @@ pub(crate) fn agent_conversations_overlay(ctx: &Context<AppRoot>) -> Element {
     }
 }
 
-/// Now, in the server's clock, for ages and durations.
-fn now_ms() -> u64 {
-    crate::runtime_metrics::unix_time_millis()
-}
-
 fn list_overlay(ctx: &Context<AppRoot>, selected: Option<&str>, query: &str) -> Element {
     let theme = &ctx.state.theme;
     let all = requests(&ctx.state);
     let rows = threaded(all);
-    let now = now_ms();
+    let now = crate::view::agent_requests::server_now_ms(&ctx.state).unwrap_or(0);
     // A chain lists under Waiting while any request in it waits, so it is never split in two.
     let waiting_roots: Vec<&str> = all
         .iter()
@@ -179,8 +174,8 @@ impl RenderedRow {
         theme: &Theme,
     ) -> Self {
         use crate::view::vocabulary::{ASKING, fields};
-        let from = agent_name(state, request.from.as_ref());
-        let to = agent_name(state, Some(&request.to));
+        let from = agent_name(state, request.from.as_ref(), request.from_label.as_deref());
+        let to = agent_name(state, Some(&request.to), request.to_label.as_deref());
         // One cell between a guide and its row, as the sidebar's trees leave.
         let gap = (!guides.is_empty()).then(|| Span::new(" "));
         let mut label = guides;
@@ -238,7 +233,7 @@ fn chain_overlay(ctx: &Context<AppRoot>, root: &str) -> Element {
     let theme = &ctx.state.theme;
     let all = requests(&ctx.state);
     let events = chain_events(all, root);
-    let now = now_ms();
+    let now = crate::view::agent_requests::server_now_ms(&ctx.state).unwrap_or(0);
     let mut participants: Vec<String> = Vec::new();
     let mut add = |name: String| {
         if !participants.contains(&name) {
@@ -252,8 +247,12 @@ fn chain_overlay(ctx: &Context<AppRoot>, root: &str) -> Element {
                 ChainEvent::Ask(request) | ChainEvent::Settle(request) => request,
             };
             (
-                agent_name(&ctx.state, request.from.as_ref()),
-                agent_name(&ctx.state, Some(&request.to)),
+                agent_name(
+                    &ctx.state,
+                    request.from.as_ref(),
+                    request.from_label.as_deref(),
+                ),
+                agent_name(&ctx.state, Some(&request.to), request.to_label.as_deref()),
             )
         })
         .collect();

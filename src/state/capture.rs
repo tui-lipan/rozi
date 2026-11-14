@@ -139,9 +139,11 @@ pub struct UiRecordingSeen {
     pub overlay: Option<&'static str>,
 }
 
-/// The ripples running around panes whose agent just received a request or an answer. Each pane
-/// has at most one, so a burst of traffic restarts a pane's ripple rather than stacking them, and
-/// each ends on its own, so one pane's handoff never cuts another's short.
+/// The ripples running around panes whose agent just sent or received a request or an answer.
+/// Each pane has at most one, so a burst of traffic restarts a pane's ripple rather than stacking
+/// them, and each ends on its own, so one pane's handoff never cuts another's short. A pane is
+/// named with the attachment it belongs to: pane ids repeat across sessions, and a ripple must not
+/// follow the user into another session.
 #[derive(Clone, Debug, Default)]
 pub struct AgentHandoff {
     bursts: Vec<HandoffBurst>,
@@ -150,6 +152,7 @@ pub struct AgentHandoff {
 
 #[derive(Clone, Debug)]
 struct HandoffBurst {
+    attachment: AttachmentId,
     pane: PaneId,
     /// The effect tick the ripple started on.
     start_tick: u64,
@@ -167,10 +170,18 @@ pub enum HandoffDirection {
 
 impl AgentHandoff {
     /// Start, or restart, `pane`'s ripple at `start_tick`. Returns the revision its end names.
-    pub fn start(&mut self, pane: PaneId, start_tick: u64, direction: HandoffDirection) -> u64 {
+    pub fn start(
+        &mut self,
+        attachment: AttachmentId,
+        pane: PaneId,
+        start_tick: u64,
+        direction: HandoffDirection,
+    ) -> u64 {
         self.revision = self.revision.wrapping_add(1);
-        self.bursts.retain(|burst| burst.pane != pane);
+        self.bursts
+            .retain(|burst| (burst.attachment, burst.pane) != (attachment, pane));
         self.bursts.push(HandoffBurst {
+            attachment,
             pane,
             start_tick,
             direction,
@@ -180,18 +191,23 @@ impl AgentHandoff {
     }
 
     /// End `pane`'s ripple, unless a later handoff restarted it. Whether anything ended.
-    pub fn end(&mut self, pane: PaneId, revision: u64) -> bool {
+    pub fn end(&mut self, attachment: AttachmentId, pane: PaneId, revision: u64) -> bool {
         let before = self.bursts.len();
-        self.bursts
-            .retain(|burst| burst.pane != pane || burst.revision != revision);
+        self.bursts.retain(|burst| {
+            (burst.attachment, burst.pane, burst.revision) != (attachment, pane, revision)
+        });
         self.bursts.len() != before
     }
 
     /// The tick `pane`'s ripple started on and which way it runs, while it runs.
-    pub fn ripple(&self, pane: PaneId) -> Option<(u64, HandoffDirection)> {
+    pub fn ripple(
+        &self,
+        attachment: AttachmentId,
+        pane: PaneId,
+    ) -> Option<(u64, HandoffDirection)> {
         self.bursts
             .iter()
-            .find(|burst| burst.pane == pane)
+            .find(|burst| (burst.attachment, burst.pane) == (attachment, pane))
             .map(|burst| (burst.start_tick, burst.direction))
     }
 }
@@ -211,21 +227,34 @@ mod agent_handoff_tests {
     #[test]
     fn a_pane_restarts_its_own_ripple_and_never_cuts_another_short() {
         let mut handoff = AgentHandoff::default();
-        let first = handoff.start(1, 10, Receive);
-        let second = handoff.start(2, 12, Receive);
+        let first = handoff.start(0, 1, 10, Receive);
+        let second = handoff.start(0, 2, 12, Receive);
         assert_eq!(
-            handoff.ripple(1),
+            handoff.ripple(0, 1),
             Some((10, Receive)),
             "pane 2 leaves pane 1's ripple running"
         );
 
-        let restarted = handoff.start(1, 20, Receive);
-        assert_eq!(handoff.ripple(1), Some((20, Receive)));
-        assert!(!handoff.end(1, first), "the first ripple's end is stale");
-        assert_eq!(handoff.ripple(1), Some((20, Receive)));
+        let restarted = handoff.start(0, 1, 20, Receive);
+        assert_eq!(handoff.ripple(0, 1), Some((20, Receive)));
+        assert!(!handoff.end(0, 1, first), "the first ripple's end is stale");
+        assert_eq!(handoff.ripple(0, 1), Some((20, Receive)));
 
-        assert!(handoff.end(2, second));
-        assert!(handoff.end(1, restarted));
-        assert_eq!(handoff.ripple(1), None);
+        assert!(handoff.end(0, 2, second));
+        assert!(handoff.end(0, 1, restarted));
+        assert_eq!(handoff.ripple(0, 1), None);
+    }
+
+    #[test]
+    fn a_ripple_stays_with_its_session_when_another_has_the_same_pane() {
+        let mut handoff = AgentHandoff::default();
+        let revision = handoff.start(0, 2, 10, Receive);
+        assert_eq!(
+            handoff.ripple(1, 2),
+            None,
+            "session 1's pane 2 is another pane"
+        );
+        assert!(!handoff.end(1, 2, revision));
+        assert_eq!(handoff.ripple(0, 2), Some((10, Receive)));
     }
 }

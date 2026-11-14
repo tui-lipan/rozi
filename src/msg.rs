@@ -631,6 +631,7 @@ pub enum Msg {
     SubmitRecordingMark,
     /// A mark's blink on the recording dot is over, unless a later mark restarted it.
     AgentHandoffEnded {
+        attachment: crate::state::AttachmentId,
         pane: crate::pane::id::PaneId,
         revision: u64,
     },
@@ -961,6 +962,7 @@ pub enum Msg {
     AgentRequestsChanged {
         epoch: u64,
         requests: Vec<crate::control::AgentRequestSummary>,
+        server_now_unix_ms: u64,
     },
     /// The deployed actions a session offers for the palette.
     SessionActions {

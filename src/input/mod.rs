@@ -457,6 +457,10 @@ impl Action {
     /// negotiated [`crate::session::protocol::Capability`].
     pub const fn required_capability(self) -> Option<crate::session::protocol::Capability> {
         match self {
+            // Listed from the requests the session sends, which an older server never does.
+            Action::OpenAgentConversations => {
+                Some(crate::session::protocol::Capability::AgentRequestUpdates)
+            }
             Action::Spawn
             | Action::SpawnFloat
             | Action::RespawnPane
@@ -496,7 +500,6 @@ impl Action {
             | Action::OpenSessionPicker
             | Action::OpenPorts
             | Action::OpenAgentPicker
-            | Action::OpenAgentConversations
             | Action::FocusNextAgentNeedingAttention
             | Action::OpenCollaborators
             | Action::RenameSession

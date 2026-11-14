@@ -24,6 +24,13 @@ impl PaneLinks {
     }
 }
 
+/// Now on the session server's clock, the clock the requests' timestamps are on: its time when it
+/// last sent them, advanced by how long ago that was here. `None` before the first list arrives.
+pub(crate) fn server_now_ms(state: &State) -> Option<u64> {
+    let (server_ms, received) = state.attachment.agent_requests_clock?;
+    Some(server_ms.saturating_add(received.elapsed().as_millis() as u64))
+}
+
 /// The session's requests as this client last heard of them.
 pub(crate) fn requests(state: &State) -> &[AgentRequestSummary] {
     &state.attachment.agent_requests
@@ -126,25 +133,25 @@ pub(crate) fn pane_of(state: &State, agent: &AgentRef) -> Option<PaneId> {
         .map(|pane| pane.id)
 }
 
-/// What a request calls one side of it: the agent's name and its pane, or [`OUTSIDE`] for a
-/// request asked from outside any agent.
-pub(crate) fn agent_name(state: &State, agent: Option<&AgentRef>) -> String {
+/// What a request calls one side of it: the name the server recorded when it was asked, else the
+/// agent's name while that exact agent still runs, with its pane either way; [`OUTSIDE`] for a
+/// request asked from outside any agent. Never the name of whatever runs in that pane now: a
+/// request from a replaced agent must not read as one from its successor.
+pub(crate) fn agent_name(
+    state: &State,
+    agent: Option<&AgentRef>,
+    recorded: Option<&str>,
+) -> String {
     let Some(agent) = agent else {
         return OUTSIDE.to_string();
     };
-    let label = panes(state).find_map(|pane| {
-        let runtimes = pane.agent_runtimes();
-        runtimes
-            .iter()
-            .find(|runtime| {
-                runtime.reference.pane == agent.pane && runtime.reference.slot == agent.slot
-            })
-            .or_else(|| {
-                runtimes
-                    .iter()
-                    .find(|runtime| runtime.reference.pane == agent.pane)
-            })
-            .map(|runtime| runtime.label.clone())
+    let label = recorded.map(str::to_string).or_else(|| {
+        panes(state).find_map(|pane| {
+            pane.agent_runtimes()
+                .into_iter()
+                .find(|runtime| runtime.reference == *agent)
+                .map(|runtime| runtime.label)
+        })
     });
     match label {
         Some(label) => format!("{label} ({})", agent.pane.pane_id),
@@ -264,6 +271,8 @@ mod tests {
             parent: None,
             from: from.map(|pane| AgentRef::for_test(pane, 1, None)),
             to: AgentRef::for_test(to, 1, None),
+            from_label: None,
+            to_label: None,
             state,
             reason: None,
             created_at_unix_ms: 0,
@@ -338,6 +347,19 @@ mod tests {
         // has no pane to receive it.
         assert_eq!(pairs, [(Some(1), 2), (Some(3), 1)]);
         assert!(handoffs(&after, &after).is_empty());
+    }
+
+    #[test]
+    fn ages_run_on_the_servers_clock_not_this_machines() {
+        let mut state = State::new(
+            crate::config::Config::default(),
+            tui_lipan::prelude::Theme::default(),
+        );
+        assert_eq!(server_now_ms(&state), None);
+        // A server whose clock reads 1970 plus five seconds, far behind this machine's.
+        state.attachment.agent_requests_clock = Some((5_000, std::time::Instant::now()));
+        let now = server_now_ms(&state).unwrap();
+        assert!((5_000..6_000).contains(&now), "{now}");
     }
 
     #[test]

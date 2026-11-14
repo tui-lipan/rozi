@@ -1136,9 +1136,14 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             }
             ServerMessage::SessionEvent { event } => Msg::SessionEvent { epoch, event },
             ServerMessage::SessionActions { actions } => Msg::SessionActions { epoch, actions },
-            ServerMessage::AgentRequestsChanged { requests } => {
-                Msg::AgentRequestsChanged { epoch, requests }
-            }
+            ServerMessage::AgentRequestsChanged {
+                requests,
+                server_now_unix_ms,
+            } => Msg::AgentRequestsChanged {
+                epoch,
+                requests,
+                server_now_unix_ms,
+            },
         },
     }
 }

@@ -135,6 +135,10 @@ fn requests_reach_a_target_one_turn_at_a_time() {
     let second = rig.ask(Some(2), 3, "and the lexer");
     assert_eq!(first.state, AgentRequestState::Queued);
     assert_eq!(first.reason.as_deref(), Some("the agent is working"));
+    // Both sides are named as they were when it was asked, so the request keeps naming them after
+    // either agent is gone.
+    assert_eq!(first.from_label.as_deref(), Some("Claude Code"));
+    assert_eq!(first.to_label.as_deref(), Some("Claude Code"));
 
     rig.set_state(3, DetectedAgentState::Idle);
     assert_eq!(rig.request(&first.id).state, AgentRequestState::Active);
@@ -250,7 +254,7 @@ fn request_lists(server: &SessionServer, client: ClientId) -> Vec<Vec<String>> {
         .into_iter()
         .filter_map(|frame| match frame {
             DecodedOutboxFrame::Control(message) => match *message {
-                protocol::ServerMessage::AgentRequestsChanged { requests } => {
+                protocol::ServerMessage::AgentRequestsChanged { requests, .. } => {
                     Some(requests.into_iter().map(|request| request.id).collect())
                 }
                 _ => None,
@@ -456,6 +460,8 @@ fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
                 from_native_session: None,
                 to: to.clone(),
                 to_native_session: None,
+                from_label: None,
+                to_label: None,
                 prompt: String::new(),
                 state: AgentRequestState::Answered,
                 reason: None,

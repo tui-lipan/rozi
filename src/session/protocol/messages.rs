@@ -773,6 +773,9 @@ pub enum ServerMessage {
     /// most recently settled. The whole list each time, sent on attach and whenever it changes.
     AgentRequestsChanged {
         requests: Vec<crate::control::AgentRequestSummary>,
+        /// The server's clock when it sent this, in the same Unix milliseconds as the requests'
+        /// timestamps, so a client on another machine reckons ages from the server's clock.
+        server_now_unix_ms: u64,
     },
     /// Drag-and-drop escape codes (OSC 72) a pane's program wrote, for the client that owns the
     /// pane's drag: the last one to send [`ClientMessage::DragAndDrop`] to it.

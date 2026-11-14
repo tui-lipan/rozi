@@ -153,14 +153,16 @@ pub(crate) fn agent_requests_changed(
     ctx: &mut Context<crate::app::AppRoot>,
     epoch: u64,
     requests: Vec<crate::control::AgentRequestSummary>,
+    server_now_unix_ms: u64,
 ) -> Update {
     let Some(attachment) = ctx.state.attachment_for_epoch_mut(epoch) else {
         return Update::none();
     };
+    attachment.agent_requests_clock = Some((server_now_unix_ms, std::time::Instant::now()));
     let previous = std::mem::replace(&mut attachment.agent_requests, requests);
     // Only the session on screen draws marks, so only its handoffs light them.
     if epoch != ctx.state.runtime_epoch
-        || !crate::layout::anim::screenshot_flash_enabled(ctx.state.config.animations)
+        || !(ctx.state.config.animations.enabled && ctx.state.config.animations.agent_handoff)
     {
         return Update::full();
     }
@@ -184,7 +186,9 @@ pub(crate) fn agent_requests_changed(
         .map(|(pane, direction)| {
             (
                 pane,
-                ctx.state.agent_handoff.start(pane, start_tick, direction),
+                ctx.state
+                    .agent_handoff
+                    .start(epoch, pane, start_tick, direction),
             )
         })
         .collect();
@@ -193,7 +197,11 @@ pub(crate) fn agent_requests_changed(
             for (pane, revision) in ends {
                 link.send_after(
                     AGENT_HANDOFF,
-                    crate::Msg::AgentHandoffEnded { pane, revision },
+                    crate::Msg::AgentHandoffEnded {
+                        attachment: epoch,
+                        pane,
+                        revision,
+                    },
                 );
             }
         },
@@ -208,10 +216,11 @@ const AGENT_HANDOFF: std::time::Duration = std::time::Duration::from_millis(
 /// The ripple has played: drop it, so its pane stops asking for effect ticks.
 pub(crate) fn agent_handoff_ended(
     ctx: &mut Context<crate::app::AppRoot>,
+    attachment: crate::state::AttachmentId,
     pane: crate::pane::id::PaneId,
     revision: u64,
 ) -> Update {
-    if ctx.state.agent_handoff.end(pane, revision) {
+    if ctx.state.agent_handoff.end(attachment, pane, revision) {
         Update::full()
     } else {
         Update::none()

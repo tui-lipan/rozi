@@ -88,19 +88,11 @@ fn handoff_ripple(
     let reach = w.hypot(h) + 2.0;
     let (radius, strength) = match direction {
         HandoffDirection::Receive => (
-            RippleRadius::Collapse {
-                max_radius: reach,
-                duration_ticks: HANDOFF_RIPPLE_TICKS,
-                start_tick,
-            },
+            RippleRadius::collapse(reach, HANDOFF_RIPPLE_TICKS, start_tick),
             1.0,
         ),
         HandoffDirection::Send => (
-            RippleRadius::Once {
-                max_radius: reach * 0.75,
-                duration_ticks: HANDOFF_RIPPLE_TICKS,
-                start_tick,
-            },
+            RippleRadius::once(reach * 0.75, HANDOFF_RIPPLE_TICKS, start_tick),
             0.7,
         ),
     };

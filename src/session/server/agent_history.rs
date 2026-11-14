@@ -762,11 +762,13 @@ impl SessionServer {
     }
 }
 
+/// The agent whose terminal answers a prompted turn that ended with no response. A published
+/// conversation qualifies too: a prompt only types into the conversation on screen, and a
+/// publisher that sends its own response sends it with the completed row.
 pub(super) fn history_subject(result: &AgentWaitResult) -> Option<protocol::AgentRef> {
     let reference = result.reference.as_ref()?;
     let agent = result.agent.as_ref()?;
     (result.response.is_none()
-        && reference.slot.is_none()
         && matches!(
             agent.state,
             protocol::AgentState::Idle | protocol::AgentState::Done

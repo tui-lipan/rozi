@@ -787,9 +787,9 @@ pub struct PaneConfig {
     pub title_style: CapStyle,
     /// End-cap style for the workbar's colored badges (the title chip and mode chips).
     pub workbar_badge_style: CapStyle,
-    /// Whether trailing workbar badges chain into a powerline (no gap between chips, each cap drawn
-    /// over its left neighbor's color) instead of standing apart with a gap. Independent of
-    /// `workbar_badge_style`, which only controls the pill shape.
+    /// Whether adjacent center and trailing workbar badges chain into a powerline (no gap between
+    /// chips, each cap drawn over its left neighbor's color) instead of standing apart with a gap.
+    /// Independent of `workbar_badge_style`, which only controls the pill shape.
     pub workbar_powerline: bool,
     /// End-cap style for workspace tabs.
     pub workbar_tab_style: CapStyle,

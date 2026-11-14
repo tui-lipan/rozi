@@ -52,17 +52,21 @@ pub enum Capability {
     /// The server serves `agent-reply-later`: an agent keeps a request open for a reply after its
     /// turn ends.
     AgentReplyLater,
+    /// [`super::PaneMeta::program_title`] carries the program's own title, so a client can tell it
+    /// from a name the user gave the pane. Without it, `title` is the only title there is.
+    PaneProgramTitle,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 8] = [
+    pub const ALL: [Capability; 9] = [
         Capability::AgentReplyLater,
         Capability::AgentRequests,
         Capability::AgentSummaries,
         Capability::ClientHandoff,
         Capability::DragAndDrop,
         Capability::GraphicsRootFrameEdits,
+        Capability::PaneProgramTitle,
         Capability::ProjectSummaries,
         Capability::RuntimeMetrics,
     ];
@@ -78,6 +82,7 @@ impl Capability {
             Capability::DragAndDrop => "drag-and-drop",
             Capability::AgentRequests => "agent-requests",
             Capability::AgentReplyLater => "agent-reply-later",
+            Capability::PaneProgramTitle => "pane-program-title",
         }
     }
 
@@ -91,7 +96,7 @@ impl Capability {
             | Self::ClientHandoff => "0.0.44",
             Self::DragAndDrop => "0.0.46",
             Self::AgentRequests => "0.0.47",
-            Self::AgentReplyLater => "0.0.48",
+            Self::AgentReplyLater | Self::PaneProgramTitle => "0.0.48",
         }
     }
 

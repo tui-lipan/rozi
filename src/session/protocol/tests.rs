@@ -299,6 +299,7 @@ fn pane_meta_from_older_peer_defaults_original_user() {
         rows: 24,
         pid: Some(42),
         title: Some("user@host:~".to_string()),
+        program_title: None,
         original_user: Some("user".to_string()),
         exited: None,
         logging: false,

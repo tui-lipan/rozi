@@ -314,6 +314,7 @@ pub(crate) struct OverlayPalette<'a, T> {
     initial_query: Cow<'a, str>,
     empty_text: Option<Cow<'a, str>>,
     preserve_groups: Option<bool>,
+    preserve_item_order: bool,
     on_query_change: Option<Callback<Arc<str>>>,
     on_select: Option<Callback<SearchEvent<T>>>,
     on_activate: Option<Callback<SearchEvent<T>>>,
@@ -348,6 +349,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             initial_query: Cow::Borrowed(""),
             empty_text: None,
             preserve_groups: None,
+            preserve_item_order: false,
             on_query_change: None,
             on_select: None,
             on_activate: None,
@@ -447,6 +449,13 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
         self
     }
 
+    /// Keep matching rows in the order given instead of ranking them, for a list whose source
+    /// has already ranked it.
+    pub(crate) fn preserve_item_order(mut self, preserve: bool) -> Self {
+        self.preserve_item_order = preserve;
+        self
+    }
+
     pub(crate) fn on_query_change(mut self, callback: Callback<Arc<str>>) -> Self {
         self.on_query_change = Some(callback);
         self
@@ -492,6 +501,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             initial_query,
             empty_text,
             preserve_groups,
+            preserve_item_order,
             on_query_change,
             on_select,
             on_activate,
@@ -518,6 +528,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             .placeholder(placeholder.into_owned())
             .initial_query(initial_query.into_owned())
             .initial_selected_item_index(selected)
+            .preserve_item_order(preserve_item_order)
             .sync_selection(true);
         if let Some(key) = item_key {
             palette = palette.item_key(key);

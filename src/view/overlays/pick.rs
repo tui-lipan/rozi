@@ -8,6 +8,20 @@ const PICK_DESCRIPTION_GAP: usize = 2;
 /// A description shorter than this says nothing worth crowding the label for.
 const PICK_MIN_DESCRIPTION: usize = 8;
 
+/// A row as the palette holds it: the search answer it came with, its id, and its index in the
+/// page.
+///
+/// The palette keeps its highlight on the same row when the list changes, which is right for a
+/// refreshed list. A new search answer is a different, ranked list: [`pick_item_key`] keys each
+/// row by its answer too, so the highlight keeps its place there, on the best match unless the
+/// user moved it, instead of following one row down the new ranking.
+#[derive(Clone, PartialEq)]
+struct PickItem {
+    answer: u64,
+    id: Arc<str>,
+    index: usize,
+}
+
 /// Fit a producer-supplied description into what the label leaves behind.
 ///
 /// Every other picker in rozi puts a short fixed token in this slot — `busy`, `restorable`, a
@@ -32,6 +46,10 @@ pub(super) fn fit_description(label: &str, description: &str, width: u16) -> Str
     fitted
 }
 
+fn pick_item_key(item: &SearchItem<PickItem>) -> Arc<str> {
+    Arc::from(format!("{}\0{}", item.value.answer, item.value.id))
+}
+
 pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(pick) = ctx.state.pick.as_ref() else {
         return Text::new("").into();
@@ -44,14 +62,23 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
     let restore_query = page.restore_query.clone();
     let rows = page.rows.clone();
     let has_groups = rows.iter().any(|r| r.group.is_some());
-    let selected_index = Some(page.selected);
+    let answer = page.rows_seq;
+    let item_value = |index: usize, row: &crate::control::pick::PickRow| PickItem {
+        answer,
+        id: Arc::from(row.id.as_deref().unwrap_or(&row.label)),
+        index,
+    };
+    // A caller that hears the search text sends its rows ranked for it; ranking them again here,
+    // by match or by priority, would reorder the list a moment after each keystroke.
+    let rank = !pick.report_query;
 
     let entries = if has_groups {
-        let mut groups: Vec<(String, Vec<SearchEntry<usize>>)> = Vec::new();
+        let mut groups: Vec<(String, Vec<SearchEntry<PickItem>>)> = Vec::new();
         for (index, row) in rows.iter().enumerate() {
             let group_name = row.group.as_deref().unwrap_or("Other").to_string();
-            let mut item = SearchItem::new(row.label.clone(), index).active(row.active);
-            if let Some(priority) = row.priority {
+            let mut item =
+                SearchItem::new(row.label.clone(), item_value(index, row)).active(row.active);
+            if let Some(priority) = row.priority.filter(|_| rank) {
                 item = item.priority(priority);
             }
             let description = fit_description(
@@ -66,7 +93,15 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
                 item = item.description(picker_description(description));
             }
             let entry = SearchEntry::Item(item);
-            if let Some((_, items)) = groups.iter_mut().find(|(name, _)| *name == group_name) {
+            // A reporting caller sent its rows ranked, so a group gathers only the rows that
+            // follow one another; gathering a later row under an earlier heading would reorder
+            // them.
+            let existing = if rank {
+                groups.iter_mut().find(|(name, _)| *name == group_name)
+            } else {
+                groups.last_mut().filter(|(name, _)| *name == group_name)
+            };
+            if let Some((_, items)) = existing {
                 items.push(entry);
             } else {
                 groups.push((group_name, vec![entry]));
@@ -77,8 +112,9 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
         rows.iter()
             .enumerate()
             .map(|(index, row)| {
-                let mut item = SearchItem::new(row.label.clone(), index).active(row.active);
-                if let Some(priority) = row.priority {
+                let mut item =
+                    SearchItem::new(row.label.clone(), item_value(index, row)).active(row.active);
+                if let Some(priority) = row.priority.filter(|_| rank) {
                     item = item.priority(priority);
                 }
                 let description = fit_description(
@@ -97,13 +133,25 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
             .collect::<Vec<_>>()
     };
 
+    // Groups can put rows in a different order from the page's, and the palette counts its
+    // selection in its own order.
+    let selected_index = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            SearchEntry::Item(item) => Some(item.value.index),
+            _ => None,
+        })
+        .position(|index| index == page.selected);
+
     let disabled_style = fg_only(&ctx.state.theme.muted);
     let item_style = fg_only(&ctx.state.theme.primary);
     let description_style = fg_only(&ctx.state.theme.muted);
     let error_bg = ctx.state.theme.status.error;
     let armed_row = pick.pending_action.as_ref().and_then(|(_, armed)| {
         rows.iter()
-            .position(|row| row.id.as_ref().unwrap_or(&row.label) == armed)
+            .enumerate()
+            .find(|(_, row)| row.id.as_ref().unwrap_or(&row.label) == armed)
+            .map(|(index, row)| item_value(index, row))
     });
     let mut actions = vec![
         OverlayAction::new(
@@ -151,11 +199,13 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
                 .callback(|query: std::sync::Arc<str>| Msg::PickQueryChanged(query.to_string())),
         )
         .preserve_groups(has_groups)
+        .preserve_item_order(!rank)
+        .item_key(pick_item_key)
         .selected(selected_index)
         .actions(actions)
         .armed_row(armed_row)
-        .render_item(Arc::new(move |item: &SearchItem<usize>, _highlight| {
-            let row = &rows[item.value];
+        .render_item(Arc::new(move |item: &SearchItem<PickItem>, _highlight| {
+            let row = &rows[item.value.index];
             let disabled_reason = row.disabled.as_deref();
             // Fitted here as well as on the entry: this custom renderer is what the palette
             // actually draws, and it reads the row out of state rather than using the
@@ -188,11 +238,11 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
         }))
         .on_select(
             ctx.link()
-                .callback(|event: SearchEvent<usize>| Msg::PickSelect(event.item.value)),
+                .callback(|event: SearchEvent<PickItem>| Msg::PickSelect(event.item.value.index)),
         )
         .on_activate(
             ctx.link()
-                .callback(|event: SearchEvent<usize>| Msg::PickActivate(event.item.value)),
+                .callback(|event: SearchEvent<PickItem>| Msg::PickActivate(event.item.value.index)),
         );
     if let Some(text) = pick_empty_text(pick) {
         palette = palette.empty_text(text);

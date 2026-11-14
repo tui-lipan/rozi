@@ -279,26 +279,34 @@ fn a_promised_answer_fails_when_its_agent_changes_conversation() {
     let target = rig.agent(3);
     info(rig.server.reply_later(Some(target.clone()), &request.id));
 
-    let report_conversation = |rig: &mut Rig, native_session: &str| {
-        let pane = rig.server.panes.get_mut(&3).unwrap();
-        pane.runtime.integration = Some(Box::new(protocol::AgentIntegrationReport {
+    let generation = rig.server.panes[&3].generation;
+    let mut report = |seq, native_session: &str| {
+        let update = super::super::runtime::AgentIntegrationUpdate {
+            agent: Some("claude".into()),
             integration: "hooks".into(),
-            identity: protocol::AgentIdentity::new("claude", "Claude Code"),
-            reference: target.clone(),
-            state: protocol::AgentState::Working,
+            state: Some(protocol::AgentState::Working),
             reason: None,
             native_session: Some(native_session.into()),
             unless_quiet: None,
-            seq: 1,
-            reported_at_unix_ms: 0,
-        }));
-        rig.server.pump_agent_requests();
+            ended: false,
+            seq,
+            response: None,
+        };
+        rig.server
+            .apply_agent_integration(None, 3, generation, update)
+            .unwrap();
     };
-    // Delivered before the agent named its conversation, the request binds to the first one.
-    report_conversation(&mut rig, "conversation a");
-    assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
-    report_conversation(&mut rig, "conversation b");
-    assert_eq!(rig.request(&request.id).state, AgentRequestState::Failed);
+    // Delivered before the agent named its conversation, the request binds to the first one. Two
+    // reports read in one server iteration still see it bound in between.
+    report(1, "conversation a");
+    report(2, "conversation b");
+    rig.server.pump_agent_requests();
+    let failed = rig.request(&request.id);
+    assert_eq!(failed.state, AgentRequestState::Failed);
+    assert_eq!(
+        failed.reason.as_deref(),
+        Some("the agent moved to another conversation")
+    );
 }
 
 #[test]

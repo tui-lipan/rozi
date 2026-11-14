@@ -928,7 +928,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::AgentRequestsChanged { epoch, requests } => {
             session::agent_requests_changed(ctx, epoch, requests)
         }
-        Msg::AgentLinkBlinkEnded { revision } => session::agent_link_blink_ended(ctx, revision),
+        Msg::AgentHandoffEnded { revision } => session::agent_handoff_ended(ctx, revision),
         Msg::ControlCallerGone { caller } => crate::ops::attached_control::caller_gone(ctx, caller),
         Msg::RunPaletteAction(id) => crate::ops::attached_control::run_palette_action(ctx, id),
         Msg::SessionInputMarked { epoch: _, token } => {

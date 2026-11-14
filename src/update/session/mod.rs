@@ -172,32 +172,31 @@ pub(crate) fn agent_requests_changed(
     if panes.is_empty() {
         return Update::full();
     }
-    let blink = &mut ctx.state.agent_link_blink;
-    blink.revision = blink.revision.wrapping_add(1);
-    blink.panes = panes;
-    let revision = blink.revision;
+    let start_tick = ctx.effect_phase();
+    let handoff = &mut ctx.state.agent_handoff;
+    handoff.revision = handoff.revision.wrapping_add(1);
+    handoff.panes = panes;
+    handoff.start_tick = start_tick;
+    let revision = handoff.revision;
     Update::full().merge(Update::with_command(Command::spawn(
         move |link: CommandLink<crate::Msg>| {
-            link.send_after(
-                AGENT_LINK_BLINK,
-                crate::Msg::AgentLinkBlinkEnded { revision },
-            );
+            link.send_after(AGENT_HANDOFF, crate::Msg::AgentHandoffEnded { revision });
         },
     )))
 }
 
-/// How long a request mark stays lit after a handoff.
-const AGENT_LINK_BLINK: std::time::Duration = std::time::Duration::from_millis(700);
+/// How long a handoff ripple plays, with a frame to spare: 16 ms effect ticks.
+const AGENT_HANDOFF: std::time::Duration = std::time::Duration::from_millis(
+    crate::view::pane_particles::HANDOFF_RIPPLE_TICKS as u64 * 16 + 50,
+);
 
-pub(crate) fn agent_link_blink_ended(
-    ctx: &mut Context<crate::app::AppRoot>,
-    revision: u64,
-) -> Update {
-    let blink = &mut ctx.state.agent_link_blink;
-    if blink.revision != revision || blink.panes.is_empty() {
+/// The ripple has played: drop it, so its pane stops asking for effect ticks.
+pub(crate) fn agent_handoff_ended(ctx: &mut Context<crate::app::AppRoot>, revision: u64) -> Update {
+    let handoff = &mut ctx.state.agent_handoff;
+    if handoff.revision != revision || handoff.panes.is_empty() {
         return Update::none();
     }
-    blink.panes.clear();
+    handoff.panes.clear();
     Update::full()
 }
 

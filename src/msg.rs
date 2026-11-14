@@ -630,7 +630,7 @@ pub enum Msg {
     RecordingMarkChanged(InputEvent),
     SubmitRecordingMark,
     /// A mark's blink on the recording dot is over, unless a later mark restarted it.
-    AgentLinkBlinkEnded {
+    AgentHandoffEnded {
         revision: u64,
     },
     RecordingMarkBlinkEnded {

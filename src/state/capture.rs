@@ -139,11 +139,13 @@ pub struct UiRecordingSeen {
     pub overlay: Option<&'static str>,
 }
 
-/// The panes whose request marks light up for a moment: a request just reached their agent, or
-/// its answer just came back.
+/// The panes a ripple runs around: a request just reached their agent, or its answer just came
+/// back. Cleared once the ripple has played, so nothing keeps ticking.
 #[derive(Clone, Debug, Default)]
-pub struct AgentLinkBlink {
+pub struct AgentHandoff {
     pub panes: Vec<PaneId>,
+    /// The effect tick the ripple started on.
+    pub start_tick: u64,
     pub revision: u64,
 }
 

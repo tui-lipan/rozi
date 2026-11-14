@@ -133,8 +133,7 @@ fn push_title_status(
 }
 
 /// The requests between this pane's agents and others: `→2` asked and waiting, `←1` asked of it.
-/// They wear the title's own colour, as everything else in it does, and light up for a moment
-/// when a request reaches this pane's agent or its answer comes back.
+/// They wear the title's own colour, as everything else in it does.
 fn push_agent_links(
     ctx: &Context<AppRoot>,
     pane: &Pane,
@@ -146,7 +145,6 @@ fn push_agent_links(
     if links.is_empty() {
         return;
     }
-    let lit = ctx.state.agent_link_blink.panes.contains(&pane.id);
     let marks = [(ASKING, links.asking), (ANSWERING, links.answering)]
         .into_iter()
         .filter(|(_, count)| *count > 0)
@@ -157,11 +155,7 @@ fn push_agent_links(
     if !gap.is_empty() {
         spans.push(Span::new(gap));
     }
-    spans.push(if lit {
-        Span::new(marks).style(Style::new().reverse().bold())
-    } else {
-        Span::new(marks)
-    });
+    spans.push(Span::new(marks));
 }
 
 /// What ends a title row: the pane's badge, preformatted by the layout, then the recording marker.

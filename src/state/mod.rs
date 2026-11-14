@@ -249,7 +249,7 @@ pub struct State {
     /// The Mark pane recording prompt, while it is open.
     pub recording_mark: Option<RecordingMarkPrompt>,
     pub recording_mark_blink: RecordingMarkBlink,
-    pub agent_link_blink: AgentLinkBlink,
+    pub agent_handoff: AgentHandoff,
     /// This UI's recording of itself, while one runs.
     pub ui_recording: Option<UiRecording>,
     /// The id the next UI recording takes.
@@ -719,7 +719,7 @@ impl State {
             screenshot: ScreenshotState::default(),
             recording_mark: None,
             recording_mark_blink: RecordingMarkBlink::default(),
-            agent_link_blink: AgentLinkBlink::default(),
+            agent_handoff: AgentHandoff::default(),
             ui_recording: None,
             next_ui_recording: 0,
             ui_recording_finishing: Vec::new(),

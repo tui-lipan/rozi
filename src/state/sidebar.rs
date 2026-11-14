@@ -315,7 +315,8 @@ impl crate::state::State {
                         && !tree.bare
                         && tree.lock.as_ref().is_none_or(|lock| lock.stale)
                         && sessions.is_empty()
-                        && !removing,
+                        // An unlock in the queue counts too: a removal on top of it is refused.
+                        && !self.worktree_changing(&tree.path, target.as_ref()),
                     force: listing.force_remove.as_ref() == Some(&tree.path),
                     removing,
                     sessions,

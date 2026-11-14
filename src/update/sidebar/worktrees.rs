@@ -542,6 +542,9 @@ mod tests {
             stale.lock = stale_lock();
             picker.entries = vec![tree(REPO, false), stale];
             picker.selected = 1;
+            let listing = &mut backend.state_mut().sidebar.worktrees;
+            listing.entries = picker.entries.clone();
+            listing.loaded = true;
             backend.state_mut().worktree_picker = Some(picker);
 
             backend.dispatch(Msg::WorktreeRemoveSelected).unwrap();
@@ -594,6 +597,16 @@ mod tests {
                 })
                 .collect();
             assert_eq!(unlocks, vec![LINKED.to_string()]);
+            // Nor does the tab offer a removal that the queued unlock would refuse.
+            let closable = |state: &crate::state::State| {
+                state.worktree_tab_items().iter().any(|item| {
+                    matches!(item, crate::state::WorktreeTabItem::Checkout(row)
+                        if row.tree.path == LINKED && row.closable)
+                })
+            };
+            assert!(!closable(backend.state()));
+            backend.state_mut().worktree_operations.clear();
+            assert!(closable(backend.state()));
         });
     }
 

@@ -108,11 +108,13 @@ fn code(response: ControlResponse) -> Option<ControlErrorCode> {
 #[test]
 fn a_request_follows_a_detected_agent_into_its_published_row() {
     // Each publishes the conversation on screen beside a background one; those marked `true`
-    // keep the request, the rest are a replacement.
+    // keep the request, the rest are a replacement. A claim on the pane is in place before the
+    // request, so the request knows the conversation by the id the claim reports.
     for (scenario, follows) in [
         ("handoff", true),
         ("program status", true),
         ("hook on the conversation", true),
+        ("hook on a moved conversation", true),
         ("new conversation", true),
         ("hook on another conversation", false),
         ("nothing on screen", false),
@@ -122,12 +124,42 @@ fn a_request_follows_a_detected_agent_into_its_published_row() {
         let mut rig = Rig::new(&[3]);
         let (client, _stream) = super::super::tests::attach_client(&mut rig.server);
         let detected = rig.agent(3);
+        let claim = |name: &str, native_session: Option<&str>| {
+            Some(Box::new(protocol::AgentIntegrationReport {
+                integration: name.into(),
+                identity: protocol::AgentIdentity::new("claude", "Claude Code"),
+                reference: detected.clone(),
+                state: protocol::AgentState::Idle,
+                reason: None,
+                native_session: native_session.map(Into::into),
+                unless_quiet: None,
+                seq: 1,
+                reported_at_unix_ms: 0,
+            }))
+        };
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        pane.runtime.integration = match scenario {
+            "program status" => claim(super::super::runtime::PROGRAM_STATUS_INTEGRATION, None),
+            "hook on the conversation" => claim("hook-1", Some("first-thread")),
+            // A conversation moved to another process: its hooks report under the new process's
+            // session, while the row keeps the one it resumes.
+            "hook on a moved conversation" => claim("hook-1", Some("forked")),
+            "hook on another conversation" => claim("hook-1", Some("background")),
+            _ => None,
+        };
         let request = rig.ask(None, 3, "What is 2+3?");
-        assert_eq!(request.state, AgentRequestState::Active);
+        assert_eq!(request.state, AgentRequestState::Active, "{scenario}");
         assert!(rig.typed_into(3, "What is 2+3?"));
+        let set_claim_state = |rig: &mut Rig, state| {
+            let pane = rig.server.panes.get_mut(&3).unwrap();
+            if let Some(report) = pane.runtime.integration.as_mut() {
+                report.state = state;
+            }
+        };
+        set_claim_state(&mut rig, protocol::AgentState::Working);
         rig.set_state(3, DetectedAgentState::Working);
 
-        let row = protocol::PublishedRow {
+        let mut row = protocol::PublishedRow {
             publisher: String::new(),
             kind: protocol::PublisherKind::Agent,
             id: "first-thread".into(),
@@ -142,6 +174,9 @@ fn a_request_follows_a_detected_agent_into_its_published_row() {
             cwd: None,
             project: None,
         };
+        if scenario == "hook on a moved conversation" {
+            row.live_session = Some("forked".into());
+        }
         let publisher = || super::super::runtime::PanePublisher {
             id: "sessions".into(),
             kind: protocol::PublisherKind::Agent,
@@ -152,34 +187,12 @@ fn a_request_follows_a_detected_agent_into_its_published_row() {
             id: "background".into(),
             active: false,
             native_session: Some("background".into()),
+            live_session: None,
             ..row.clone()
         };
         let mut rows = vec![row.clone(), background.clone()];
         let pane = rig.server.panes.get_mut(&3).unwrap();
-        let integration = |name: &str, native_session: Option<&str>| {
-            Some(Box::new(protocol::AgentIntegrationReport {
-                integration: name.into(),
-                identity: protocol::AgentIdentity::new("claude", "Claude Code"),
-                reference: detected.clone(),
-                state: protocol::AgentState::Working,
-                reason: None,
-                native_session: native_session.map(Into::into),
-                unless_quiet: None,
-                seq: 1,
-                reported_at_unix_ms: 0,
-            }))
-        };
         match scenario {
-            "program status" => {
-                pane.runtime.integration =
-                    integration(super::super::runtime::PROGRAM_STATUS_INTEGRATION, None);
-            }
-            "hook on the conversation" => {
-                pane.runtime.integration = integration("hook-1", Some("first-thread"));
-            }
-            "hook on another conversation" => {
-                pane.runtime.integration = integration("hook-1", Some("background"));
-            }
             "nothing on screen" => rows[0].active = false,
             "different agent" => {
                 pane.runtime.detected_agent.as_mut().unwrap().agent =
@@ -221,11 +234,13 @@ fn a_request_follows_a_detected_agent_into_its_published_row() {
             );
             continue;
         }
-        let pane = rig.server.panes.get_mut(&3).unwrap();
-        pane.screen_mut().process_bytes(b"5");
-        if let Some(report) = pane.runtime.integration.as_mut() {
-            report.state = protocol::AgentState::Idle;
-        }
+        rig.server
+            .panes
+            .get_mut(&3)
+            .unwrap()
+            .screen_mut()
+            .process_bytes(b"5");
+        set_claim_state(&mut rig, protocol::AgentState::Idle);
         let idle = protocol::PublishedRow {
             status: "idle".into(),
             ..row

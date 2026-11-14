@@ -146,7 +146,7 @@ impl AgentScratch {
         &mut self,
         runtime: &PaneRuntimeState,
         rows: &[protocol::PublishedRow],
-    ) -> Option<(u64, protocol::RowKey, Option<String>)> {
+    ) -> Option<RowHandoff> {
         if runtime.rows.iter().any(protocol::PublishedRow::is_agent)
             || self.reference_launch != runtime.agent_launch
         {
@@ -173,10 +173,17 @@ impl AgentScratch {
             return None;
         }
         let tracked = self.references.remove(&None)?;
-        let incarnation = tracked.incarnation;
-        let slot = row.key();
-        self.references.insert(Some(slot.clone()), tracked);
-        Some((incarnation, slot, row.native_session.clone()))
+        let handoff = RowHandoff {
+            incarnation: tracked.incarnation,
+            slot: row.key(),
+            old_session: runtime
+                .integration
+                .as_ref()
+                .and_then(|integration| integration.native_session.clone()),
+            new_session: row.native_session.clone(),
+        };
+        self.references.insert(Some(handoff.slot.clone()), tracked);
+        Some(handoff)
     }
 
     /// Track the pane-level reference an integration claim is bound to. The claim names its own
@@ -383,6 +390,15 @@ fn integration_has_strong_replacement_evidence(
         .detected_agent
         .as_ref()
         .is_some_and(|detected| detected.agent.id != integration.identity.id)
+}
+
+/// The detected agent's reference moving to the published row `slot`, and the ids its conversation
+/// goes by before and after.
+pub(super) struct RowHandoff {
+    incarnation: u64,
+    slot: protocol::RowKey,
+    old_session: Option<String>,
+    new_session: Option<String>,
 }
 
 /// One agent as [`AgentScratch::agent_states`] saw it.
@@ -1175,7 +1191,7 @@ impl SessionServer {
         retire_orphaned_row_reports(pane);
         let resume_changed = super::resurrect::resume_target(pane) != resume_before;
         let state = pane.runtime.clone();
-        if let Some((incarnation, slot, native_session)) = handoff {
+        if let Some(handoff) = handoff {
             let old = protocol::AgentRef {
                 pane: protocol::PaneRef {
                     session_instance,
@@ -1183,16 +1199,21 @@ impl SessionServer {
                     generation,
                 },
                 slot: None,
-                incarnation,
+                incarnation: handoff.incarnation,
             };
-            let new = protocol::AgentRef {
-                slot: Some(slot),
-                ..old.clone()
+            let handoff = super::responses::AgentHandoff {
+                new: protocol::AgentRef {
+                    slot: Some(handoff.slot),
+                    ..old.clone()
+                },
+                old,
+                old_session: handoff.old_session,
+                new_session: handoff.new_session,
             };
-            self.agent_requests.handoff(&old, &new, native_session);
-            self.handoff_agent_waits(&old, &new);
-            self.handoff_agent_history(&old, &new);
-            self.agent_responses.handoff(&old, &new);
+            self.agent_requests.handoff(&handoff);
+            self.handoff_agent_waits(&handoff);
+            self.handoff_agent_history(&handoff);
+            self.agent_responses.handoff(&handoff);
         }
         let message = self.finish_pane_runtime_change(owner, pane_id, generation, state, baseline);
         // The snapshot names the conversation a restore reopens. A publisher switching it is a

@@ -85,6 +85,13 @@ impl AgentTurnTracker {
         }
     }
 
+    /// Follow the agent to its published row's id for the conversation the fence is bound to.
+    pub(super) fn handoff(&mut self, handoff: &super::responses::AgentHandoff) {
+        if let Some(fence) = self.fence.as_mut() {
+            handoff.rename_session(&mut fence.native_session);
+        }
+    }
+
     /// Whether the agent has moved to a native session other than the one the fence is bound to.
     pub(super) fn native_session_changed(&self, native_session: &Option<String>) -> bool {
         self.fence.as_ref().is_some_and(|fence| {
@@ -128,14 +135,13 @@ enum WaitEvaluation {
 }
 
 impl SessionServer {
-    pub(super) fn handoff_agent_waits(
-        &mut self,
-        old: &protocol::AgentRef,
-        new: &protocol::AgentRef,
-    ) {
+    pub(super) fn handoff_agent_waits(&mut self, handoff: &super::responses::AgentHandoff) {
         for wait in self.agent_waits.values_mut() {
-            if matches!(&wait.subject, WaitSubject::Agent(reference) if reference == old) {
-                wait.subject = WaitSubject::Agent(new.clone());
+            if matches!(&wait.subject, WaitSubject::Agent(reference) if *reference == handoff.old) {
+                wait.subject = WaitSubject::Agent(handoff.new.clone());
+                if let Some(turn) = wait.turn.as_mut() {
+                    turn.handoff(handoff);
+                }
             }
         }
     }

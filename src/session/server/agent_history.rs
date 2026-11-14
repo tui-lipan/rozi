@@ -143,27 +143,23 @@ fn rendered_payload(
 }
 
 impl SessionServer {
-    pub(super) fn handoff_agent_history(
-        &mut self,
-        old: &protocol::AgentRef,
-        new: &protocol::AgentRef,
-    ) {
+    pub(super) fn handoff_agent_history(&mut self, handoff: &super::responses::AgentHandoff) {
+        let (old, new) = (&handoff.old, &handoff.new);
         for read in self.agent_history.values_mut() {
+            if read.wait.reference() != old {
+                continue;
+            }
+            handoff.rename_session(&mut read.wait.fence.native_session);
             match &mut read.wait.consumer {
-                HistoryConsumer::Request { reference, .. } if reference == old => {
-                    *reference = new.clone();
-                }
+                HistoryConsumer::Request { reference, .. } => *reference = new.clone(),
                 HistoryConsumer::Reply { result, .. } => {
-                    if result.reference.as_ref() == Some(old) {
-                        result.reference = Some(new.clone());
-                    }
+                    result.reference = Some(new.clone());
                     if let Some(agent) = &mut result.agent
                         && agent.reference == *old
                     {
                         agent.reference = new.clone();
                     }
                 }
-                _ => {}
             }
         }
     }

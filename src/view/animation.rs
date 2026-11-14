@@ -13,9 +13,12 @@ pub(crate) fn picker_animation(
     if !animations.enabled || style == anim::PickerAnimationStyle::Off {
         return None;
     }
+    // A picker that opens as another closes replaces it at once: animating both leaves the old
+    // one's remains over the new one.
     let animation = VisibilityAnimation::new()
         .enter(style.enter_transition())
-        .exit(style.exit_transition());
+        .exit(style.exit_transition())
+        .handoff();
     Some(match style {
         anim::PickerAnimationStyle::Portal | anim::PickerAnimationStyle::Scan => {
             animation.effect(move |context| {

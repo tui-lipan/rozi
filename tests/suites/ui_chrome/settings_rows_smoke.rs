@@ -102,7 +102,7 @@ fn list_gap_after_tabs(frame: &str) -> usize {
 #[test]
 fn settings_lists_both_effect_rows_with_their_current_modes() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 182);
+        let mut backend = settings_backend(100, 196);
         {
             let state = backend.state_mut();
             state.config.pane.alert_border = AlertMode::Static;
@@ -126,7 +126,7 @@ fn settings_lists_both_effect_rows_with_their_current_modes() {
 #[test]
 fn settings_marks_multi_value_rows_with_an_ellipsis() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 182);
+        let mut backend = settings_backend(100, 196);
         let frame = rendered_rows(&mut backend);
         assert!(
             setting_row(&frame, "Which-key").contains("Which-key…"),
@@ -166,7 +166,7 @@ fn settings_marks_multi_value_rows_with_an_ellipsis() {
 #[test]
 fn settings_rows_report_their_disabled_reasons() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 182);
+        let mut backend = settings_backend(100, 196);
         {
             let state = backend.state_mut();
             state.config.pane.border_mode = PaneBorderMode::None;
@@ -229,7 +229,7 @@ fn settings_keeps_both_effect_rows_on_a_narrow_viewport() {
 #[test]
 fn settings_all_keeps_every_control_available() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 182);
+        let mut backend = settings_backend(100, 196);
         backend
             .state_mut()
             .config
@@ -376,7 +376,7 @@ fn settings_all_keeps_every_control_available() {
 #[test]
 fn settings_omits_the_inner_header_that_repeats_the_active_tab() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 182);
+        let mut backend = settings_backend(100, 196);
         backend.state_mut().settings_navigation.tab = SettingsTab::General;
         let general = rendered_rows(&mut backend);
         let general_body = list_body(&general);
@@ -485,7 +485,7 @@ fn settings_matches_keybindings_chrome_without_hints() {
 #[test]
 fn settings_reports_startup_and_session_values() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 182);
+        let mut backend = settings_backend(100, 196);
         {
             let state = backend.state_mut();
             state.config.session.startup = rozi::config::SessionStartup::Last;
@@ -512,7 +512,7 @@ fn settings_reports_startup_and_session_values() {
 #[test]
 fn settings_reports_sidebar_values() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 182);
+        let mut backend = settings_backend(100, 196);
         {
             let state = backend.state_mut();
             state.sidebar.shown = [true, false];
@@ -1082,7 +1082,7 @@ fn settings_choice_lists_every_option() {
 #[test]
 fn clipboard_settings_do_not_apply_unconfirmed_choices() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(90, 55);
+        let mut backend = settings_backend(90, 60);
         backend.state_mut().config.clipboard.copy_on_select = CopyOnSelect::Disabled;
         backend.state_mut().config.clipboard.middle_click_paste = MiddleClickPaste::Disabled;
         backend.state_mut().config.clipboard.right_click = RightClickClipboardAction::Disabled;
@@ -1158,7 +1158,7 @@ fn merged_visibility_rows_render_save_and_restore_on_cancel() {
         use rozi::state::SettingsAction;
         // Reads the saved config back, so hold the file this binary's tests share.
         let _config = rozi::test_support::lock_config_file();
-        let mut backend = settings_backend(100, 182);
+        let mut backend = settings_backend(100, 196);
         backend.state_mut().config.pane.show_titles = false;
         backend.state_mut().config.pane.titlebar = PaneTitlebarMode::Inset;
         backend.state_mut().config.pane.show_workbar = false;

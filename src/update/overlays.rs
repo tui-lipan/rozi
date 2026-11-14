@@ -1402,7 +1402,7 @@ mod tests {
                 x: 0,
                 y: 0,
                 w: 96,
-                h: 40,
+                h: 44,
             });
             backend
                 .dispatch(Msg::RunAction(Action::ToggleHelp))

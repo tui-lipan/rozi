@@ -211,6 +211,9 @@ fn a_request_answered_later_outlives_its_turn_until_the_reply() {
         Some(ControlErrorCode::Conflict),
         "a queued request is not delivered yet"
     );
+    // What the agent asks while it owes the answer belongs to the request it owes.
+    let follow_up = rig.ask(Some(3), 2, "which tests are slow?");
+    assert_eq!(follow_up.parent.as_deref(), Some(first.id.as_str()));
 
     // The turn ends on a background command: nothing is read from the screen, and the agent is
     // free to take the next request.

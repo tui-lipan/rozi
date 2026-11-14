@@ -6338,6 +6338,13 @@
           "description": "Whether this pane's session is the one on screen. Pane ids repeat across sessions, so a\ncommand naming a pane by id reaches this pane only while this is true.",
           "type": "boolean"
         },
+        "program_title": {
+          "description": "The title the running program set, when it set one. `title` shows a name the user gave the\npane instead, so a script that reads what the program says about itself reads this.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "recording": {
           "description": "The session server is recording this pane; `record list` says where.",
           "type": "boolean"

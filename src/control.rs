@@ -1092,6 +1092,10 @@ pub struct PaneInfo {
     pub on_screen: bool,
     pub agent_ref: Option<crate::session::protocol::AgentRef>,
     pub title: String,
+    /// The title the running program set, when it set one. `title` shows a name the user gave the
+    /// pane instead, so a script that reads what the program says about itself reads this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program_title: Option<String>,
     /// One-based workspace, or `0` when the session has no layout document yet - nothing has
     /// placed the pane, so there is no workspace to name.
     pub workspace: usize,
@@ -3467,6 +3471,7 @@ mod tests {
             reference: None,
             agent_ref: None,
             title: "pane 3".to_string(),
+            program_title: None,
             workspace: 1,
             command: None,
             on_screen: true,

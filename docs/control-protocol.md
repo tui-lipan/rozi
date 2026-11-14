@@ -186,13 +186,15 @@ The shape inside `data` depends on `cmd`. The CLI's JSON output keeps this envel
 
 A `list-panes` pane object has these fields; optional values are JSON null:
 
-`session`, `id`, `reference`, `agent_ref`, `title`, `workspace`, `command`, `argv`,
-`foreground_program`, `foreground_programs`, `foreground_arguments`, `cwd`, `status`,
+`session`, `id`, `reference`, `agent_ref`, `title`, `program_title`, `workspace`, `command`,
+`argv`, `foreground_program`, `foreground_programs`, `foreground_arguments`, `cwd`, `status`,
 `reported_status`, `status_reason`, `agent`, and `agent_state`.
 
 - `reference` identifies one server instance, pane id, and pane process generation.
 - `agent_ref` adds the agent's incarnation, and is null when the pane has no detected agent.
 - Scratch panes use workspace `0` and have no `reference`.
+- `title` is the name the user gave the pane, if any, otherwise the title its program set.
+  `program_title` is always the program's own title, and is omitted when the program set none.
 - `foreground_programs` lists the basenames of the pane's foreground processes. Wrappers and
   pipelines can produce more than one entry.
 - `foreground_pid` is the process group ID of the command running in the pane, which is its first

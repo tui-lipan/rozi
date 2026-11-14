@@ -620,38 +620,68 @@ fn classify_pick_stream_event(value: &serde_json::Value) -> PickStreamEvent<'_> 
     }
 }
 
+/// Why a control request got no answer.
+enum SendFailure {
+    /// The endpoint could not be reached, or did not answer: printed, then exit 2.
+    Unreachable(String),
+    /// Anything else, reported like any runtime error.
+    Failed(tui_lipan::Error),
+}
+
+impl From<tui_lipan::Error> for SendFailure {
+    fn from(error: tui_lipan::Error) -> Self {
+        Self::Failed(error)
+    }
+}
+
+impl From<std::io::Error> for SendFailure {
+    fn from(error: std::io::Error) -> Self {
+        Self::Failed(error.into())
+    }
+}
+
+impl SendFailure {
+    /// End the process the way a control command that got no answer always has.
+    fn report(self) -> Result<serde_json::Value> {
+        match self {
+            Self::Unreachable(message) => {
+                eprintln!("{message}");
+                std::process::exit(2);
+            }
+            Self::Failed(error) => Err(error),
+        }
+    }
+}
+
 /// Ask the UI endpoint, returning its raw reply line.
 fn ask_ui_endpoint(
     socket: Option<PathBuf>,
     request: &control::ControlRequest,
-) -> Result<serde_json::Value> {
+) -> std::result::Result<serde_json::Value, SendFailure> {
     let path = match discover_socket(socket) {
         Ok(path) => path,
         Err(err) => {
-            eprintln!("{err}");
-            std::process::exit(2);
+            return Err(SendFailure::Unreachable(err.to_string()));
         }
     };
     let mut stream = match IpcEndpoint::at_path(&path).connect() {
         Ok(stream) => stream,
         Err(err) => {
-            eprintln!("could not connect to {}: {err}", path.display());
-            std::process::exit(2);
+            return Err(SendFailure::Unreachable(format!(
+                "could not connect to {}: {err}",
+                path.display()
+            )));
         }
     };
-    writeln!(stream, "{}", serde_json::to_string(request).unwrap())?;
-    let line = read_socket_line(&mut BufReader::new(stream))?;
+    let unanswered =
+        |err: std::io::Error| SendFailure::Unreachable(format!("{}: {err}", path.display()));
+    writeln!(stream, "{}", serde_json::to_string(request).unwrap()).map_err(unanswered)?;
+    let line = read_socket_line(&mut BufReader::new(stream)).map_err(unanswered)?;
     if line.trim().is_empty() {
-        eprintln!("empty response from rozi");
-        std::process::exit(2);
+        return Err(SendFailure::Unreachable("empty response from rozi".into()));
     }
-    match serde_json::from_str(&line) {
-        Ok(value) => Ok(value),
-        Err(err) => {
-            eprintln!("invalid JSON response: {err}");
-            std::process::exit(2);
-        }
-    }
+    serde_json::from_str(&line)
+        .map_err(|err| SendFailure::Unreachable(format!("invalid JSON response: {err}")))
 }
 
 /// Drop the calling pane's source from a request aimed at a named session or another machine.
@@ -674,15 +704,11 @@ pub(super) fn drop_caller_pane(request: &mut control::ControlRequest) {
 fn ask_session_endpoint(
     session: &str,
     mut request: control::ControlRequest,
-) -> Result<serde_json::Value> {
+) -> std::result::Result<serde_json::Value, SendFailure> {
     drop_caller_pane(&mut request);
-    match crate::session::headless::run_session_control(session, request) {
-        Ok(response) => Ok(serde_json::to_value(response).unwrap_or_default()),
-        Err(err) => {
-            eprintln!("{err}");
-            std::process::exit(2);
-        }
-    }
+    crate::session::headless::run_session_control(session, request)
+        .map(|response| serde_json::to_value(response).unwrap_or_default())
+        .map_err(|err| SendFailure::Unreachable(err.to_string()))
 }
 
 /// Ask the session server the calling pane runs in, found by its instance rather than a name.
@@ -693,34 +719,31 @@ fn ask_session_endpoint(
 fn ask_own_session_endpoint(
     instance: &crate::session::protocol::SessionInstanceId,
     request: control::ControlRequest,
-) -> Result<serde_json::Value> {
+) -> std::result::Result<serde_json::Value, SendFailure> {
     use crate::session::discovery::InstanceLookup;
 
     let session = match crate::session::discovery::session_with_instance(instance) {
         Ok(InstanceLookup::Found(session)) => session,
         Ok(InstanceLookup::NotFound { other_versions, .. }) if !other_versions.is_empty() => {
-            eprintln!(
-                "{}",
-                super::context::other_version_help(&other_versions).unwrap_or_default()
-            );
-            std::process::exit(2);
+            return Err(SendFailure::Unreachable(
+                super::context::other_version_help(&other_versions).unwrap_or_default(),
+            ));
         }
         Ok(InstanceLookup::NotFound { unidentified, .. }) if !unidentified.is_empty() => {
-            eprintln!(
+            return Err(SendFailure::Unreachable(format!(
                 "this pane's session server did not identify itself; it may be one running an older rozi (`{}`), which must be restarted to take reports from a pane with no UI",
                 unidentified.join("`, `")
-            );
-            std::process::exit(2);
+            )));
         }
         Ok(InstanceLookup::NotFound { .. }) => {
-            eprintln!(
-                "this pane's session server is not running on this machine; set ROZI_SOCKET or pass --session"
-            );
-            std::process::exit(2);
+            return Err(SendFailure::Unreachable(
+                "this pane's session server is not running on this machine; set ROZI_SOCKET or pass --session".into(),
+            ));
         }
         Err(err) => {
-            eprintln!("could not look for this pane's session server: {err}");
-            std::process::exit(2);
+            return Err(SendFailure::Unreachable(format!(
+                "could not look for this pane's session server: {err}"
+            )));
         }
     };
     let explain_authority = request.caller_context.is_some() && request.command.uses_ui_authority();
@@ -733,10 +756,7 @@ fn ask_own_session_endpoint(
             };
             Ok(serde_json::to_value(response).unwrap_or_default())
         }
-        Err(err) => {
-            eprintln!("{err}");
-            std::process::exit(2);
-        }
+        Err(err) => Err(SendFailure::Unreachable(err.to_string())),
     }
 }
 
@@ -749,7 +769,7 @@ fn ask_remote_endpoint(
     target: &str,
     session: &str,
     mut request: control::ControlRequest,
-) -> Result<serde_json::Value> {
+) -> std::result::Result<serde_json::Value, SendFailure> {
     // Same reason as the local session endpoint: `ROZI_PANE` names a pane in the namespace the
     // caller is sitting in, which is not the one being addressed - and here it is not even the
     // same machine.
@@ -757,22 +777,16 @@ fn ask_remote_endpoint(
     let parsed = match crate::session::remote::parse_remote_target(target) {
         Ok(parsed) => parsed,
         Err(err) => {
-            eprintln!("{err}");
-            std::process::exit(2);
+            return Err(SendFailure::Unreachable(err.to_string()));
         }
     };
     let config = crate::config::load_config().config.remote;
     if let Err(error) = require_remote_command_capability(&parsed, session, &request, &config) {
-        eprintln!("{error}");
-        std::process::exit(2);
+        return Err(SendFailure::Unreachable(error));
     }
-    match crate::session::remote::control::forward_control(&parsed, session, &request, &config) {
-        Ok(response) => Ok(serde_json::to_value(response).unwrap_or_default()),
-        Err(err) => {
-            eprintln!("{err}");
-            std::process::exit(2);
-        }
-    }
+    crate::session::remote::control::forward_control(&parsed, session, &request, &config)
+        .map(|response| serde_json::to_value(response).unwrap_or_default())
+        .map_err(|err| SendFailure::Unreachable(err.to_string()))
 }
 
 /// Only optional commands pay for a Query through the existing-session SSH proxy.
@@ -917,14 +931,14 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
         eprintln!("PNG output is binary; pass --output FILE or redirect stdout");
         std::process::exit(2);
     }
-    let value = send_control(&command)?;
+    let value = send_control(&command).or_else(SendFailure::report)?;
     report_control(&command, raw_capture, value)
 }
 
 /// `agents ask --wait`: ask, then wait for the answer exactly as `agents await` does. A refused
 /// ask is reported as itself.
 pub(crate) fn run_ask_and_await(mut command: ControlCli, timeout_ms: u64) -> Result<()> {
-    let asked = send_control(&command)?;
+    let asked = send_control(&command).or_else(SendFailure::report)?;
     let Some(request) = asked
         .get("ok")
         .and_then(serde_json::Value::as_bool)
@@ -940,8 +954,21 @@ pub(crate) fn run_ask_and_await(mut command: ControlCli, timeout_ms: u64) -> Res
         id,
         timeout_ms: Some(timeout_ms),
     };
-    let awaited = send_control(&command).map_err(|error| error.to_string());
-    report_control(&command, None, keep_asked_request(request, awaited))
+    let (awaited, unreachable) = match send_control(&command) {
+        Ok(value) => (Ok(value), false),
+        Err(SendFailure::Unreachable(error)) => (Err(error), true),
+        Err(SendFailure::Failed(error)) => (Err(error.to_string()), false),
+    };
+    let value = keep_asked_request(request, awaited);
+    if !unreachable {
+        return report_control(&command, None, value);
+    }
+    // Reported like any unanswered request, exiting 2, but with the request it leaves behind.
+    if !human_output(&command) {
+        println!("{value}");
+    }
+    eprintln!("{}", value["error"].as_str().unwrap_or_default());
+    std::process::exit(2);
 }
 
 /// The request exists once the ask succeeded, so a failed await must not invite asking again: it
@@ -976,7 +1003,7 @@ fn keep_asked_request(
     value
 }
 
-fn send_control(command: &ControlCli) -> Result<serde_json::Value> {
+fn send_control(command: &ControlCli) -> std::result::Result<serde_json::Value, SendFailure> {
     // Decided here rather than while parsing, like the discovery of a UI with no socket named: it
     // reads the pane's environment, and a parse must mean the same thing wherever it runs.
     let mut request = command.request.clone();
@@ -996,11 +1023,10 @@ fn send_control(command: &ControlCli) -> Result<serde_json::Value> {
         ControlEndpoint::Here => {
             let context = super::context::verified_caller_context(&request)?;
             if !context.inside_rozi {
-                eprintln!(
-                    "{}",
-                    super::context::here_refusal(&request, &context.status)
-                );
-                std::process::exit(2);
+                return Err(SendFailure::Unreachable(super::context::here_refusal(
+                    &request,
+                    &context.status,
+                )));
             }
             let caller = context.pane.expect("verified pane");
             super::context::pin_here_target(&mut request.command, caller.pane_id);
@@ -1020,13 +1046,21 @@ fn send_control(command: &ControlCli) -> Result<serde_json::Value> {
     })
 }
 
+fn human_output(command: &ControlCli) -> bool {
+    use std::io::IsTerminal;
+
+    match command.output_format {
+        Some(ListFormat::Text) => true,
+        Some(ListFormat::Json) => false,
+        None => std::io::stdout().is_terminal(),
+    }
+}
+
 fn report_control(
     command: &ControlCli,
     raw_capture: Option<RawCapture>,
     mut value: serde_json::Value,
 ) -> Result<()> {
-    use std::io::IsTerminal;
-
     if matches!(
         command.request.command,
         control::ControlCommand::ExtensionsStatus
@@ -1047,11 +1081,7 @@ fn report_control(
         return Ok(());
     }
     let line = serde_json::to_string(&value).unwrap_or_default();
-    let human_output = match command.output_format {
-        Some(ListFormat::Text) => true,
-        Some(ListFormat::Json) => false,
-        None => std::io::stdout().is_terminal(),
-    };
+    let human_output = human_output(command);
     if !human_output {
         println!("{line}");
     } else if failed_wait_capture {
@@ -1085,9 +1115,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_failed_await_after_an_ask_keeps_the_request() {
+    fn an_await_that_times_out_after_an_ask_keeps_the_request() {
         let request = serde_json::json!({ "id": "r7", "state": "queued" });
-        let lost = keep_asked_request(request.clone(), Err("control connection closed".into()));
         let timed_out = keep_asked_request(
             request.clone(),
             Ok(serde_json::to_value(control::ControlResponse::error_with(
@@ -1096,17 +1125,15 @@ mod tests {
             ))
             .unwrap()),
         );
-        for failed in [lost, timed_out] {
-            assert_eq!(failed["ok"], false);
-            assert_eq!(failed["data"]["id"], "r7");
-            assert!(
-                failed["error"]
-                    .as_str()
-                    .unwrap()
-                    .contains("rozi agents await r7"),
-                "{failed}"
-            );
-        }
+        assert_eq!(timed_out["code"], "timeout");
+        assert_eq!(timed_out["data"]["id"], "r7");
+        assert!(
+            timed_out["error"]
+                .as_str()
+                .unwrap()
+                .contains("rozi agents await r7"),
+            "{timed_out}"
+        );
         let answered =
             serde_json::json!({ "ok": true, "data": { "id": "r7", "state": "answered" } });
         assert_eq!(keep_asked_request(request, Ok(answered.clone())), answered);

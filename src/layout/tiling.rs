@@ -565,7 +565,7 @@ pub fn allocate_master(
 }
 
 /// The shortest a stack pane gets, in rows including its chrome, before the stack adds a column.
-pub const MASTER_STACK_MIN_ROWS: f32 = 10.0;
+pub const MASTER_STACK_MIN_ROWS: f32 = 16.0;
 /// The narrowest a stack column gets, in cells including its chrome. The stack never adds a column
 /// that would make its columns narrower than this.
 pub const MASTER_STACK_MIN_COLS: f32 = 40.0;
@@ -1804,8 +1804,8 @@ mod tests {
             w: 200.0,
             h: 50.0,
         };
-        // Five 10-row panes fit a 50-row stack, so a wide stack still keeps one column.
-        let placements = master_placements(6, rect, 0.5);
+        // Three 16-row panes fit a 50-row stack, so a wide stack still keeps one column.
+        let placements = master_placements(4, rect, 0.5);
         let columns = stack_columns(&placements);
         assert_eq!(columns.len(), 1, "{placements:?}");
         assert!(columns[0].iter().all(|p| p.rect.h >= MASTER_STACK_MIN_ROWS));
@@ -1819,15 +1819,15 @@ mod tests {
             w: 200.0,
             h: 50.0,
         };
-        let placements = master_placements(8, rect, 0.5);
+        let placements = master_placements(6, rect, 0.5);
         let master = placements[0].rect;
         let columns = stack_columns(&placements);
         let ids: Vec<Vec<PaneId>> = columns
             .iter()
             .map(|column| column.iter().map(|p| p.id).collect())
             .collect();
-        // Seven stack panes: the column beside the master takes the extra one.
-        assert_eq!(ids, [vec![2, 3, 4, 5], vec![6, 7, 8]], "{placements:?}");
+        // Five stack panes: the column beside the master takes the extra one.
+        assert_eq!(ids, [vec![2, 3, 4], vec![5, 6]], "{placements:?}");
 
         let gap = TileGap::DEFAULT.horizontal;
         let first = columns[0][0].rect;
@@ -1868,9 +1868,9 @@ mod tests {
         let gap = TileGap::DEFAULT;
         assert_eq!(master_stack_columns(0, rect(300.0, 10.0), gap), 1);
         assert_eq!(master_stack_columns(1, rect(300.0, 5.0), gap), 1);
-        assert_eq!(master_stack_columns(5, rect(300.0, 50.0), gap), 1);
-        assert_eq!(master_stack_columns(6, rect(300.0, 50.0), gap), 2);
-        assert_eq!(master_stack_columns(11, rect(300.0, 50.0), gap), 3);
+        assert_eq!(master_stack_columns(3, rect(300.0, 50.0), gap), 1);
+        assert_eq!(master_stack_columns(4, rect(300.0, 50.0), gap), 2);
+        assert_eq!(master_stack_columns(7, rect(300.0, 50.0), gap), 3);
         // A stack too short for even one minimum-height pane needs a column per pane.
         assert_eq!(master_stack_columns(4, rect(300.0, 6.0), gap), 4);
         // Width only caps: 81 cells hold two 40-cell columns and a gap, 80 hold one.

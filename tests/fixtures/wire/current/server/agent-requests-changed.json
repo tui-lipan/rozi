@@ -1,0 +1,28 @@
+{
+  "requests": [
+    {
+      "created_at_unix_ms": 1794675450372,
+      "from": {
+        "incarnation": 1,
+        "pane": {
+          "generation": 2,
+          "pane_id": 2,
+          "session_instance": "51a198212655ff1cf65c80f51fa51c49"
+        }
+      },
+      "id": "rq_b2c390b40a3b161f",
+      "root": "rq_b2c390b40a3b161f",
+      "state": "active",
+      "to": {
+        "incarnation": 1,
+        "pane": {
+          "generation": 3,
+          "pane_id": 3,
+          "session_instance": "51a198212655ff1cf65c80f51fa51c49"
+        }
+      },
+      "updated_at_unix_ms": 1794675452372
+    }
+  ],
+  "type": "agent-requests-changed"
+}

@@ -151,6 +151,12 @@ fn push_agent_links(
     } else {
         super::fg_only(&theme.muted)
     };
+    // Lit for a moment when a request reaches this pane's agent or its answer comes back.
+    let style = if ctx.state.agent_link_blink.panes.contains(&pane.id) {
+        super::fg_only(&theme.accent).reverse().bold()
+    } else {
+        style
+    };
     let marks = [(ASKING, links.asking), (ANSWERING, links.answering)]
         .into_iter()
         .filter(|(_, count)| *count > 0)

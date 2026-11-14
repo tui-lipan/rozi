@@ -78,6 +78,26 @@ fn links(requests: &[AgentRequestSummary], panes: &[PaneRef]) -> PaneLinks {
     links
 }
 
+/// The agents a change from `old` to `new` hands a turn to: the agent a request was just typed
+/// into, and the asker whose answer just arrived. Failures and cancellations hand nothing over.
+pub(crate) fn handoffs<'a>(
+    old: &[AgentRequestSummary],
+    new: &'a [AgentRequestSummary],
+) -> Vec<&'a AgentRef> {
+    new.iter()
+        .filter_map(|request| {
+            let before = old.iter().find(|previous| previous.id == request.id)?.state;
+            match (before, request.state) {
+                (AgentRequestState::Queued, AgentRequestState::Active) => Some(&request.to),
+                (before, AgentRequestState::Answered) if !before.is_resolved() => {
+                    request.from.as_ref()
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 /// Every live pane of the session on screen.
 fn panes(state: &State) -> impl Iterator<Item = &Pane> {
     state
@@ -234,6 +254,68 @@ mod tests {
             created_at_unix_ms: 0,
             updated_at_unix_ms: 0,
         }
+    }
+
+    #[test]
+    fn chains_list_newest_first_with_each_request_before_what_it_asked() {
+        let at = |mut request: AgentRequestSummary, created: u64, parent: Option<&str>| {
+            request.created_at_unix_ms = created;
+            request.updated_at_unix_ms = created + 5;
+            request.parent = parent.map(Into::into);
+            request.root = parent.map_or(request.id.clone(), |_| "a".into());
+            request
+        };
+        let requests = [
+            at(request("a", None, 1, AgentRequestState::Active), 10, None),
+            at(
+                request("b", Some(1), 2, AgentRequestState::Answered),
+                11,
+                Some("a"),
+            ),
+            at(request("z", None, 3, AgentRequestState::Queued), 20, None),
+            at(
+                request("c", Some(2), 3, AgentRequestState::Active),
+                12,
+                Some("b"),
+            ),
+        ];
+        let order: Vec<(&str, usize)> = threaded(&requests)
+            .into_iter()
+            .map(|(request, depth)| (request.id.as_str(), depth))
+            .collect();
+        assert_eq!(order, [("z", 0), ("a", 0), ("b", 1), ("c", 2)]);
+        // `b` answers at 16, after `c` was asked at 12: the diagram keeps that order.
+        let events: Vec<String> = chain_events(&requests, "a")
+            .into_iter()
+            .map(|event| match event {
+                ChainEvent::Ask(request) => format!("ask {}", request.id),
+                ChainEvent::Settle(request) => format!("settle {}", request.id),
+            })
+            .collect();
+        assert_eq!(events, ["ask a", "ask b", "ask c", "settle b"]);
+    }
+
+    #[test]
+    fn a_delivery_marks_the_target_and_an_answer_marks_the_asker() {
+        let before = [
+            request("a", Some(1), 2, AgentRequestState::Queued),
+            request("b", Some(1), 3, AgentRequestState::Active),
+            request("c", Some(2), 3, AgentRequestState::Active),
+            request("d", None, 3, AgentRequestState::Active),
+        ];
+        let after = [
+            request("a", Some(1), 2, AgentRequestState::Active),
+            request("b", Some(1), 3, AgentRequestState::Answered),
+            request("c", Some(2), 3, AgentRequestState::Failed),
+            request("d", None, 3, AgentRequestState::Answered),
+            request("e", Some(3), 1, AgentRequestState::Active),
+        ];
+        let panes: Vec<u32> = handoffs(&before, &after)
+            .into_iter()
+            .map(|agent| agent.pane.pane_id)
+            .collect();
+        assert_eq!(panes, [2, 1]);
+        assert!(handoffs(&after, &after).is_empty());
     }
 
     #[test]

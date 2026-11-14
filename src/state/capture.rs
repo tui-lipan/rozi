@@ -139,6 +139,14 @@ pub struct UiRecordingSeen {
     pub overlay: Option<&'static str>,
 }
 
+/// The panes whose request marks light up for a moment: a request just reached their agent, or
+/// its answer just came back.
+#[derive(Clone, Debug, Default)]
+pub struct AgentLinkBlink {
+    pub panes: Vec<PaneId>,
+    pub revision: u64,
+}
+
 /// The blink that confirms a mark landed.
 #[derive(Debug, Default)]
 pub struct RecordingMarkBlink {

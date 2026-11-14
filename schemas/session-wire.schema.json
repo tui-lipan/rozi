@@ -173,6 +173,87 @@
         }
       ]
     },
+    "AgentRequestState": {
+      "description": "Where an agent request is.",
+      "oneOf": [
+        {
+          "enum": [
+            "answered",
+            "failed",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "queued",
+          "description": "Waiting to be delivered; `reason` says why.",
+          "type": "string"
+        },
+        {
+          "const": "active",
+          "description": "Typed into the agent and not yet answered.",
+          "type": "string"
+        }
+      ]
+    },
+    "AgentRequestSummary": {
+      "description": "A request without its prompt and answer, as `agent-requests` lists it.",
+      "properties": {
+        "created_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/AgentRequestState"
+        },
+        "to": {
+          "$ref": "#/$defs/AgentRef"
+        },
+        "updated_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "root",
+        "to",
+        "state",
+        "created_at_unix_ms",
+        "updated_at_unix_ms"
+      ],
+      "type": "object"
+    },
     "AgentResponseFidelity": {
       "enum": [
         "semantic",
@@ -6861,6 +6942,26 @@
           "type": "object"
         },
         {
+          "description": "The session's agent requests without their prompts or answers: every live one and the\nmost recently settled. The whole list each time, sent on attach and whenever it changes.",
+          "properties": {
+            "requests": {
+              "items": {
+                "$ref": "#/$defs/AgentRequestSummary"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "agent-requests-changed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "requests"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Drag-and-drop escape codes (OSC 72) a pane's program wrote, for the client that owns the\npane's drag: the last one to send [`ClientMessage::DragAndDrop`] to it.",
           "properties": {
             "escape_codes": {
@@ -8947,6 +9048,7 @@
   "title": "Rozi session wire protocol",
   "x-rozi-capabilities": [
     "agent-reply-later",
+    "agent-request-updates",
     "agent-requests",
     "agent-summaries",
     "client-handoff",

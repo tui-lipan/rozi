@@ -243,6 +243,55 @@ fn a_request_answered_later_outlives_its_turn_until_the_reply() {
     assert_eq!(rig.request(&second.id).state, AgentRequestState::Failed);
 }
 
+/// The request lists queued for `client` and not yet sent, in order.
+fn request_lists(server: &SessionServer, client: ClientId) -> Vec<Vec<String>> {
+    use super::super::tests::{DecodedOutboxFrame, decode_outbox_frames};
+    decode_outbox_frames(server.client(client).expect("attached client"))
+        .into_iter()
+        .filter_map(|frame| match frame {
+            DecodedOutboxFrame::Control(message) => match *message {
+                protocol::ServerMessage::AgentRequestsChanged { requests } => {
+                    Some(requests.into_iter().map(|request| request.id).collect())
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn attached_clients_hear_of_each_change_and_a_new_one_gets_the_list() {
+    let mut rig = Rig::new(&[2, 3]);
+    let (first, _first_stream) = super::super::tests::attach_client(&mut rig.server);
+
+    let asked = rig.ask(Some(2), 3, "review the parser");
+    rig.server.broadcast_agent_request_changes();
+    rig.server.broadcast_agent_request_changes();
+    assert_eq!(
+        request_lists(&rig.server, first),
+        [vec![asked.id.clone()]],
+        "one change is one message"
+    );
+
+    let (second, _second_stream) = super::super::tests::add_client(&mut rig.server);
+    rig.server.handle_message(
+        second,
+        protocol::ClientMessage::Attach {
+            capabilities: Some(protocol::Capabilities::current()),
+            session: rig.server.session_name.clone(),
+            protocol_version: protocol::PROTOCOL_VERSION,
+            min_protocol_version: protocol::PROTOCOL_VERSION,
+            label: "second".into(),
+            read_only: false,
+            shares_filesystem: true,
+            expected_server_nonce: None,
+            handoff_token: None,
+        },
+    );
+    assert_eq!(request_lists(&rig.server, second), [vec![asked.id]]);
+}
+
 #[test]
 fn a_locked_or_replaced_target_is_never_typed_into() {
     let mut rig = Rig::new(&[2, 3]);

@@ -273,6 +273,10 @@ fn chain_overlay(ctx: &Context<AppRoot>, root: &str) -> Element {
                         state_word(request),
                         short_duration(now.saturating_sub(request.created_at_unix_ms))
                     ),
+                    // Promised a later answer: the open bar is the agent still owing it.
+                    AgentRequestState::Active if request.reason.is_some() => {
+                        "ask · later".to_string()
+                    }
                     _ => "ask".to_string(),
                 };
                 let delivered = request.state != AgentRequestState::Queued

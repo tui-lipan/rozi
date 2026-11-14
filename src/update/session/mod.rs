@@ -157,7 +157,47 @@ pub(crate) fn agent_requests_changed(
     let Some(attachment) = ctx.state.attachment_for_epoch_mut(epoch) else {
         return Update::none();
     };
-    attachment.agent_requests = requests;
+    let previous = std::mem::replace(&mut attachment.agent_requests, requests);
+    // Only the session on screen draws marks, so only its handoffs light them.
+    if epoch != ctx.state.runtime_epoch
+        || !crate::layout::anim::screenshot_flash_enabled(ctx.state.config.animations)
+    {
+        return Update::full();
+    }
+    let panes: Vec<_> =
+        crate::view::agent_requests::handoffs(&previous, &ctx.state.attachment.agent_requests)
+            .into_iter()
+            .filter_map(|agent| crate::view::agent_requests::pane_of(&ctx.state, agent))
+            .collect();
+    if panes.is_empty() {
+        return Update::full();
+    }
+    let blink = &mut ctx.state.agent_link_blink;
+    blink.revision = blink.revision.wrapping_add(1);
+    blink.panes = panes;
+    let revision = blink.revision;
+    Update::full().merge(Update::with_command(Command::spawn(
+        move |link: CommandLink<crate::Msg>| {
+            link.send_after(
+                AGENT_LINK_BLINK,
+                crate::Msg::AgentLinkBlinkEnded { revision },
+            );
+        },
+    )))
+}
+
+/// How long a request mark stays lit after a handoff.
+const AGENT_LINK_BLINK: std::time::Duration = std::time::Duration::from_millis(700);
+
+pub(crate) fn agent_link_blink_ended(
+    ctx: &mut Context<crate::app::AppRoot>,
+    revision: u64,
+) -> Update {
+    let blink = &mut ctx.state.agent_link_blink;
+    if blink.revision != revision || blink.panes.is_empty() {
+        return Update::none();
+    }
+    blink.panes.clear();
     Update::full()
 }
 

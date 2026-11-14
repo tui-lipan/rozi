@@ -1655,6 +1655,76 @@ mod tests {
         });
     }
 
+    fn press(backend: &mut TestBackend<crate::AppRoot>, code: tui_lipan::KeyCode) {
+        backend.render();
+        backend
+            .send_key(tui_lipan::KeyEvent {
+                code,
+                mods: tui_lipan::KeyMods::NONE,
+            })
+            .expect("send key");
+    }
+
+    /// A picker that reports its search text shows the caller's answer in the order sent, even
+    /// when its rows carry priorities, and Enter picks the row drawn first.
+    #[test]
+    fn a_reporting_picker_ignores_row_priority() {
+        with_backend(|backend| {
+            let rx = open_reporting(backend, Vec::new(), None, Vec::new(), true);
+            press(backend, tui_lipan::KeyCode::Char('x'));
+            let mut low = row("x-low");
+            low.priority = Some(0);
+            let mut high = row("x-high");
+            high.priority = Some(10);
+            backend
+                .dispatch(crate::Msg::PickRowsReported {
+                    id: 1,
+                    tab: None,
+                    rows: vec![low, high],
+                    query_seq: Some(1),
+                })
+                .unwrap();
+            backend.render();
+            backend.advance(std::time::Duration::from_millis(500));
+            let screen = backend.capture_frame().plain_text();
+            let at = |label: &str| screen.find(label).expect(&screen);
+            assert!(at("x-low") < at("x-high"), "{screen}");
+            press(backend, tui_lipan::KeyCode::Enter);
+            assert_eq!(drain(&rx).last().unwrap(), r#"{"selected":"x-low"}"#);
+        });
+    }
+
+    /// Rows can share a label; the highlight follows the row's id through a refresh, so Enter
+    /// and the selection in state agree on which row it is on.
+    #[test]
+    fn a_refresh_keeps_the_highlight_on_its_id_among_equal_labels() {
+        with_backend(|backend| {
+            let rx = open_tabbed(backend, Vec::new(), None, Vec::new());
+            let same = |id: &str| PickRow {
+                label: "same".into(),
+                ..row(id)
+            };
+            let rows = |ids: &[&str]| ids.iter().map(|id| same(id)).collect::<Vec<_>>();
+            for ids in [&["a", "b"][..], &["new", "a", "b"]] {
+                backend
+                    .dispatch(crate::Msg::PickRowsReported {
+                        id: 1,
+                        tab: None,
+                        rows: rows(ids),
+                        query_seq: None,
+                    })
+                    .unwrap();
+                if ids.len() == 2 {
+                    press(backend, tui_lipan::KeyCode::Down);
+                }
+            }
+            backend.render();
+            assert_eq!(backend.state().pick.as_ref().unwrap().page().selected, 2);
+            press(backend, tui_lipan::KeyCode::Enter);
+            assert_eq!(drain(&rx).last().unwrap(), r#"{"selected":"b"}"#);
+        });
+    }
+
     /// A caller that asked for the filter text hears each change once, numbered, with the tab it
     /// was typed on, and rows answering an earlier number never replace newer ones.
     #[test]

@@ -877,7 +877,7 @@ rozi keeps at most 512 rows from each snapshot.
 | `group` | string | none | Section label. |
 | `disabled` | string | none | Makes the row inert and shows the reason. |
 | `active` | bool | `false` | Marks the current item. |
-| `priority` | integer | `0` | Adds sorting weight. |
+| `priority` | integer | `0` | Adds sorting weight. Ignored with `report_query`. |
 
 ### Read the result
 

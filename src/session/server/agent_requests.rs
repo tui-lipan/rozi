@@ -147,9 +147,18 @@ impl AgentRequestStore {
             })
     }
 
-    /// Where a request asked by `from` sits in the lineage: under the request `from` is answering.
+    /// Where a request asked by `from` sits in the lineage: under the request `from` is answering,
+    /// or else the newest one it promised to answer later.
     fn lineage(&self, from: Option<&protocol::AgentRef>) -> Option<(String, String, usize)> {
-        let parent = self.get(self.answering(from?)?)?;
+        let from = from?;
+        let parent = match self.answering(from) {
+            Some(id) => self.get(id)?,
+            None => self.requests.iter().rev().find(|stored| {
+                stored.later
+                    && stored.info.state == AgentRequestState::Active
+                    && stored.info.to == *from
+            })?,
+        };
         Some((
             parent.info.id.clone(),
             parent.info.root.clone(),

@@ -417,6 +417,13 @@ id=$(rozi agents ask --ref "$REVIEWER" --format json -- "Review the parser chang
 rozi agents await "$id" --timeout 10m
 ```
 
+`--wait --timeout <DUR>` does both in one command and prints the answer. An agent can run it as a
+background command, end its turn, and be notified when the answer arrives:
+
+```bash
+rozi agents ask --ref "$REVIEWER" --wait --timeout 30m -- "Review the parser changes"
+```
+
 rozi types the request into the other agent once it is idle, done, or in error, shows no dialog,
 and nobody has typed into its pane for two seconds. The typed text names the request and how to
 answer it: `rozi agents reply <ID> --stdin`, with the answer on stdin. An agent receives one

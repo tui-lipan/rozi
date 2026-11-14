@@ -7,7 +7,8 @@ use rozi::layout::anim::GeometryAnimation;
 use rozi::pane::chrome::PaneBorderMode;
 use rozi::state::{Pane, PaneBorderStyle};
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{FloatRect, Rect};
+use tui_lipan::core::event::{MouseButton, MouseKind};
+use tui_lipan::prelude::{FloatRect, KeyMods, MouseEvent, Rect};
 
 const WIDTH: u16 = 60;
 const HEIGHT: u16 = 20;
@@ -280,5 +281,32 @@ fn scratchpad_border_style_is_independent_of_floating() {
                 .all(|cell| !matches!(cell.symbol.as_str(), "╔" | "╗" | "╚" | "╝")),
             "scratchpad should not keep the floating double frame:\n{lines}"
         );
+    });
+}
+
+/// A press outside the dropdown belongs to the scratchpad layer: it dismisses the scratchpad rather
+/// than reaching the dimmed workspace pane, which would take keyboard input without looking focused.
+#[test]
+fn a_press_outside_the_dropdown_dismisses_it() {
+    rozi::test_support::on_deeper_stack(|| {
+        let mut backend = backend();
+        set_visible(&mut backend, true);
+        backend.advance(Duration::from_millis(4_000));
+        let (top, _) = deployed(&mut backend);
+        assert!(
+            top > 3,
+            "the press must land above the dropdown, which starts at row {top}"
+        );
+
+        backend
+            .send_mouse(MouseEvent {
+                x: 10,
+                y: 3,
+                kind: MouseKind::Down(MouseButton::Left),
+                mods: KeyMods::NONE,
+            })
+            .expect("mouse down");
+
+        assert!(!backend.state().scratch_visible);
     });
 }

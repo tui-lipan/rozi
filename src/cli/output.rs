@@ -1252,6 +1252,7 @@ pub(super) fn format_control_text(
         control::ControlCommand::AgentWait { .. } => format_agent_wait_text(data, styles),
         control::ControlCommand::AgentAsk { .. }
         | control::ControlCommand::AgentReply { .. }
+        | control::ControlCommand::AgentReplyLater { .. }
         | control::ControlCommand::AgentCancel { .. } => format_agent_request_line(data, styles),
         control::ControlCommand::AgentRequest { .. }
         | control::ControlCommand::AgentAwait { .. } => format_agent_request_text(data, styles),

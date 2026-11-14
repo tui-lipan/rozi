@@ -2612,6 +2612,23 @@
           "type": "object"
         },
         {
+          "description": "Keep a request sent to the calling agent open for a reply after its turn ends, instead of\nanswering it from the terminal when the turn ends.",
+          "properties": {
+            "cmd": {
+              "const": "agent-reply-later",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Hold the reply until a request is answered, failed, or cancelled.",
           "properties": {
             "cmd": {
@@ -4587,6 +4604,23 @@
             "cmd",
             "id",
             "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Keep a request sent to the calling agent open for a reply after its turn ends, instead of\nanswering it from the terminal when the turn ends.",
+          "properties": {
+            "cmd": {
+              "const": "agent-reply-later",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
           ],
           "type": "object"
         },

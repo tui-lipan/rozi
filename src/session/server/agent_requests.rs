@@ -65,6 +65,9 @@ struct StoredRequest {
     info: AgentRequestInfo,
     /// 1 for a request asked outside any other.
     depth: usize,
+    /// Its agent will reply after the turn it was delivered in, so that turn's end does not
+    /// answer it from the terminal.
+    later: bool,
 }
 
 struct DeliverySlot {
@@ -138,10 +141,10 @@ impl AgentRequestStore {
     fn has_work(&self) -> bool {
         !self.slots.is_empty()
             || !self.awaits.is_empty()
-            || self
-                .requests
-                .iter()
-                .any(|stored| stored.info.state == AgentRequestState::Queued)
+            || self.requests.iter().any(|stored| {
+                stored.info.state == AgentRequestState::Queued
+                    || (stored.later && stored.info.state == AgentRequestState::Active)
+            })
     }
 
     /// Where a request asked by `from` sits in the lineage: under the request `from` is answering.
@@ -410,9 +413,11 @@ impl SessionServer {
             created_at_unix_ms: now,
             updated_at_unix_ms: now,
         };
-        self.agent_requests
-            .requests
-            .push(StoredRequest { info, depth });
+        self.agent_requests.requests.push(StoredRequest {
+            info,
+            depth,
+            later: false,
+        });
         self.pump_agent_requests();
         self.agent_request(&id)
     }
@@ -459,6 +464,80 @@ impl SessionServer {
         let answered = info.clone();
         self.pump_agent_requests();
         ControlResponse::ok(answered)
+    }
+
+    /// Keep request `id` open for its agent to reply after the turn it was delivered in: that
+    /// turn's end no longer answers it from the terminal, and the agent can take the next request.
+    pub(super) fn reply_later(
+        &mut self,
+        caller: Option<protocol::AgentRef>,
+        id: &str,
+    ) -> ControlResponse {
+        let request = match self.agent_requests.lookup(id) {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        if let Some(refusal) = self.settled_reply(caller.as_ref(), request, "") {
+            return refusal;
+        }
+        if request.state != AgentRequestState::Active {
+            return conflict(format!(
+                "request `{id}` is {}; only a delivered request can be answered later",
+                state_name(request.state)
+            ));
+        }
+        let to = request.to.clone();
+        if self.agent_requests.answering(&to) == Some(id) {
+            self.agent_requests.slots.remove(&to);
+        }
+        let stored = self
+            .agent_requests
+            .requests
+            .iter_mut()
+            .find(|stored| stored.info.id == id)
+            .expect("looked up above");
+        stored.later = true;
+        settle(
+            &mut stored.info,
+            AgentRequestState::Active,
+            Some("the agent will reply later".into()),
+        );
+        let deferred = stored.info.clone();
+        self.pump_agent_requests();
+        ControlResponse::ok(deferred)
+    }
+
+    /// Fail a request its agent promised to answer later once that agent can no longer reply.
+    fn check_deferred_requests(&mut self) {
+        let deferred: Vec<(String, protocol::AgentRef, Option<String>)> = self
+            .agent_requests
+            .requests
+            .iter()
+            .filter(|stored| stored.later && stored.info.state == AgentRequestState::Active)
+            .map(|stored| {
+                (
+                    stored.info.id.clone(),
+                    stored.info.to.clone(),
+                    stored.info.to_native_session.clone(),
+                )
+            })
+            .collect();
+        for (id, to, recorded_session) in deferred {
+            let reason = match self.request_agent(&to) {
+                Err(reason) => Some(reason),
+                Ok(_)
+                    if recorded_session.is_some()
+                        && self.response_native_session(&to) != recorded_session =>
+                {
+                    Some("the agent moved to another conversation".to_string())
+                }
+                Ok(_) => None,
+            };
+            if let Some(reason) = reason {
+                let info = self.agent_requests.info_mut(&id).expect("listed above");
+                settle(info, AgentRequestState::Failed, Some(reason));
+            }
+        }
     }
 
     /// The answer to a reply that stores nothing: a refusal, or an identical repeat.
@@ -641,6 +720,7 @@ impl SessionServer {
             for target in targets {
                 self.settle_request_turn(&target);
             }
+            self.check_deferred_requests();
             self.deliver_queued_requests();
             self.answer_request_awaits();
         }
@@ -928,7 +1008,7 @@ impl SessionServer {
             })
             .unwrap_or_default();
         format!(
-            "Request {id}{asker}:\n\n{prompt}\n\nAnswer with `rozi agents reply {id} --stdin`.",
+            "Request {id}{asker}:\n\n{prompt}\n\nAnswer with `rozi agents reply {id} --stdin`. To answer after this turn ends, such as when a background command finishes, run `rozi agents reply {id} --later` first.",
             id = request.id,
             prompt = request.prompt,
         )

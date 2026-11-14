@@ -204,6 +204,7 @@ pub(crate) fn gate(command: &ControlCommand) -> Gate {
         ),
         ControlCommand::AgentAsk { .. }
         | ControlCommand::AgentReply { .. }
+        | ControlCommand::AgentReplyLater { .. }
         | ControlCommand::AgentAwait { .. }
         | ControlCommand::AgentRequest { .. }
         | ControlCommand::AgentRequests { .. }

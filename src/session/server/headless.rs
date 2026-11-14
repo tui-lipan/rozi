@@ -130,6 +130,7 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::Subscribe { .. }
         | ControlCommand::AgentAsk { .. }
         | ControlCommand::AgentReply { .. }
+        | ControlCommand::AgentReplyLater { .. }
         | ControlCommand::AgentAwait { .. }
         | ControlCommand::AgentRequest { .. }
         | ControlCommand::AgentRequests { .. }
@@ -256,6 +257,7 @@ pub fn attached_control_refusal(
         // for; the CLI sends these to the pane's own session.
         ControlCommand::AgentAsk { .. }
         | ControlCommand::AgentReply { .. }
+        | ControlCommand::AgentReplyLater { .. }
         | ControlCommand::AgentAwait { .. }
         | ControlCommand::AgentRequest { .. }
         | ControlCommand::AgentRequests { .. }
@@ -793,6 +795,10 @@ impl SessionServer {
                 self.caller_agent(request.source_session.as_ref(), request.source_pane),
                 &id,
                 text,
+            ),
+            ControlCommand::AgentReplyLater { id } => self.reply_later(
+                self.caller_agent(request.source_session.as_ref(), request.source_pane),
+                &id,
             ),
             ControlCommand::AgentRequest { id } => self.agent_request(&id),
             ControlCommand::AgentRequests { direction } => self.agent_request_list(

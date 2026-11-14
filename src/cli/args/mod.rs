@@ -2147,6 +2147,7 @@ pub(super) fn own_session_endpoint(
             | control::ControlCommand::ActionsList
             | control::ControlCommand::AgentAsk { .. }
             | control::ControlCommand::AgentReply { .. }
+            | control::ControlCommand::AgentReplyLater { .. }
             | control::ControlCommand::AgentAwait { .. }
             | control::ControlCommand::AgentRequest { .. }
             | control::ControlCommand::AgentRequests { .. }

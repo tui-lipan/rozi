@@ -49,11 +49,15 @@ pub enum Capability {
     /// `agent-ask`, `agent-reply`, `agent-await`, `agent-request`, `agent-requests`, and
     /// `agent-cancel` control commands, and the `agent-cli` response source.
     AgentRequests,
+    /// The server serves `agent-reply-later`: an agent keeps a request open for a reply after its
+    /// turn ends.
+    AgentReplyLater,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 7] = [
+    pub const ALL: [Capability; 8] = [
+        Capability::AgentReplyLater,
         Capability::AgentRequests,
         Capability::AgentSummaries,
         Capability::ClientHandoff,
@@ -73,6 +77,7 @@ impl Capability {
             Capability::ClientHandoff => "client-handoff",
             Capability::DragAndDrop => "drag-and-drop",
             Capability::AgentRequests => "agent-requests",
+            Capability::AgentReplyLater => "agent-reply-later",
         }
     }
 
@@ -86,6 +91,7 @@ impl Capability {
             | Self::ClientHandoff => "0.0.44",
             Self::DragAndDrop => "0.0.46",
             Self::AgentRequests => "0.0.47",
+            Self::AgentReplyLater => "0.0.48",
         }
     }
 
@@ -168,6 +174,11 @@ pub const GATED_VOCABULARY: &[GatedValue] = &[
     agent_request_command("agent-request"),
     agent_request_command("agent-requests"),
     agent_request_command("agent-cancel"),
+    GatedValue {
+        vocabulary: "ControlRequest",
+        value: "agent-reply-later",
+        capability: Capability::AgentReplyLater,
+    },
 ];
 
 /// A control command a session server serves only with [`Capability::AgentRequests`].

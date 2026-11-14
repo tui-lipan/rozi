@@ -769,6 +769,11 @@ pub enum ServerMessage {
         path: Option<String>,
         error: Option<String>,
     },
+    /// The session's agent requests without their prompts or answers: every live one and the
+    /// most recently settled. The whole list each time, sent on attach and whenever it changes.
+    AgentRequestsChanged {
+        requests: Vec<crate::control::AgentRequestSummary>,
+    },
     /// Drag-and-drop escape codes (OSC 72) a pane's program wrote, for the client that owns the
     /// pane's drag: the last one to send [`ClientMessage::DragAndDrop`] to it.
     PaneDragAndDrop {
@@ -1037,6 +1042,9 @@ impl ServerMessage {
             | ServerMessage::HandoffCommitted { .. }
             | ServerMessage::HandoffAborted { .. } => Some(super::Capability::ClientHandoff),
             ServerMessage::PaneDragAndDrop { .. } => Some(super::Capability::DragAndDrop),
+            ServerMessage::AgentRequestsChanged { .. } => {
+                Some(super::Capability::AgentRequestUpdates)
+            }
             ServerMessage::Unknown => {
                 debug_assert!(false, "ServerMessage::Unknown is never sent");
                 None

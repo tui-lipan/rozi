@@ -1975,6 +1975,7 @@ impl SessionServer {
         self.resolve_capture_waits();
         self.pump_agent_history();
         self.pump_agent_requests();
+        self.broadcast_agent_request_changes();
         self.pump_recordings();
         #[cfg(feature = "ghostty-engine")]
         self.pump_idle_compression();

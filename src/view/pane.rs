@@ -122,6 +122,7 @@ fn push_title_status(
     spans: &mut Vec<Span>,
     lead: &'static str,
 ) {
+    push_agent_links(ctx, pane, spans, lead);
     if let Some(status) = title_recording_spans(ctx, pane, color) {
         let gap = if spans.is_empty() { lead } else { " · " };
         if !gap.is_empty() {
@@ -129,6 +130,38 @@ fn push_title_status(
         }
         spans.extend(status);
     }
+}
+
+/// The requests between this pane's agents and others: `→2` asked and waiting, `←1` asked of it.
+/// In the accent colour once one has reached its agent, muted while all are still queued.
+fn push_agent_links(
+    ctx: &Context<AppRoot>,
+    pane: &Pane,
+    spans: &mut Vec<Span>,
+    lead: &'static str,
+) {
+    use super::vocabulary::{ANSWERING, ASKING};
+    let links = super::agent_requests::pane_links(&ctx.state, pane);
+    if links.is_empty() {
+        return;
+    }
+    let theme = &ctx.state.theme;
+    let style = if links.delivered {
+        super::fg_only(&theme.accent)
+    } else {
+        super::fg_only(&theme.muted)
+    };
+    let marks = [(ASKING, links.asking), (ANSWERING, links.answering)]
+        .into_iter()
+        .filter(|(_, count)| *count > 0)
+        .map(|(mark, count)| format!("{mark}{count}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let gap = if spans.is_empty() { lead } else { " " };
+    if !gap.is_empty() {
+        spans.push(Span::new(gap));
+    }
+    spans.push(Span::new(marks).style(style));
 }
 
 /// What ends a title row: the pane's badge, preformatted by the layout, then the recording marker.

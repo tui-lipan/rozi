@@ -3226,7 +3226,8 @@ mod tests {
             let expected = match cap {
                 crate::session::protocol::Capability::DragAndDrop => "0.0.46",
                 crate::session::protocol::Capability::AgentRequests => "0.0.47",
-                crate::session::protocol::Capability::AgentReplyLater => "0.0.48",
+                crate::session::protocol::Capability::AgentReplyLater
+                | crate::session::protocol::Capability::AgentRequestUpdates => "0.0.48",
                 _ => "0.0.44",
             };
             assert_eq!(cap.introduced_in(), expected, "{cap}");

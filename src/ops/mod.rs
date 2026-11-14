@@ -1,3 +1,4 @@
+pub(crate) mod agent_conversations;
 pub(crate) mod agents;
 pub(crate) mod attached_control;
 pub(crate) mod attachments;

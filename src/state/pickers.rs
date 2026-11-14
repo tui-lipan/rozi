@@ -529,6 +529,26 @@ pub struct AgentPickerState {
     pub tab_selected: Vec<(AgentPickerTab, AgentLocation)>,
 }
 
+/// The requests between the session's agents: a list of them, or one chain of them drawn as a
+/// sequence diagram.
+pub struct AgentConversationsState {
+    pub input: TextInput,
+    /// The highlighted request, by id: rows are rebuilt whenever the server reports a change.
+    pub selected: Option<String>,
+    /// The chain shown as a diagram, by its root request's id; `None` shows the list.
+    pub chain: Option<String>,
+}
+
+impl AgentConversationsState {
+    pub fn new(selected: Option<String>) -> Self {
+        Self {
+            input: TextInput::new(""),
+            selected,
+            chain: None,
+        }
+    }
+}
+
 impl AgentPickerState {
     pub fn new(selected: Option<AgentLocation>) -> Self {
         Self {

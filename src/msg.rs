@@ -529,6 +529,16 @@ pub enum Msg {
     SessionPickerRemoteHosts,
     SessionPickerNameCurrent,
     CloseAgentPicker,
+    CloseAgentConversations,
+    AgentConversationsQueryChanged(String),
+    /// Highlight a request, by id.
+    AgentConversationsSelect(String),
+    /// Draw the chain a request belongs to.
+    AgentConversationsOpenChain(String),
+    /// From a chain's diagram back to the list.
+    AgentConversationsBack,
+    /// Focus the agent a request was sent to.
+    AgentConversationsGoTo(String),
     AgentPickerTab(usize),
     AgentPickerQueryChanged(String),
     /// Move the Agents view's cursor. Carries the row's location rather than its index: the list is
@@ -942,6 +952,11 @@ pub enum Msg {
     SessionEvent {
         epoch: u64,
         event: crate::session::protocol::SessionEvent,
+    },
+    /// The session's agent requests, without their text.
+    AgentRequestsChanged {
+        epoch: u64,
+        requests: Vec<crate::control::AgentRequestSummary>,
     },
     /// The deployed actions a session offers for the palette.
     SessionActions {

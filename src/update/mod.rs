@@ -485,6 +485,16 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::SessionPickerNameCurrent => prompts::session_picker_name_current(ctx),
         Msg::AgentPickerTab(index) => crate::ops::agents::select_tab(ctx, index),
         Msg::CloseAgentPicker => crate::ops::agents::close_agent_picker(ctx),
+        Msg::CloseAgentConversations => crate::ops::agent_conversations::close(ctx),
+        Msg::AgentConversationsQueryChanged(query) => {
+            crate::ops::agent_conversations::query_changed(ctx, query)
+        }
+        Msg::AgentConversationsSelect(id) => crate::ops::agent_conversations::select(ctx, id),
+        Msg::AgentConversationsOpenChain(id) => {
+            crate::ops::agent_conversations::open_chain(ctx, id)
+        }
+        Msg::AgentConversationsBack => crate::ops::agent_conversations::back(ctx),
+        Msg::AgentConversationsGoTo(id) => crate::ops::agent_conversations::go_to(ctx, id),
         Msg::AgentPickerQueryChanged(query) => crate::ops::agents::query_changed(ctx, query),
         Msg::AgentPickerSelect(location) => crate::ops::agents::select(ctx, location),
         Msg::AgentPickerActivate(location) => crate::ops::agents::activate(ctx, location),
@@ -915,6 +925,9 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         } => session::session_notifications(ctx, epoch, session_instance, name, notifications),
         Msg::SessionEvent { epoch, event } => session::session_event(ctx, epoch, event),
         Msg::SessionActions { epoch, actions } => session::session_actions(ctx, epoch, actions),
+        Msg::AgentRequestsChanged { epoch, requests } => {
+            session::agent_requests_changed(ctx, epoch, requests)
+        }
         Msg::ControlCallerGone { caller } => crate::ops::attached_control::caller_gone(ctx, caller),
         Msg::RunPaletteAction(id) => crate::ops::attached_control::run_palette_action(ctx, id),
         Msg::SessionInputMarked { epoch: _, token } => {

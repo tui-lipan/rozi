@@ -370,6 +370,8 @@ pub struct State {
     /// is connected to. Holds no rows of its own: they are a pure projection of live pane state and
     /// the host monitors' latest snapshots, rebuilt each frame so a poll cannot leave it stale.
     pub agent_picker: Option<AgentPickerState>,
+    /// The requests between the session's agents, as a list or one chain's diagram.
+    pub agent_conversations: Option<AgentConversationsState>,
     /// Latest metadata from running local session servers. The current session's live panes win
     /// over their copy here; `None` means no successful local sweep has arrived.
     pub local_agent_snapshot: Option<crate::session::discovery::LocalAgentSnapshot>,
@@ -778,6 +780,7 @@ impl State {
             session_picker: None,
             remote_picker: None,
             agent_picker: None,
+            agent_conversations: None,
             local_agent_snapshot: None,
             agent_pull_requests: AgentPullRequests::default(),
             agent_attention: AgentAttention::default(),
@@ -1396,6 +1399,7 @@ impl State {
             (self.follow_prompt.is_some(), "follow-prompt"),
             (self.collaboration.is_some(), "collaboration"),
             (self.agent_picker.is_some(), "agent-picker"),
+            (self.agent_conversations.is_some(), "agent-conversations"),
             (
                 self.remote_picker.is_some() && !self.defer_startup_picker,
                 "remote-picker",

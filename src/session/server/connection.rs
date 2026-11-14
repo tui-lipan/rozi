@@ -1546,6 +1546,9 @@ impl SessionServer {
             Target::Sender,
             ServerMessage::SessionActions { actions },
         );
+        // Always, so a reconnecting client drops requests that settled while it was away.
+        let requests = self.agent_requests_message();
+        self.enqueue(client_id, Target::Sender, requests);
         if let Some(client_name) = joined_label {
             self.record_session_event(
                 events::EventKind::ClientJoined,

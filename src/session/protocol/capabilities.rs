@@ -52,12 +52,16 @@ pub enum Capability {
     /// The server serves `agent-reply-later`: an agent keeps a request open for a reply after its
     /// turn ends.
     AgentReplyLater,
+    /// The server sends [`super::ServerMessage::AgentRequestsChanged`]: the session's agent
+    /// requests without their text, so a UI can show who is asking whom.
+    AgentRequestUpdates,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 8] = [
+    pub const ALL: [Capability; 9] = [
         Capability::AgentReplyLater,
+        Capability::AgentRequestUpdates,
         Capability::AgentRequests,
         Capability::AgentSummaries,
         Capability::ClientHandoff,
@@ -78,6 +82,7 @@ impl Capability {
             Capability::DragAndDrop => "drag-and-drop",
             Capability::AgentRequests => "agent-requests",
             Capability::AgentReplyLater => "agent-reply-later",
+            Capability::AgentRequestUpdates => "agent-request-updates",
         }
     }
 
@@ -91,7 +96,7 @@ impl Capability {
             | Self::ClientHandoff => "0.0.44",
             Self::DragAndDrop => "0.0.46",
             Self::AgentRequests => "0.0.47",
-            Self::AgentReplyLater => "0.0.48",
+            Self::AgentReplyLater | Self::AgentRequestUpdates => "0.0.48",
         }
     }
 

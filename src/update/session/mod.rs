@@ -149,6 +149,18 @@ pub(crate) fn session_actions(
     Update::full()
 }
 
+pub(crate) fn agent_requests_changed(
+    ctx: &mut Context<crate::app::AppRoot>,
+    epoch: u64,
+    requests: Vec<crate::control::AgentRequestSummary>,
+) -> Update {
+    let Some(attachment) = ctx.state.attachment_for_epoch_mut(epoch) else {
+        return Update::none();
+    };
+    attachment.agent_requests = requests;
+    Update::full()
+}
+
 pub(crate) fn session_notifications(
     ctx: &mut Context<crate::app::AppRoot>,
     epoch: u64,

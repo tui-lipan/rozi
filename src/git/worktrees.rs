@@ -367,15 +367,14 @@ fn delete_branches(cwd: &Path, branch: String, selection: BranchDeletion) -> Vec
     if selection.local {
         outcomes.push(delete_merged_branch(cwd, &branch));
     }
-    if let Some(upstream) = upstream {
-        outcomes.push(match upstream {
-            Ok(remote) => delete_remote_branch(cwd, &branch, remote),
-            Err((remote, reason)) => BranchOutcome::Kept {
-                branch,
-                copy: BranchCopy::Remote { remote },
-                reason,
-            },
-        });
+    match upstream {
+        Some(Ok(remote)) => outcomes.extend(delete_remote_branch(cwd, &branch, remote)),
+        Some(Err((remote, reason))) => outcomes.push(BranchOutcome::Kept {
+            branch,
+            copy: BranchCopy::Remote { remote },
+            reason,
+        }),
+        None => {}
     }
     outcomes
 }
@@ -432,11 +431,33 @@ fn upstream(cwd: &Path, branch: &str) -> Result<String, NoUpstream> {
     }
 }
 
+/// Delete `branch` on `remote`, or report nothing when the remote no longer has it, as after a
+/// host deletes a merged pull request's branch. A tracking ref left behind by that is dropped.
+fn delete_remote_branch(cwd: &Path, branch: &str, remote: String) -> Option<BranchOutcome> {
+    let outcome = push_remote_branch_delete(cwd, branch, remote.clone());
+    if matches!(outcome, BranchOutcome::Kept { .. }) && !remote_has_branch(cwd, &remote, branch) {
+        let mut args = argv(&["update-ref", "-d"]);
+        args.push(format!("refs/remotes/{remote}/{branch}").into());
+        // Best effort: the remote branch is gone either way.
+        let _ = command::checked(cwd, &args, WORKTREE_MUTATION_TIMEOUT);
+        return None;
+    }
+    Some(outcome)
+}
+
+/// Whether `remote` still has `branch`, assumed so when it cannot be asked.
+fn remote_has_branch(cwd: &Path, remote: &str, branch: &str) -> bool {
+    let mut args = argv(&["ls-remote", "--heads", "--"]);
+    args.push(remote.into());
+    args.push(format!("refs/heads/{branch}").into());
+    command::checked_remote(cwd, &args).map_or(true, |output| !output.trim_ascii().is_empty())
+}
+
 /// Delete `branch` on `remote` when the fetched tip is merged into the primary checkout's `HEAD`,
 /// or a merged pull request ended at it.
 /// The push only goes through while the remote still has that tip, so commits pushed since the
 /// last fetch are never lost.
-fn delete_remote_branch(cwd: &Path, branch: &str, remote: String) -> BranchOutcome {
+fn push_remote_branch_delete(cwd: &Path, branch: &str, remote: String) -> BranchOutcome {
     let tracking = format!("refs/remotes/{remote}/{branch}");
     let kept = |reason: String| BranchOutcome::Kept {
         branch: branch.to_string(),
@@ -1169,6 +1190,35 @@ mod tests {
             "{outcomes:?}"
         );
         assert!(on_origin("feat/stale"));
+
+        // The host deleted the branch after its pull request merged, whether or not a fetch has
+        // pruned the tracking ref since: nothing is left to delete or report.
+        for prune in [false, true] {
+            let name = format!("feat/gone-{prune}");
+            let gone = pushed(&name);
+            commit(&gone, "squashed elsewhere");
+            git(&gone, &["push", "-q", "origin", &name]);
+            git(
+                &origin,
+                &["update-ref", "-d", &format!("refs/heads/{name}")],
+            );
+            if prune {
+                git(&repo, &["fetch", "-q", "--prune", "origin"]);
+            }
+            assert!(
+                remove(&repo, &gone, false, false, REMOTE)
+                    .unwrap()
+                    .is_empty()
+            );
+            let tracking = Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(["show-ref", "--verify", "--quiet"])
+                .arg(format!("refs/remotes/origin/{name}"))
+                .status()
+                .unwrap();
+            assert!(!tracking.success(), "the stale tracking ref is dropped");
+        }
 
         let untracked = temp.path().join("untracked");
         create(&repo, "feat/untracked", "HEAD", &untracked).unwrap();

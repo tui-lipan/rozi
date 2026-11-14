@@ -577,39 +577,53 @@ fn narrow_workspace_tabs_scroll_with_the_shared_arrow_controls() {
 }
 
 #[test]
-fn center_pills_keep_their_cap_colors_when_they_fill_the_entire_bar() {
+fn center_pills_chain_under_powerline_and_keep_their_cap_colors_across_the_bar() {
     rozi::test_support::on_deeper_stack(|| {
-        let mut b = backend();
-        b.set_viewport(Rect {
-            x: 0,
-            y: 0,
-            w: 11,
-            h: 8,
-        });
-        {
-            let state = b.state_mut();
-            state.config.pane.workbar_style = CapStyle::Round;
-            state.config.pane.workbar_badge_style = CapStyle::Round;
-            state.config.workbar.left.clear();
-            state.config.workbar.center = vec![
-                WorkbarItem {
-                    segment: WorkbarSegment::Text("AAA".into()),
-                    color: Some(rozi::config::BadgeColor::Info),
-                    priority: None,
-                },
-                WorkbarItem {
-                    segment: WorkbarSegment::Text("BBB".into()),
-                    color: Some(rozi::config::BadgeColor::Success),
-                    priority: None,
-                },
-            ];
+        // " AAA " and " BBB " fill the bar exactly: abutting under powerline, one gap apart without.
+        for (powerline, width) in [(true, 10), (false, 11)] {
+            let mut b = backend();
+            b.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: width,
+                h: 8,
+            });
+            {
+                let state = b.state_mut();
+                state.config.pane.workbar_style = CapStyle::Round;
+                state.config.pane.workbar_badge_style = CapStyle::Round;
+                state.config.pane.workbar_powerline = powerline;
+                state.config.workbar.left.clear();
+                state.config.workbar.center = vec![
+                    WorkbarItem {
+                        segment: WorkbarSegment::Text("AAA".into()),
+                        color: Some(rozi::config::BadgeColor::Info),
+                        priority: None,
+                    },
+                    WorkbarItem {
+                        segment: WorkbarSegment::Text("BBB".into()),
+                        color: Some(rozi::config::BadgeColor::Success),
+                        priority: None,
+                    },
+                ];
+            }
+            let cells = row(&mut b);
+            let status = &b.state().theme.status;
+            let last = usize::from(width) - 1;
+            assert_eq!(cells[0].symbol, LEFT_CAP);
+            assert_eq!(cells[0].fg, status.info);
+            assert_eq!(cells[last].symbol, RIGHT_CAP);
+            assert_eq!(cells[last].fg, status.success);
+            assert_eq!(find_run(&cells, "AAA"), Some(1));
+            let seam = &cells[5];
+            if powerline {
+                assert_eq!(find_run(&cells, "BBB"), Some(6));
+                assert_eq!(seam.symbol, LEFT_CAP, "powerline joins the center pills");
+                assert_eq!((seam.fg, seam.bg), (status.success, status.info));
+            } else {
+                assert_eq!(find_run(&cells, "BBB"), Some(7));
+                assert_eq!(seam.bg, b.state().theme.surface.panel, "pills stand apart");
+            }
         }
-        let cells = row(&mut b);
-        assert_eq!(cells[0].symbol, LEFT_CAP);
-        assert_eq!(cells[0].fg, b.state().theme.status.info);
-        assert_eq!(cells[10].symbol, RIGHT_CAP);
-        assert_eq!(cells[10].fg, b.state().theme.status.success);
-        assert_eq!(find_run(&cells, "AAA"), Some(1));
-        assert_eq!(find_run(&cells, "BBB"), Some(7));
     });
 }

@@ -272,7 +272,7 @@ See [Layouts and panes](layouts-and-panes.md).
 | `workbar_badge_style` | string | `"padded"` | `"padded"`, `"round"`, or `"arrow"`. Also sets the tab style when `workbar_tab_style` is absent. |
 | `workbar_tab_style` | string | `workbar_badge_style` | `"padded"`, `"round"`, or `"arrow"`. |
 | `workbar_style` | string | `"padded"` | `"padded"`, `"half"`, `"round"`, or `"arrow"`. |
-| `workbar_powerline` | bool | `true` | Joins trailing workbar badges. |
+| `workbar_powerline` | bool | `true` | Joins adjacent badges in the workbar's `center` and `right` sections. |
 | `toast_opacity` | float | `0.8` | Finite value in `0.0..=1.0`. Invalid values are ignored. |
 | `unfocused_dim` | float | `0.0` | How far an unfocused pane's content fades toward the canvas, `0.0..=1.0`; `0.0` is off. [Described in Dim unfocused panes.](layouts-and-panes.md#dim-unfocused-panes) |
 | `background_follows_terminal` | bool | `false` | Uses the host terminal's background for the canvas. |
@@ -832,7 +832,7 @@ rozi never inserts a selected path into a command string. See [Sidebar files](si
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
 | `left` | segment array | `["title", "workspaces"]` | Segments on the left, in order. |
-| `center` | segment array | `[]` | Segments pinned to the middle of the workbar. They stay centered whatever the width of `left` and `right`, and render as standalone pills. |
+| `center` | segment array | `[]` | Segments pinned to the middle of the workbar. They stay centered whatever the width of `left` and `right`. |
 | `right` | segment array | `["location", "session"]` | Segments on the right, in order. |
 | `clock_format` | string | `"%H:%M"` | A valid strftime format. Invalid formats are ignored. |
 

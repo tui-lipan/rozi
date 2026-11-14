@@ -22,9 +22,15 @@ pub(crate) fn workbar(ctx: &Context<AppRoot>, width: u16) -> Element {
         .gap(1)
         .style(Style::new().bg(panel_bg));
 
+    let powerline = state.config.pane.workbar_powerline;
+    let center_gap = u16::from(!powerline);
     let left = configured_entries(ctx, &workbar_cfg.left);
-    let center = fit_entries(configured_entries(ctx, &workbar_cfg.center), width, 1);
-    let center_width = entries_width(&center, 1);
+    let center = fit_entries(
+        configured_entries(ctx, &workbar_cfg.center),
+        width,
+        center_gap,
+    );
+    let center_width = entries_width(&center, center_gap);
 
     let mut trailing: Vec<WorkbarEntry<TrailingChip>> = transient_chips(ctx)
         .into_iter()
@@ -44,7 +50,6 @@ pub(crate) fn workbar(ctx: &Context<AppRoot>, width: u16) -> Element {
             });
         }
     }
-    let powerline = state.config.pane.workbar_powerline;
     let (left, trailing) = fit_sides(left, trailing, width, center_width, powerline);
     // When the center reaches an outer edge, the decorative bar cap belongs to
     // that center pill rather than an empty side lane.
@@ -72,7 +77,10 @@ pub(crate) fn workbar(ctx: &Context<AppRoot>, width: u16) -> Element {
             ));
         }
     }
-    for entry in center {
+    if powerline && !center.is_empty() {
+        bar = bar.center(powerline_center(ctx, &center, panel_bg));
+    }
+    for entry in center.iter().filter(|_| !powerline) {
         if let Some(element) = center_segment_element(ctx, entry.item) {
             bar = bar.center(sized_workbar_element(
                 element,
@@ -483,7 +491,8 @@ fn trailing_cluster(
                     (CapSides::Both, false)
                 };
                 let badge = workbar_badge(
-                    ctx, &label, text_fg, bg, prev_bg, cap_style, cap_sides, same_color, on_click,
+                    ctx, &label, text_fg, bg, prev_bg, cap_style, cap_sides, same_color, None,
+                    on_click,
                 );
                 prev_bg = if powerline { bg } else { panel_bg };
                 prev_was_badge = true;
@@ -633,8 +642,10 @@ fn workbar_with_caps(
 
 /// A colored workbar chip (`label` in `text_fg` on `badge_bg`, bold) with optional caps owned by the
 /// framework's `Badge` primitive. The cap replaces the label's side padding, preserving the chip's
-/// footprint while allowing powerline seams to paint over the preceding background. A chip with an
-/// `action` answers to the pointer (see [`pointer_badge`]).
+/// footprint while allowing powerline seams to paint over the preceding background. `close_over`
+/// ends a left-capped chip with a right cap over that color, in place of its trailing pad space, so
+/// a chain can open over one color and close over another. A chip with an `action` answers to the
+/// pointer (see [`pointer_badge`]).
 #[allow(clippy::too_many_arguments)]
 fn workbar_badge(
     ctx: &Context<AppRoot>,
@@ -645,7 +656,56 @@ fn workbar_badge(
     cap_style: CapStyle,
     cap_sides: CapSides,
     same_color: bool,
+    close_over: Option<Color>,
     action: Option<Action>,
+) -> Element {
+    let footprint = RichText::from(label.to_string()).width() as u16;
+    let body = |label: &str, behind: Color, sides: CapSides, same_color: bool| {
+        badge_chip(
+            label, text_fg, badge_bg, behind, cap_style, sides, same_color,
+        )
+    };
+    let closing = close_over.zip(label.strip_suffix(' '));
+    let chip = match closing {
+        Some((close_behind, body_label)) => HStack::new()
+            .width(Length::Px(footprint))
+            .height(Length::Px(1))
+            .gap(0)
+            .child(body(body_label, cap_behind, cap_sides, same_color))
+            .child(body(" ", close_behind, CapSides::Right, false))
+            .into(),
+        None => body(label, cap_behind, cap_sides, same_color),
+    };
+    let Some(action) = action else {
+        return chip;
+    };
+    // A cap glyph is drawn in the badge color over the color behind it, so the fill it shows is the
+    // glyph's foreground. Same-color seams are a contrast glyph over the neighbor's fill and stay put.
+    let glyphs = cap_style.glyphs().is_some();
+    let left_cap = glyphs && !same_color && matches!(cap_sides, CapSides::Both | CapSides::Left);
+    let right_cap =
+        glyphs && (closing.is_some() || matches!(cap_sides, CapSides::Both | CapSides::Right));
+    let left_seam = same_color && matches!(cap_sides, CapSides::Both | CapSides::Left);
+    pointer_badge(
+        ctx,
+        chip,
+        action,
+        footprint,
+        left_cap || left_seam,
+        left_cap,
+        right_cap,
+    )
+}
+
+/// One framework `Badge` sized to `label`'s footprint, its caps standing in for the label's pad.
+fn badge_chip(
+    label: &str,
+    text_fg: Color,
+    badge_bg: Color,
+    cap_behind: Color,
+    cap_style: CapStyle,
+    cap_sides: CapSides,
+    same_color: bool,
 ) -> Element {
     let footprint = RichText::from(label.to_string()).width() as u16;
     let badge = Badge::new(label.to_string())
@@ -663,31 +723,13 @@ fn workbar_badge(
         .cap_sides(cap_sides)
         .cap_behind(cap_behind)
         .cap_same_color(same_color);
-    let chip = Frame::new()
+    Frame::new()
         .border(false)
         .padding(0)
         .width(Length::Px(footprint))
         .height(Length::Px(1))
         .child(badge)
-        .into();
-    let Some(action) = action else {
-        return chip;
-    };
-    // A cap glyph is drawn in the badge color over the color behind it, so the fill it shows is the
-    // glyph's foreground. Same-color seams are a contrast glyph over the neighbor's fill and stay put.
-    let glyphs = cap_style.glyphs().is_some();
-    let left_cap = glyphs && !same_color && matches!(cap_sides, CapSides::Both | CapSides::Left);
-    let right_cap = glyphs && matches!(cap_sides, CapSides::Both | CapSides::Right);
-    let left_seam = same_color && matches!(cap_sides, CapSides::Both | CapSides::Left);
-    pointer_badge(
-        ctx,
-        chip,
-        action,
-        footprint,
-        left_cap || left_seam,
-        left_cap,
-        right_cap,
-    )
+        .into()
 }
 
 /// The badge label text (with its blank side padding) for a workbar segment, or `None` when the
@@ -841,13 +883,13 @@ fn left_segment_element(ctx: &Context<AppRoot>, item: &WorkbarItem) -> Option<El
             .effective_cap_style(ctx.state.config.pane.workbar_badge_style),
         CapSides::Right,
         false,
+        None,
         badge_action(&item.segment),
     ))
 }
 
-/// The element for a center-region workbar item: the workspace tab strip, or a standalone pill.
-/// Center pills are symmetric (caps on both sides over the panel) whatever `workbar_powerline` says,
-/// since nothing chains into them.
+/// The element for a center-region workbar item when `workbar_powerline` is off: the workspace tab
+/// strip, or a standalone pill capped on both sides over the panel.
 fn center_segment_element(ctx: &Context<AppRoot>, item: &WorkbarItem) -> Option<Element> {
     if matches!(item.segment, WorkbarSegment::Workspaces) {
         return Some(workspace_tabs_element(ctx));
@@ -865,8 +907,65 @@ fn center_segment_element(ctx: &Context<AppRoot>, item: &WorkbarItem) -> Option<
             .effective_cap_style(ctx.state.config.pane.workbar_badge_style),
         CapSides::Both,
         false,
+        None,
         badge_action(&item.segment),
     ))
+}
+
+/// The center section with `workbar_powerline` on: adjacent badges chain like the trailing cluster,
+/// each opening over its left neighbor's color, and a run closes with a right cap over the panel.
+/// The workspace tab strip breaks the chain.
+fn powerline_center(
+    ctx: &Context<AppRoot>,
+    entries: &[WorkbarEntry<&WorkbarItem>],
+    panel_bg: Color,
+) -> Element {
+    let cap_style = ctx
+        .state
+        .config
+        .effective_cap_style(ctx.state.config.pane.workbar_badge_style);
+    let is_badge = |entry: &WorkbarEntry<&WorkbarItem>| {
+        !matches!(entry.item.segment, WorkbarSegment::Workspaces)
+    };
+    let mut row = HStack::new()
+        .width(Length::Auto)
+        .height(Length::Px(WORKBAR_HEIGHT))
+        .gap(0);
+    // The previous chip's color while it was a badge; `None` at the start of a run.
+    let mut prev_bg = None;
+    for (index, entry) in entries.iter().enumerate() {
+        let element = if is_badge(entry) {
+            let Some(label) = segment_label(ctx, &entry.item.segment) else {
+                continue;
+            };
+            let (bg, fg) = item_colors(ctx, entry.item);
+            let run_ends = !entries.get(index + 1).is_some_and(is_badge);
+            let element = workbar_badge(
+                ctx,
+                &label,
+                fg,
+                bg,
+                prev_bg.unwrap_or(panel_bg),
+                cap_style,
+                CapSides::Left,
+                prev_bg == Some(bg),
+                run_ends.then_some(panel_bg),
+                badge_action(&entry.item.segment),
+            );
+            prev_bg = Some(bg);
+            element
+        } else {
+            prev_bg = None;
+            workspace_tabs_element(ctx)
+        };
+        row = row.child(sized_workbar_element(
+            element,
+            entry.size.preferred,
+            "center",
+            entry.key,
+        ));
+    }
+    row.into()
 }
 
 /// What a workbar badge does when clicked, if it answers to the pointer at all.

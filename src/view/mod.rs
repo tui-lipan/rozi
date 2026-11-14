@@ -398,7 +398,10 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         || (ctx.state.scratch_visible && !ctx.state.scratch.panes.is_empty())
         || scratch_pane_closing
     {
-        let mut scratch_canvas = Canvas::new().height(Length::Flex(1));
+        // Passthrough, because a blocking canvas offers a press to its topmost child only. That is
+        // the pane layer, which spans the whole viewport, so a press outside the dropdown missed
+        // it, never reached the scrim, and landed on the workspace pane beneath.
+        let mut scratch_canvas = Canvas::new().height(Length::Flex(1)).passthrough(true);
         if let Some((rect, element)) = scratch_scrim {
             scratch_canvas =
                 scratch_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);

@@ -109,6 +109,36 @@ enum TurnOutcome {
 }
 
 impl AgentRequestStore {
+    /// Move every request and slot the handoff's old reference holds to its row's, under the
+    /// row's id for the conversation. A request that did not yet know it is pinned to the row's,
+    /// so a later conversation in that row cannot answer it.
+    pub(super) fn handoff(&mut self, handoff: &super::responses::AgentHandoff) {
+        let (old, new) = (&handoff.old, &handoff.new);
+        self.revision += 1;
+        for stored in &mut self.requests {
+            if stored.info.to == *old {
+                stored.info.to = new.clone();
+                handoff.rename_session(&mut stored.info.to_native_session);
+            }
+            if stored.info.from.as_ref() == Some(old) {
+                stored.info.from = Some(new.clone());
+                handoff.rename_session(&mut stored.info.from_native_session);
+            }
+        }
+        for pending in self.awaits.values_mut() {
+            if pending.caller.as_ref() == Some(old) {
+                pending.caller = Some(new.clone());
+            }
+        }
+        if let Some(mut slot) = self.slots.remove(old) {
+            slot.tracker.handoff(handoff);
+            self.slots.insert(new.clone(), slot);
+        }
+        if let Some(since) = self.stopped_since.remove(old) {
+            self.stopped_since.insert(new.clone(), since);
+        }
+    }
+
     pub(super) fn note_pane_input(&mut self, pane: PaneId) {
         self.pane_input.insert(pane, Instant::now());
     }
@@ -156,23 +186,57 @@ impl AgentRequestStore {
             })
     }
 
-    /// Where a request asked by `from` sits in the lineage: under the request `from` is answering,
-    /// or else the newest one it promised to answer later.
-    fn lineage(&self, from: Option<&protocol::AgentRef>) -> Option<(String, String, usize)> {
-        let from = from?;
-        let parent = match self.answering(from) {
-            Some(id) => self.get(id)?,
-            None => self.requests.iter().rev().find(|stored| {
-                stored.later
-                    && stored.info.state == AgentRequestState::Active
-                    && stored.info.to == *from
-            })?,
+    /// Where a request asked by `from` sits in the lineage: under `parent` when it names one,
+    /// else under the one request `from` owes, whether it is answering it now or promised to
+    /// answer it later. Several owed requests make the parent ambiguous, so the ask must name it.
+    fn lineage(
+        &self,
+        from: Option<&protocol::AgentRef>,
+        parent: Option<&str>,
+    ) -> std::result::Result<Option<(String, String, usize)>, ControlResponse> {
+        let Some(from) = from else {
+            return match parent {
+                Some(_) => Err(invalid("only an agent can ask on behalf of a request")),
+                None => Ok(None),
+            };
         };
-        Some((
+        let owed: Vec<&StoredRequest> = self
+            .requests
+            .iter()
+            .filter(|stored| {
+                self.answering(from) == Some(stored.info.id.as_str())
+                    || (stored.later
+                        && stored.info.state == AgentRequestState::Active
+                        && stored.info.to == *from)
+            })
+            .collect();
+        let parent = match (parent, owed.as_slice()) {
+            (Some(id), _) => *owed
+                .iter()
+                .find(|stored| stored.info.id == id)
+                .ok_or_else(|| {
+                    not_permitted(format!(
+                        "request `{id}` is not one this agent is answering or promised to answer"
+                    ))
+                })?,
+            (None, []) => return Ok(None),
+            (None, [only]) => only,
+            (None, several) => {
+                let ids = several
+                    .iter()
+                    .map(|stored| format!("`{}`", stored.info.id))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(invalid(format!(
+                    "this agent owes requests {ids}; pass --for <ID> to say which one this ask is for"
+                )));
+            }
+        };
+        Ok(Some((
             parent.info.id.clone(),
             parent.info.root.clone(),
             parent.depth + 1,
-        ))
+        )))
     }
 
     fn admit(
@@ -414,6 +478,7 @@ impl SessionServer {
         from: Option<protocol::AgentRef>,
         target: AgentTarget,
         prompt: String,
+        parent: Option<&str>,
     ) -> ControlResponse {
         if prompt.trim().is_empty() {
             return invalid("a request needs prompt text");
@@ -431,7 +496,10 @@ impl SessionServer {
         if from.as_ref() == Some(&to) {
             return invalid("an agent cannot ask itself");
         }
-        let lineage = self.agent_requests.lineage(from.as_ref());
+        let lineage = match self.agent_requests.lineage(from.as_ref(), parent) {
+            Ok(lineage) => lineage,
+            Err(response) => return response,
+        };
         if let Err(response) = self.agent_requests.admit(&to, lineage.as_ref()) {
             return response;
         }
@@ -521,8 +589,6 @@ impl SessionServer {
         ControlResponse::ok(answered)
     }
 
-    /// Keep request `id` open for its agent to reply after the turn it was delivered in: that
-    /// turn's end no longer answers it from the terminal, and the agent can take the next request.
     /// The requests attached clients are shown, for a client that has just attached.
     pub(super) fn agent_requests_message(&self) -> protocol::ServerMessage {
         protocol::ServerMessage::AgentRequestsChanged {
@@ -549,6 +615,8 @@ impl SessionServer {
         });
     }
 
+    /// Keep request `id` open for its agent to reply after the turn it was delivered in: that
+    /// turn's end no longer answers it from the terminal, and the agent can take the next request.
     pub(super) fn reply_later(
         &mut self,
         caller: Option<protocol::AgentRef>,
@@ -568,8 +636,18 @@ impl SessionServer {
             ));
         }
         let to = request.to.clone();
+        // The conversation the turn bound itself to, so the reply comes from the same one.
+        let mut turn_session = None;
         if self.agent_requests.answering(&to) == Some(id) {
-            self.agent_requests.slots.remove(&to);
+            let slot = self
+                .agent_requests
+                .slots
+                .remove(&to)
+                .expect("answering slot");
+            turn_session = slot
+                .tracker
+                .fence()
+                .and_then(|fence| fence.native_session.clone());
         }
         self.agent_requests.revision += 1;
         let stored = self
@@ -579,6 +657,9 @@ impl SessionServer {
             .find(|stored| stored.info.id == id)
             .expect("looked up above");
         stored.later = true;
+        if stored.info.to_native_session.is_none() {
+            stored.info.to_native_session = turn_session;
+        }
         settle(
             &mut stored.info,
             AgentRequestState::Active,
@@ -605,20 +686,22 @@ impl SessionServer {
             })
             .collect();
         for (id, to, recorded_session) in deferred {
-            let reason = match self.request_agent(&to) {
-                Err(reason) => Some(reason),
-                Ok(_)
-                    if recorded_session.is_some()
-                        && self.response_native_session(&to) != recorded_session =>
-                {
-                    Some("the agent moved to another conversation".to_string())
+            let native_session = self.response_native_session(&to);
+            let agent = self.request_agent(&to);
+            let info = self.agent_requests.info_mut(&id).expect("listed above");
+            let reason = match agent {
+                Err(reason) => reason,
+                // Bound to the first conversation the agent reports, as a turn's fence is.
+                Ok(_) if recorded_session.is_none() => {
+                    info.to_native_session = native_session;
+                    continue;
                 }
-                Ok(_) => None,
+                Ok(_) if native_session != recorded_session => {
+                    "the agent moved to another conversation".to_string()
+                }
+                Ok(_) => continue,
             };
-            if let Some(reason) = reason {
-                let info = self.agent_requests.info_mut(&id).expect("listed above");
-                settle(info, AgentRequestState::Failed, Some(reason));
-            }
+            settle(info, AgentRequestState::Failed, Some(reason));
         }
     }
 
@@ -642,11 +725,7 @@ impl SessionServer {
                 "the agent has moved to another conversation since request `{id}` was sent"
             )));
         }
-        let from_screen = request
-            .response
-            .as_ref()
-            .is_some_and(|existing| existing.content.fidelity == AgentResponseFidelity::Rendered);
-        if let Some(existing) = request.response.as_ref().filter(|_| !from_screen) {
+        if let Some(existing) = &request.response {
             let repeat = existing.content.source == AgentResponseSource::AgentCli
                 && existing.content.text == text;
             return Some(if repeat {
@@ -655,9 +734,7 @@ impl SessionServer {
                 conflict(format!("request `{id}` is already answered"))
             });
         }
-        // A turn can end before the agent replies, such as while a command it started in the
-        // background still runs. Its reply then replaces what was read from its terminal.
-        if request.state.is_resolved() && !from_screen {
+        if request.state.is_resolved() {
             return Some(conflict(format!(
                 "request `{id}` is {}",
                 state_name(request.state)

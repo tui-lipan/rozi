@@ -323,6 +323,60 @@ mod unix {
     }
 
     #[test]
+    fn ask_wait_that_loses_its_endpoint_still_names_the_request() {
+        let root = isolated_home("ask-wait");
+        let socket = root.join("control.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let mut command = command(&root);
+        for (key, _) in std::env::vars_os() {
+            if key.to_string_lossy().starts_with("ROZI") {
+                command.env_remove(key);
+            }
+        }
+        let child = command
+            .args(["--socket", socket.to_str().unwrap()])
+            .args([
+                "agents",
+                "ask",
+                "--target",
+                "1",
+                "--wait",
+                "--timeout",
+                "1m",
+            ])
+            .args(["--format", "json", "--", "Review it"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        // Answer the ask, then disappear before the await connects.
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = String::new();
+        BufReader::new(stream.try_clone().unwrap())
+            .read_line(&mut request)
+            .unwrap();
+        assert!(request.contains(r#""cmd":"agent-ask""#), "{request}");
+        writeln!(
+            stream,
+            r#"{{"ok":true,"data":{{"id":"rq_1","state":"queued"}}}}"#
+        )
+        .unwrap();
+        drop(stream);
+        drop(listener);
+        fs::remove_file(&socket).unwrap();
+
+        let output = child.wait_with_output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{stderr}");
+        let reply: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["ok"], false);
+        assert_eq!(reply["data"]["id"], "rq_1");
+        assert!(stderr.contains("rozi agents await rq_1"), "{stderr}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn control_clients_skip_managed_installation_recovery() {
         let root = isolated_home("control-client");
         fs::write(root.join("data").join("rozi"), b"not a directory").unwrap();

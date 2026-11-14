@@ -435,7 +435,8 @@ fn reply_timeout(command: &crate::control::ControlCommand) -> Option<Duration> {
         ControlCommand::Invoke { timeout_ms, .. } => {
             Some(crate::control::longest_invoke_ms(*timeout_ms))
         }
-        ControlCommand::AgentWait { timeout_ms, .. } => *timeout_ms,
+        ControlCommand::AgentWait { timeout_ms, .. }
+        | ControlCommand::AgentAwait { timeout_ms, .. } => *timeout_ms,
         ControlCommand::AgentPrompt {
             wait: Some(_),
             timeout_ms,
@@ -568,6 +569,14 @@ mod tests {
         assert_eq!(
             reply_timeout(&prompt(Some(AgentWaitCondition::Idle), Some(300_000))),
             Some(Duration::from_secs(300) + WAIT_REPLY_SLACK)
+        );
+        assert_eq!(
+            reply_timeout(&ControlCommand::AgentAwait {
+                id: "rq_1".to_string(),
+                timeout_ms: Some(300_000),
+            }),
+            Some(Duration::from_secs(300) + WAIT_REPLY_SLACK),
+            "awaiting another agent's answer waits as long as the caller asked"
         );
         assert_eq!(
             reply_timeout(&wait(None)),

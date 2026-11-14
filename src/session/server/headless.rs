@@ -786,10 +786,15 @@ impl SessionServer {
             ControlCommand::PaneLogging { target, enabled } => {
                 self.session_pane_logging(target, enabled, broadcasts)
             }
-            ControlCommand::AgentAsk { target, prompt } => self.ask_agent(
+            ControlCommand::AgentAsk {
+                target,
+                prompt,
+                parent,
+            } => self.ask_agent(
                 self.caller_agent(request.source_session.as_ref(), request.source_pane),
                 target,
                 prompt,
+                parent.as_deref(),
             ),
             ControlCommand::AgentReply { id, text } => self.reply_to_request(
                 self.caller_agent(request.source_session.as_ref(), request.source_pane),
@@ -1266,6 +1271,7 @@ impl SessionServer {
 
     pub(super) fn session_pane_report(&self) -> Vec<PaneInfo> {
         let workspaces = self.layout_workspace_index();
+        let names = self.layout_pane_names();
         let mut panes: Vec<PaneInfo> = self
             .panes
             .iter()
@@ -1289,9 +1295,16 @@ impl SessionServer {
                     id: *id,
                     reference: Some(reference),
                     agent_ref: runtime.as_ref().map(|runtime| runtime.reference.clone()),
-                    title: pane
-                        .effective_title()
+                    // The user's name for the pane wins, as on a UI endpoint. The layout carries a
+                    // rename or a cleared name; the pane only the name it was started with, which
+                    // counts only for a pane no layout places yet.
+                    title: names
+                        .get(id)
+                        .cloned()
+                        .unwrap_or_else(|| pane.title.clone())
+                        .or_else(|| pane.program_title())
                         .unwrap_or_else(|| format!("pane {id}")),
+                    program_title: pane.program_title(),
                     workspace: workspaces.get(id).copied().unwrap_or(0),
                     command: pane
                         .launch
@@ -1587,6 +1600,17 @@ impl SessionServer {
     }
 
     /// One-based workspace number per pane, read from the shared layout document.
+    /// The name the user gives each pane the layout places, `None` for one they left unnamed or
+    /// whose name they cleared.
+    fn layout_pane_names(&self) -> HashMap<PaneId, Option<String>> {
+        self.layout
+            .iter()
+            .flat_map(|layout| &layout.workspaces)
+            .flat_map(|workspace| &workspace.panes)
+            .map(|pane| (pane.pane_id, pane.title.clone()))
+            .collect()
+    }
+
     fn layout_workspace_index(&self) -> HashMap<PaneId, usize> {
         let mut index = HashMap::new();
         let Some(layout) = &self.layout else {
@@ -2617,6 +2641,33 @@ mod tests {
         let mut pane = super::super::tests::test_pane(1);
         pane.screen_mut().process_bytes(bytes);
         server.panes.insert(id, pane);
+    }
+
+    #[test]
+    fn a_named_pane_reports_its_name_and_its_programs_title_apart() {
+        let mut server = SessionServer::new_named("titles");
+        let mut pane = super::super::tests::test_pane(1);
+        pane.title = Some("ci".to_string());
+        server.panes.insert(1, pane);
+
+        // A client attaching now must not take the name for a title the program set.
+        let meta = server.pane_metadata(None, 1).expect("pane metadata");
+        assert_eq!(meta.title.as_deref(), Some("ci"));
+        assert_eq!(meta.program_title, None);
+
+        server
+            .panes
+            .get_mut(&1)
+            .unwrap()
+            .screen_mut()
+            .process_bytes(b"\x1b]0;build\x07");
+        let report = server.session_pane_report();
+        assert_eq!(report[0].title, "ci");
+        assert_eq!(report[0].program_title.as_deref(), Some("build"));
+
+        // The user cleared the name it started with: the layout places the pane unnamed.
+        server.layout = Some(one_pane_layout(1));
+        assert_eq!(server.session_pane_report()[0].title, "build");
     }
 
     fn pane_with_agent(server: &mut SessionServer, id: PaneId) {

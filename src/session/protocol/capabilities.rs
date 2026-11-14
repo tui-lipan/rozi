@@ -55,11 +55,14 @@ pub enum Capability {
     /// The server sends [`super::ServerMessage::AgentRequestsChanged`]: the session's agent
     /// requests without their text, so a UI can show who is asking whom.
     AgentRequestUpdates,
+    /// [`super::PaneMeta::program_title`] carries the program's own title, so a client can tell it
+    /// from a name the user gave the pane. Without it, `title` is the only title there is.
+    PaneProgramTitle,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 9] = [
+    pub const ALL: [Capability; 10] = [
         Capability::AgentReplyLater,
         Capability::AgentRequestUpdates,
         Capability::AgentRequests,
@@ -67,6 +70,7 @@ impl Capability {
         Capability::ClientHandoff,
         Capability::DragAndDrop,
         Capability::GraphicsRootFrameEdits,
+        Capability::PaneProgramTitle,
         Capability::ProjectSummaries,
         Capability::RuntimeMetrics,
     ];
@@ -83,6 +87,7 @@ impl Capability {
             Capability::AgentRequests => "agent-requests",
             Capability::AgentReplyLater => "agent-reply-later",
             Capability::AgentRequestUpdates => "agent-request-updates",
+            Capability::PaneProgramTitle => "pane-program-title",
         }
     }
 
@@ -96,7 +101,7 @@ impl Capability {
             | Self::ClientHandoff => "0.0.44",
             Self::DragAndDrop => "0.0.46",
             Self::AgentRequests => "0.0.47",
-            Self::AgentReplyLater | Self::AgentRequestUpdates => "0.0.48",
+            Self::AgentReplyLater | Self::AgentRequestUpdates | Self::PaneProgramTitle => "0.0.48",
         }
     }
 

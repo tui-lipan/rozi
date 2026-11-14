@@ -602,6 +602,11 @@ impl PaneInfo {
             agent_ref: session_instance
                 .and_then(|_| runtime.as_ref().map(|runtime| runtime.reference.clone())),
             title: pane.display_title(pane.terminal.title()),
+            // A title an older server sent may be the user's name for the pane.
+            program_title: pane
+                .terminal
+                .title()
+                .filter(|_| pane.terminal.title_from_program),
             workspace,
             command: pane
                 .identity
@@ -3735,6 +3740,7 @@ mod tests {
             backend.state_mut().current_mut().session_name = Some("dev".into());
             let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
             pane.terminal.title = Some("build".into());
+            pane.identity.custom_title = Some("ci".into());
             pane.terminal.foreground_program = Some("cargo".into());
             pane.terminal.foreground_programs = vec!["cargo".into(), "rustc".into()];
             pane.terminal.foreground_arguments = vec!["test".into()];
@@ -3766,10 +3772,43 @@ mod tests {
             assert_eq!(data[0]["reported_status"], "working");
             assert_eq!(data[0]["status_reason"], "building");
             assert_eq!(data[0]["session"], "dev");
-            assert_eq!(data[0]["title"], "build");
+            assert_eq!(data[0]["title"], "ci");
+            assert_eq!(data[0]["program_title"], "build");
             assert_eq!(data[0]["foreground_program"], "cargo");
             assert_eq!(data[0]["foreground_programs"][1], "rustc");
             assert_eq!(data[0]["foreground_arguments"][0], "test");
+        });
+    }
+
+    #[test]
+    fn list_panes_reports_no_program_title_from_a_server_that_cannot_tell_one() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            // What an older server sent at attach for a pane named `ci` whose program set none.
+            let terminal = &mut backend.state_mut().current_mut().workspaces[0].panes[0].terminal;
+            terminal.title = Some("ci".into());
+            terminal.title_from_program = false;
+            // Losing the connection keeps the pane as it was, and what its title was.
+            backend.state_mut().current_mut().mark_disconnected();
+            let (reply, response) = mpsc::channel();
+            backend
+                .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                    request: ControlRequest {
+                        command: ControlCommand::ListPanes,
+                        source_pane: None,
+                        source_session: None,
+                        extension: None,
+                        caller_context: None,
+                        credential: None,
+                    },
+                    reply,
+                    worker: None,
+                    caller: None,
+                }))
+                .expect("dispatch list panes");
+            let data = response.recv().unwrap().data.unwrap();
+            assert_eq!(data[0]["title"], "ci");
+            assert!(data[0].get("program_title").is_none());
         });
     }
 

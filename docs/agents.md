@@ -417,11 +417,12 @@ id=$(rozi agents ask --ref "$REVIEWER" --format json -- "Review the parser chang
 rozi agents await "$id" --timeout 10m
 ```
 
-`--wait --timeout <DUR>` does both in one command and prints the answer. An agent can run it as a
-background command, end its turn, and be notified when the answer arrives:
+`--wait --timeout <DUR>` does both in one command. With `--format text` it prints only the answer,
+so an agent can run it as a background command, end its turn, and be notified with the answer when
+it arrives. If the wait fails, the request stays asked; await its id rather than asking again.
 
 ```bash
-rozi agents ask --ref "$REVIEWER" --wait --timeout 30m -- "Review the parser changes"
+rozi agents ask --ref "$REVIEWER" --wait --timeout 30m --format text -- "Review the parser changes"
 ```
 
 rozi types the request into the other agent once it is idle, done, or in error, shows no dialog,
@@ -432,6 +433,8 @@ agent's [integration response](#read-the-agents-response), or else its terminal 
 ends, read the same way, including an alternate-screen transcript. An agent that will answer after
 its turn, such as when a background command finishes, runs `rozi agents reply <ID> --later` first:
 the request then stays `active` past the turn, and the agent can take the next request meanwhile.
+What the agent asks while it owes a request belongs to that request; an agent that owes several
+names the one with `agents ask --for <ID>`, or the ask is refused.
 An agent that asks before running commands asks before each reply too; for Claude Code, allow
 `Bash(rozi agents:*)` in its permissions.
 
@@ -439,7 +442,7 @@ An agent that asks before running commands asks before each reply too; for Claud
 | --- | --- |
 | `queued` | Not typed yet; `reason` says what it waits for. A reply answers it without typing it. |
 | `active` | Typed into the agent, or promised a later reply. |
-| `answered` | `response` holds the answer. The first answer stands, except that the agent's reply replaces one read from its terminal; a different reply is refused with `conflict`. |
+| `answered` | `response` holds the answer. The first answer stands; a different reply is refused with `conflict`. |
 | `failed` | The agent exited, was replaced, or moved to another conversation before answering. |
 | `cancelled` | Cancelled by whoever asked, or the asking agent left or changed conversation before delivery. |
 

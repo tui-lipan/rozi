@@ -249,6 +249,10 @@ pub struct TerminalPane {
     pub rows: u16,
     pub status: ManagedTerminalStatus,
     pub title: Option<String>,
+    /// Whether `title` is what the program set. False only while it holds what an older session
+    /// server sent at attach, which may be the user's name for the pane; this client's own reading
+    /// of the program's output makes it true again.
+    pub title_from_program: bool,
     /// Account that launched the pane's original shell. Supplied by the session server on attach;
     /// fresh panes also learn it from their first conventional `user@host:cwd` shell title.
     pub original_user: Option<String>,
@@ -489,6 +493,7 @@ impl TerminalPane {
             rows,
             status: ManagedTerminalStatus::Starting,
             title: None,
+            title_from_program: true,
             original_user: None,
             cwd: None,
             cwd_host: None,
@@ -705,6 +710,7 @@ impl TerminalPane {
         let chrome_changed =
             self.title != title || !matches!(self.status, ManagedTerminalStatus::Ready);
         self.title = title;
+        self.title_from_program = true;
         self.status = ManagedTerminalStatus::Ready;
         let frame = if chrome_changed {
             OutputFrame::Rebuild

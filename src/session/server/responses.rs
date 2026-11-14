@@ -26,7 +26,39 @@ pub(super) struct AgentResponseFence {
     pub(super) native_session: Option<String>,
 }
 
+/// A detected agent taking its published row's reference, with the id its conversation goes by
+/// on each side. A hook reports under the session its process runs as, which a row that moved to
+/// another process keeps apart from the one it resumes, so the two ids can differ for one
+/// conversation.
+pub(super) struct AgentHandoff {
+    pub old: AgentRef,
+    pub new: AgentRef,
+    /// What `old` named the conversation: the session the pane's claim reported, if any.
+    pub old_session: Option<String>,
+    /// What the row names it.
+    pub new_session: Option<String>,
+}
+
+impl AgentHandoff {
+    /// Rename a conversation recorded under `old` to the row's id for it. One not known yet is
+    /// the row's too; any other keeps its id, so it still reads as a different conversation.
+    pub fn rename_session(&self, session: &mut Option<String>) {
+        if session.is_none() || *session == self.old_session {
+            session.clone_from(&self.new_session);
+        }
+    }
+}
+
 impl AgentResponseStore {
+    pub(super) fn handoff(&mut self, handoff: &AgentHandoff) {
+        if let Some(mut entries) = self.entries.remove(&handoff.old) {
+            for entry in &mut entries {
+                handoff.rename_session(&mut entry.native_session);
+            }
+            self.entries.insert(handoff.new.clone(), entries);
+        }
+    }
+
     pub fn fence(&self, native_session: Option<String>) -> AgentResponseFence {
         AgentResponseFence {
             generation: self.generation,
@@ -390,6 +422,54 @@ mod tests {
         );
         let snapshot = serde_json::to_string(&server.panes[&7].runtime).unwrap();
         assert!(!snapshot.contains("exact answer"));
+
+        // A publisher that sends no response still answers from the conversation on screen.
+        server
+            .report_pane_rows(
+                client,
+                7,
+                1,
+                false,
+                publisher(0, false),
+                vec![row("working")],
+            )
+            .unwrap();
+        server
+            .register_post_prompt_wait(
+                client,
+                reference.clone(),
+                AgentWaitCondition::Turn,
+                None,
+                None,
+                true,
+                ReplyTo::Attached { request_id: 43 },
+            )
+            .unwrap();
+        server
+            .panes
+            .get_mut(&7)
+            .unwrap()
+            .screen_mut()
+            .process_bytes(b"PONG");
+        server
+            .report_pane_rows(client, 7, 1, false, publisher(0, false), vec![row("done")])
+            .unwrap();
+        server.flush_clients();
+        let response = loop {
+            match protocol::read_frame(&mut stream).unwrap() {
+                protocol::ServerMessage::AttachedControlResult {
+                    request_id: 43,
+                    response,
+                } => break response,
+                protocol::ServerMessage::SessionEvent { .. } => {}
+                message => panic!("{message:?}"),
+            }
+        };
+        let result: AgentWaitResult = serde_json::from_value(response.data.unwrap()).unwrap();
+        let content = result.response.unwrap().content;
+        assert_eq!(content.source, AgentResponseSource::Terminal);
+        assert!(content.text.contains("PONG"), "{}", content.text);
+        assert!(!content.complete);
     }
 
     #[cfg(unix)]

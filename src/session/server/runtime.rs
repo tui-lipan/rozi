@@ -136,6 +136,56 @@ impl AgentScratch {
         }
     }
 
+    /// The conversation a publisher marks on screen can take over the detected process's identity,
+    /// with the native session it now names. Background rows beside it are other conversations,
+    /// so they never block it; several rows on screen, or none, leave nothing to follow.
+    ///
+    /// A claim on the pane does not block it either while it is the same agent and the same
+    /// conversation: the agent's own OSC 7501 report, or a hook naming the row's session.
+    fn handoff_detected_row(
+        &mut self,
+        runtime: &PaneRuntimeState,
+        rows: &[protocol::PublishedRow],
+    ) -> Option<RowHandoff> {
+        if runtime.rows.iter().any(protocol::PublishedRow::is_agent)
+            || self.reference_launch != runtime.agent_launch
+        {
+            return None;
+        }
+        let detected = runtime.detected_agent.as_ref()?;
+        let mut active = rows.iter().filter(|row| row.is_agent() && row.active);
+        let row = active.next()?;
+        if active.next().is_some() {
+            return None;
+        }
+        if let Some(integration) = &runtime.integration {
+            let confirms = integration.identity.id == detected.agent.id
+                && (is_program_report(integration)
+                    || integration.native_session.is_some()
+                        && integration.native_session.as_deref()
+                            == protocol::row_reporting_session(row));
+            if !confirms {
+                return None;
+            }
+        }
+        let tracked = self.references.get(&None)?;
+        if tracked.identity != detected.agent.id {
+            return None;
+        }
+        let tracked = self.references.remove(&None)?;
+        let handoff = RowHandoff {
+            incarnation: tracked.incarnation,
+            slot: row.key(),
+            old_session: runtime
+                .integration
+                .as_ref()
+                .and_then(|integration| integration.native_session.clone()),
+            new_session: row.native_session.clone(),
+        };
+        self.references.insert(Some(handoff.slot.clone()), tracked);
+        Some(handoff)
+    }
+
     /// Track the pane-level reference an integration claim is bound to. The claim names its own
     /// incarnation, so re-binding the same one keeps the runs it has already finished.
     fn bind_claim(&mut self, integration: &protocol::AgentIntegrationReport) {
@@ -340,6 +390,15 @@ fn integration_has_strong_replacement_evidence(
         .detected_agent
         .as_ref()
         .is_some_and(|detected| detected.agent.id != integration.identity.id)
+}
+
+/// The detected agent's reference moving to the published row `slot`, and the ids its conversation
+/// goes by before and after.
+pub(super) struct RowHandoff {
+    incarnation: u64,
+    slot: protocol::RowKey,
+    old_session: Option<String>,
+    new_session: Option<String>,
 }
 
 /// One agent as [`AgentScratch::agent_states`] saw it.
@@ -1127,10 +1186,35 @@ impl SessionServer {
             .is_none()
             .then(|| events::PaneRuntimeBaseline::capture(&session_instance, pane_id, pane));
         let resume_before = super::resurrect::resume_target(pane);
+        let handoff = pane.agent.handoff_detected_row(&pane.runtime, &next);
         replace_pane_rows(pane, next);
         retire_orphaned_row_reports(pane);
         let resume_changed = super::resurrect::resume_target(pane) != resume_before;
         let state = pane.runtime.clone();
+        if let Some(handoff) = handoff {
+            let old = protocol::AgentRef {
+                pane: protocol::PaneRef {
+                    session_instance,
+                    pane_id,
+                    generation,
+                },
+                slot: None,
+                incarnation: handoff.incarnation,
+            };
+            let handoff = super::responses::AgentHandoff {
+                new: protocol::AgentRef {
+                    slot: Some(handoff.slot),
+                    ..old.clone()
+                },
+                old,
+                old_session: handoff.old_session,
+                new_session: handoff.new_session,
+            };
+            self.agent_requests.handoff(&handoff);
+            self.handoff_agent_waits(&handoff);
+            self.handoff_agent_history(&handoff);
+            self.agent_responses.handoff(&handoff);
+        }
         let message = self.finish_pane_runtime_change(owner, pane_id, generation, state, baseline);
         // The snapshot names the conversation a restore reopens. A publisher switching it is a
         // change the snapshot has to catch even if the pane prints nothing afterwards; an activity

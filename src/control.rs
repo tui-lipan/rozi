@@ -157,9 +157,10 @@ impl ControlCommand {
             | Self::RecordUiMark { .. }
             | Self::Pick { .. }
             | Self::Prompt { .. } => None,
-            Self::AgentReplyLater { .. } => {
-                Some(crate::session::protocol::Capability::AgentReplyLater)
-            }
+            Self::AgentReplyLater { .. }
+            | Self::AgentAsk {
+                parent: Some(_), ..
+            } => Some(crate::session::protocol::Capability::AgentReplyLater),
             Self::AgentAsk { .. }
             | Self::AgentReply { .. }
             | Self::AgentAwait { .. }
@@ -767,8 +768,14 @@ pub enum ControlCommand {
     AgentResponse { target: AgentTarget },
     /// Ask another agent of the caller's session, without waiting: the session delivers the prompt
     /// when the agent is ready and keeps the answer. The caller is derived from the request's
-    /// `source_session` and `source_pane`.
-    AgentAsk { target: AgentTarget, prompt: String },
+    /// `source_session` and `source_pane`. `parent` names the request the caller asks on behalf
+    /// of; without it, the session infers it when the caller owes exactly one.
+    AgentAsk {
+        target: AgentTarget,
+        prompt: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
+    },
     /// Answer a request sent to the calling agent.
     AgentReply { id: String, text: String },
     /// Keep a request sent to the calling agent open for a reply after its turn ends, instead of
@@ -1085,6 +1092,10 @@ pub struct PaneInfo {
     pub on_screen: bool,
     pub agent_ref: Option<crate::session::protocol::AgentRef>,
     pub title: String,
+    /// The title the running program set, when it set one. `title` shows a name the user gave the
+    /// pane instead, so a script that reads what the program says about itself reads this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program_title: Option<String>,
     /// One-based workspace, or `0` when the session has no layout document yet - nothing has
     /// placed the pane, so there is no workspace to name.
     pub workspace: usize,
@@ -3234,12 +3245,27 @@ mod tests {
         );
         let baseline: ControlRequest = serde_json::from_str(r#"{"cmd":"list-panes"}"#).unwrap();
         assert_eq!(baseline.command.required_session_capability(), None);
+        // An older server would ignore `parent` and guess the lineage, so it is never sent one.
+        let ask = |parent: Option<&str>| ControlCommand::AgentAsk {
+            target: AgentTarget::Pane(3),
+            prompt: "why?".into(),
+            parent: parent.map(Into::into),
+        };
+        assert_eq!(
+            ask(None).required_session_capability(),
+            Some(crate::session::protocol::Capability::AgentRequests)
+        );
+        assert_eq!(
+            ask(Some("r1")).required_session_capability(),
+            Some(crate::session::protocol::Capability::AgentReplyLater)
+        );
         for cap in crate::session::protocol::Capability::ALL {
             let expected = match cap {
                 crate::session::protocol::Capability::DragAndDrop => "0.0.46",
                 crate::session::protocol::Capability::AgentRequests => "0.0.47",
                 crate::session::protocol::Capability::AgentReplyLater
-                | crate::session::protocol::Capability::AgentRequestUpdates => "0.0.48",
+                | crate::session::protocol::Capability::AgentRequestUpdates
+                | crate::session::protocol::Capability::PaneProgramTitle => "0.0.48",
                 _ => "0.0.44",
             };
             assert_eq!(cap.introduced_in(), expected, "{cap}");
@@ -3459,6 +3485,7 @@ mod tests {
             reference: None,
             agent_ref: None,
             title: "pane 3".to_string(),
+            program_title: None,
             workspace: 1,
             command: None,
             on_screen: true,

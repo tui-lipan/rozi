@@ -3347,6 +3347,7 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
                     rows: 24,
                     pid: Some(42),
                     title: Some("shared-title".into()),
+                    program_title: Some("shared-title".into()),
                     original_user: None,
                     exited: None,
                     logging: false,

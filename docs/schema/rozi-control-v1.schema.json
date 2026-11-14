@@ -2595,11 +2595,17 @@
           "type": "object"
         },
         {
-          "description": "Ask another agent of the caller's session, without waiting: the session delivers the prompt\nwhen the agent is ready and keeps the answer. The caller is derived from the request's\n`source_session` and `source_pane`.",
+          "description": "Ask another agent of the caller's session, without waiting: the session delivers the prompt\nwhen the agent is ready and keeps the answer. The caller is derived from the request's\n`source_session` and `source_pane`. `parent` names the request the caller asks on behalf\nof; without it, the session infers it when the caller owes exactly one.",
           "properties": {
             "cmd": {
               "const": "agent-ask",
               "type": "string"
+            },
+            "parent": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "prompt": {
               "type": "string"
@@ -4591,11 +4597,17 @@
           "type": "object"
         },
         {
-          "description": "Ask another agent of the caller's session, without waiting: the session delivers the prompt\nwhen the agent is ready and keeps the answer. The caller is derived from the request's\n`source_session` and `source_pane`.",
+          "description": "Ask another agent of the caller's session, without waiting: the session delivers the prompt\nwhen the agent is ready and keeps the answer. The caller is derived from the request's\n`source_session` and `source_pane`. `parent` names the request the caller asks on behalf\nof; without it, the session infers it when the caller owes exactly one.",
           "properties": {
             "cmd": {
               "const": "agent-ask",
               "type": "string"
+            },
+            "parent": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "prompt": {
               "type": "string"
@@ -6350,6 +6362,13 @@
         "on_screen": {
           "description": "Whether this pane's session is the one on screen. Pane ids repeat across sessions, so a\ncommand naming a pane by id reaches this pane only while this is true.",
           "type": "boolean"
+        },
+        "program_title": {
+          "description": "The title the running program set, when it set one. `title` shows a name the user gave the\npane instead, so a script that reads what the program says about itself reads this.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "recording": {
           "description": "The session server is recording this pane; `record list` says where.",

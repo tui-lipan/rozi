@@ -248,7 +248,7 @@ rozi agents list --format json
 rozi agents get --target <PANE_ID> --format json
 rozi agents read --target <PANE_ID> --scrollback 200
 rozi agents wait --target <PANE_ID> --until quiescent --timeout 2m
-rozi agents ask --ref '<JSON>' --wait --timeout 30m -- 'Fix the failing test and tell me the cause'
+rozi agents ask --ref '<JSON>' --wait --timeout 30m --format text -- 'Fix the failing test and tell me the cause'
 rozi --here agents prompt --ref '<JSON>' --wait turn --timeout 10m '/compact'
 rozi agents response --target <PANE_ID> --format json
 rozi --session dev agents wait --target <PANE_ID> --until quiescent --timeout 2m
@@ -293,12 +293,13 @@ chrome and older output included. Treat it as terminal content, not an assistant
 interrupting it, and its answer is the agent's own reply text:
 
 ```bash
-rozi agents ask --ref '<JSON>' --wait --timeout 30m -- 'Review the parser changes in src/parse.rs'
+rozi agents ask --ref '<JSON>' --wait --timeout 30m --format text -- 'Review the parser changes in src/parse.rs'
 ```
 
 - Run `ask --wait` as a **background command** when your harness has them. Your turn can end, the
   command exits with the answer as its output, and you are notified then. Ask several agents at
-  once with one background command each.
+  once with one background command each. Keep `--format text`: without it, captured output is JSON.
+- If the wait fails, the error names the request id: `rozi agents await` it, do not ask again.
 - Rozi types the request into the target only once it is stopped, shows no dialog, and nobody has
   typed into its pane for two seconds; until then it is `queued`, with a `reason`.
 - Without `--wait`, `ask` returns the request and its `id` at once; `rozi agents await <ID>
@@ -318,7 +319,8 @@ EOF
 - To answer after your turn ends, such as when a background command finishes, run
   `rozi agents reply <ID> --later` before the turn ends, then `reply` when you have the answer.
   Otherwise the end of your turn answers the request with your terminal. You can take other
-  requests meanwhile.
+  requests meanwhile. While you owe more than one request, an `ask` you make for one of them
+  needs `--for <ID>`.
 - If your harness asks before each command, an approval for `rozi agents` keeps requests flowing;
   without it, the other agent's request waits on your approval.
 - If `await` refuses because the other agent has asked you something (a wait cycle), read that

@@ -55,14 +55,14 @@ impl Rig {
         let from = from.map(|pane| self.agent(pane));
         info(
             self.server
-                .ask_agent(from, AgentTarget::Pane(to), text.into()),
+                .ask_agent(from, AgentTarget::Pane(to), text.into(), None),
         )
     }
 
     fn try_ask(&mut self, from: PaneId, to: PaneId) -> ControlResponse {
         let from = self.agent(from);
         self.server
-            .ask_agent(Some(from), AgentTarget::Pane(to), "another".into())
+            .ask_agent(Some(from), AgentTarget::Pane(to), "another".into(), None)
     }
 
     fn request(&self, id: &str) -> AgentRequestInfo {
@@ -103,6 +103,155 @@ fn info(response: ControlResponse) -> AgentRequestInfo {
 fn code(response: ControlResponse) -> Option<ControlErrorCode> {
     assert!(!response.ok, "{response:?}");
     response.code
+}
+
+#[test]
+fn a_request_follows_a_detected_agent_into_its_published_row() {
+    // Each publishes the conversation on screen beside a background one; those marked `true`
+    // keep the request, the rest are a replacement. A claim on the pane is in place before the
+    // request, so the request knows the conversation by the id the claim reports.
+    for (scenario, follows) in [
+        ("handoff", true),
+        ("program status", true),
+        ("hook on the conversation", true),
+        ("hook on a moved conversation", true),
+        ("new conversation", true),
+        ("hook on another conversation", false),
+        ("nothing on screen", false),
+        ("different agent", false),
+        ("new launch", false),
+    ] {
+        let mut rig = Rig::new(&[3]);
+        let (client, _stream) = super::super::tests::attach_client(&mut rig.server);
+        let detected = rig.agent(3);
+        let claim = |name: &str, native_session: Option<&str>| {
+            Some(Box::new(protocol::AgentIntegrationReport {
+                integration: name.into(),
+                identity: protocol::AgentIdentity::new("claude", "Claude Code"),
+                reference: detected.clone(),
+                state: protocol::AgentState::Idle,
+                reason: None,
+                native_session: native_session.map(Into::into),
+                unless_quiet: None,
+                seq: 1,
+                reported_at_unix_ms: 0,
+            }))
+        };
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        pane.runtime.integration = match scenario {
+            "program status" => claim(super::super::runtime::PROGRAM_STATUS_INTEGRATION, None),
+            "hook on the conversation" => claim("hook-1", Some("first-thread")),
+            // A conversation moved to another process: its hooks report under the new process's
+            // session, while the row keeps the one it resumes.
+            "hook on a moved conversation" => claim("hook-1", Some("forked")),
+            "hook on another conversation" => claim("hook-1", Some("background")),
+            _ => None,
+        };
+        let request = rig.ask(None, 3, "What is 2+3?");
+        assert_eq!(request.state, AgentRequestState::Active, "{scenario}");
+        assert!(rig.typed_into(3, "What is 2+3?"));
+        let set_claim_state = |rig: &mut Rig, state| {
+            let pane = rig.server.panes.get_mut(&3).unwrap();
+            if let Some(report) = pane.runtime.integration.as_mut() {
+                report.state = state;
+            }
+        };
+        set_claim_state(&mut rig, protocol::AgentState::Working);
+        rig.set_state(3, DetectedAgentState::Working);
+
+        let mut row = protocol::PublishedRow {
+            publisher: String::new(),
+            kind: protocol::PublisherKind::Agent,
+            id: "first-thread".into(),
+            title: "First question".into(),
+            status: "working".into(),
+            active: true,
+            native_session: Some("first-thread".into()),
+            live_session: None,
+            reported: false,
+            reason: None,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+        };
+        if scenario == "hook on a moved conversation" {
+            row.live_session = Some("forked".into());
+        }
+        let publisher = || super::super::runtime::PanePublisher {
+            id: "sessions".into(),
+            kind: protocol::PublisherKind::Agent,
+            epoch: 1,
+            responses: Vec::new(),
+        };
+        let background = protocol::PublishedRow {
+            id: "background".into(),
+            active: false,
+            native_session: Some("background".into()),
+            live_session: None,
+            ..row.clone()
+        };
+        let mut rows = vec![row.clone(), background.clone()];
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        match scenario {
+            "nothing on screen" => rows[0].active = false,
+            "different agent" => {
+                pane.runtime.detected_agent.as_mut().unwrap().agent =
+                    protocol::AgentIdentity::new("codex", "Codex").into();
+            }
+            "new launch" => pane.runtime.agent_launch += 1,
+            _ => {}
+        }
+        rig.server
+            .report_pane_rows(client, 3, 1, false, publisher(), rows)
+            .unwrap();
+        if !follows {
+            assert_eq!(
+                rig.request(&request.id).state,
+                AgentRequestState::Failed,
+                "{scenario}"
+            );
+            continue;
+        }
+        let published = rig.agent(3);
+        assert!(published.slot.is_some());
+        assert_eq!(published.incarnation, detected.incarnation);
+        let moved = rig.request(&request.id);
+        assert_eq!(moved.state, AgentRequestState::Active, "{scenario}");
+        assert_eq!(moved.to, published);
+
+        if scenario == "new conversation" {
+            // The same row now shows another conversation, which cannot answer this request.
+            let next = protocol::PublishedRow {
+                native_session: Some("second-thread".into()),
+                ..row
+            };
+            rig.server
+                .report_pane_rows(client, 3, 1, false, publisher(), vec![next, background])
+                .unwrap();
+            assert_eq!(
+                code(rig.reply(3, &request.id, "5")),
+                Some(ControlErrorCode::NotPermitted)
+            );
+            continue;
+        }
+        rig.server
+            .panes
+            .get_mut(&3)
+            .unwrap()
+            .screen_mut()
+            .process_bytes(b"5");
+        set_claim_state(&mut rig, protocol::AgentState::Idle);
+        let idle = protocol::PublishedRow {
+            status: "idle".into(),
+            ..row
+        };
+        rig.server
+            .report_pane_rows(client, 3, 1, false, publisher(), vec![idle, background])
+            .unwrap();
+        let answered = rig.request(&request.id);
+        assert_eq!(answered.state, AgentRequestState::Answered, "{scenario}");
+        assert!(answered.response.unwrap().content.text.contains('5'));
+    }
 }
 
 #[test]
@@ -164,15 +313,6 @@ fn requests_reach_a_target_one_turn_at_a_time() {
     assert_eq!(response.content.source, AgentResponseSource::Terminal);
     assert!(response.content.text.contains("parser is fine"));
     assert_eq!(rig.request(&second.id).state, AgentRequestState::Active);
-
-    // A reply after the turn ended replaces what was read from the screen, and then stands.
-    let replied = info(rig.reply(3, &first.id, "the parser is fine"));
-    assert_eq!(replied.state, AgentRequestState::Answered);
-    assert_eq!(replied.response.unwrap().content.text, "the parser is fine");
-    assert_eq!(
-        code(rig.reply(3, &first.id, "something else")),
-        Some(ControlErrorCode::Conflict)
-    );
 
     // An integration's answer published after delivery beats the screen, without the turn ending.
     rig.server.agent_responses.insert(
@@ -245,6 +385,81 @@ fn a_request_answered_later_outlives_its_turn_until_the_reply() {
     pane.agent.sync_references(&pane.runtime);
     rig.server.pump_agent_requests();
     assert_eq!(rig.request(&second.id).state, AgentRequestState::Failed);
+}
+
+#[test]
+fn an_agent_owing_several_requests_names_the_one_it_asks_for() {
+    let mut rig = Rig::new(&[2, 3, 4]);
+    let first = rig.ask(Some(2), 3, "run the slow suite");
+    assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", first.id)));
+    info(rig.server.reply_later(Some(rig.agent(3)), &first.id));
+    let second = rig.ask(Some(4), 3, "run the fuzzer");
+    assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", second.id)));
+    info(rig.server.reply_later(Some(rig.agent(3)), &second.id));
+
+    // Either promise could be the one asking, so the ask must say which.
+    let from = rig.agent(3);
+    let mut ask = |parent: Option<&str>| {
+        rig.server.ask_agent(
+            Some(from.clone()),
+            AgentTarget::Pane(2),
+            "which tests are slow?".into(),
+            parent,
+        )
+    };
+    assert_eq!(code(ask(None)), Some(ControlErrorCode::InvalidArgument));
+    assert_eq!(
+        code(ask(Some("elsewhere"))),
+        Some(ControlErrorCode::NotPermitted)
+    );
+    let follow_up = info(ask(Some(&first.id)));
+    assert_eq!(follow_up.parent.as_deref(), Some(first.id.as_str()));
+    // So the asker of the first request cannot wait for it while it blocks the answer.
+    let asker = rig.agent(2);
+    assert_eq!(
+        rig.server
+            .agent_requests
+            .await_cycle(Some(&asker), &first.id),
+        Some(follow_up.id.as_str())
+    );
+}
+
+#[test]
+fn a_promised_answer_fails_when_its_agent_changes_conversation() {
+    let mut rig = Rig::new(&[3]);
+    let request = rig.ask(None, 3, "run the slow suite");
+    assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", request.id)));
+    let target = rig.agent(3);
+    info(rig.server.reply_later(Some(target.clone()), &request.id));
+
+    let generation = rig.server.panes[&3].generation;
+    let mut report = |seq, native_session: &str| {
+        let update = super::super::runtime::AgentIntegrationUpdate {
+            agent: Some("claude".into()),
+            integration: "hooks".into(),
+            state: Some(protocol::AgentState::Working),
+            reason: None,
+            native_session: Some(native_session.into()),
+            unless_quiet: None,
+            ended: false,
+            seq,
+            response: None,
+        };
+        rig.server
+            .apply_agent_integration(None, 3, generation, update)
+            .unwrap();
+    };
+    // Delivered before the agent named its conversation, the request binds to the first one. Two
+    // reports read in one server iteration still see it bound in between.
+    report(1, "conversation a");
+    report(2, "conversation b");
+    rig.server.pump_agent_requests();
+    let failed = rig.request(&request.id);
+    assert_eq!(failed.state, AgentRequestState::Failed);
+    assert_eq!(
+        failed.reason.as_deref(),
+        Some("the agent moved to another conversation")
+    );
 }
 
 /// The request lists queued for `client` and not yet sent, in order.

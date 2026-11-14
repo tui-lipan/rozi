@@ -440,7 +440,7 @@ An agent that asks before running commands asks before each reply too; for Claud
 | --- | --- |
 | `queued` | Not typed yet; `reason` says what it waits for. A reply answers it without typing it. |
 | `active` | Typed into the agent, or promised a later reply. |
-| `answered` | `response` holds the answer. The first answer stands, except that the agent's reply replaces one read from its terminal; a different reply is refused with `conflict`. |
+| `answered` | `response` holds the answer. The first answer stands; a different reply is refused with `conflict`. |
 | `failed` | The agent exited, was replaced, or moved to another conversation before answering. |
 | `cancelled` | Cancelled by whoever asked, or the asking agent left or changed conversation before delivery. |
 

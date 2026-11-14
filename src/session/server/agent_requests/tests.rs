@@ -161,15 +161,6 @@ fn requests_reach_a_target_one_turn_at_a_time() {
     assert!(response.content.text.contains("parser is fine"));
     assert_eq!(rig.request(&second.id).state, AgentRequestState::Active);
 
-    // A reply after the turn ended replaces what was read from the screen, and then stands.
-    let replied = info(rig.reply(3, &first.id, "the parser is fine"));
-    assert_eq!(replied.state, AgentRequestState::Answered);
-    assert_eq!(replied.response.unwrap().content.text, "the parser is fine");
-    assert_eq!(
-        code(rig.reply(3, &first.id, "something else")),
-        Some(ControlErrorCode::Conflict)
-    );
-
     // An integration's answer published after delivery beats the screen, without the turn ending.
     rig.server.agent_responses.insert(
         rig.agent(3),
@@ -241,6 +232,36 @@ fn a_request_answered_later_outlives_its_turn_until_the_reply() {
     pane.agent.sync_references(&pane.runtime);
     rig.server.pump_agent_requests();
     assert_eq!(rig.request(&second.id).state, AgentRequestState::Failed);
+}
+
+#[test]
+fn a_promised_answer_fails_when_its_agent_changes_conversation() {
+    let mut rig = Rig::new(&[3]);
+    let request = rig.ask(None, 3, "run the slow suite");
+    assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", request.id)));
+    let target = rig.agent(3);
+    info(rig.server.reply_later(Some(target.clone()), &request.id));
+
+    let report_conversation = |rig: &mut Rig, native_session: &str| {
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        pane.runtime.integration = Some(Box::new(protocol::AgentIntegrationReport {
+            integration: "hooks".into(),
+            identity: protocol::AgentIdentity::new("claude", "Claude Code"),
+            reference: target.clone(),
+            state: protocol::AgentState::Working,
+            reason: None,
+            native_session: Some(native_session.into()),
+            unless_quiet: None,
+            seq: 1,
+            reported_at_unix_ms: 0,
+        }));
+        rig.server.pump_agent_requests();
+    };
+    // Delivered before the agent named its conversation, the request binds to the first one.
+    report_conversation(&mut rig, "conversation a");
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
+    report_conversation(&mut rig, "conversation b");
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Failed);
 }
 
 #[test]

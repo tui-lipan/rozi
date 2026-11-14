@@ -101,6 +101,35 @@ enum TurnOutcome {
 }
 
 impl AgentRequestStore {
+    /// Move every request and slot the handoff's old reference holds to its row's, under the
+    /// row's id for the conversation. A request that did not yet know it is pinned to the row's,
+    /// so a later conversation in that row cannot answer it.
+    pub(super) fn handoff(&mut self, handoff: &super::responses::AgentHandoff) {
+        let (old, new) = (&handoff.old, &handoff.new);
+        for stored in &mut self.requests {
+            if stored.info.to == *old {
+                stored.info.to = new.clone();
+                handoff.rename_session(&mut stored.info.to_native_session);
+            }
+            if stored.info.from.as_ref() == Some(old) {
+                stored.info.from = Some(new.clone());
+                handoff.rename_session(&mut stored.info.from_native_session);
+            }
+        }
+        for pending in self.awaits.values_mut() {
+            if pending.caller.as_ref() == Some(old) {
+                pending.caller = Some(new.clone());
+            }
+        }
+        if let Some(mut slot) = self.slots.remove(old) {
+            slot.tracker.handoff(handoff);
+            self.slots.insert(new.clone(), slot);
+        }
+        if let Some(since) = self.stopped_since.remove(old) {
+            self.stopped_since.insert(new.clone(), since);
+        }
+    }
+
     pub(super) fn note_pane_input(&mut self, pane: PaneId) {
         self.pane_input.insert(pane, Instant::now());
     }

@@ -581,7 +581,10 @@ mod tests {
                 })
                 .unwrap();
 
+            // A second press while the unlock runs must not queue one that can only fail.
             backend.dispatch(Msg::WorktreeUnlockSelected).unwrap();
+            backend.dispatch(Msg::WorktreeUnlockSelected).unwrap();
+            assert_eq!(backend.state().worktree_operations.len(), 1);
             // The failure also refreshed the tab's list; the unlock is the one mutation sent.
             let unlocks: Vec<_> = sent_worktree_requests(&outbound)
                 .into_iter()

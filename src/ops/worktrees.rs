@@ -101,6 +101,15 @@ fn selected_removing(state: &crate::state::State) -> bool {
     })
 }
 
+/// Whether the picker's selected checkout has a removal or an unlock running or queued.
+fn selected_changing(state: &crate::state::State) -> bool {
+    state.worktree_picker.as_ref().is_some_and(|picker| {
+        picker
+            .selected_entry()
+            .is_some_and(|tree| state.worktree_changing(&tree.path, picker.target.as_ref()))
+    })
+}
+
 /// The repository Worktrees acts on: the focused pane's project root, on the session's host.
 ///
 /// A pane whose shell has moved to a nested SSH host is refused: the session server cannot run
@@ -938,7 +947,7 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
     let stale = tree.lock.as_ref().is_some_and(|lock| lock.stale);
     // A checkout that cannot be removed skips the arming and goes straight to the refusal toast.
     let removable = tree.linked && !tree.bare && (tree.lock.is_none() || stale);
-    if armed.is_none() && removable && writable(ctx) && !selected_removing(&ctx.state) {
+    if armed.is_none() && removable && writable(ctx) && !selected_changing(&ctx.state) {
         if let Some(picker) = ctx.state.worktree_picker.as_mut() {
             picker.pending_remove = Some(PendingWorktreeRemove {
                 path: tree.path,
@@ -973,7 +982,7 @@ pub(crate) fn unlock_selected(ctx: &mut Context<AppRoot>) -> Update {
         crate::pane::pty_events::notify_error(ctx, "Unlock failed", "Client is read-only");
         return Update::full();
     }
-    if tree.lock.is_none() || selected_removing(&ctx.state) {
+    if tree.lock.is_none() || selected_changing(&ctx.state) {
         return Update::none();
     }
     if let Some(picker) = ctx.state.worktree_picker.as_mut() {
@@ -1024,7 +1033,7 @@ fn start_remove(
         return Update::full();
     }
     let target = ctx.state.current().remote_target.clone();
-    if ctx.state.worktree_removing(&tree.path, target.as_ref()) {
+    if ctx.state.worktree_changing(&tree.path, target.as_ref()) {
         return Update::none();
     }
     let stale = tree.lock.as_ref().is_some_and(|lock| lock.stale);
@@ -1114,10 +1123,24 @@ pub(crate) fn apply_result(
                 if let Some(directory) = unignored {
                     warn_unignored(ctx, &directory);
                 }
-                if picker_here {
+                // The user has moved on to another create: a form they are filling in, or one
+                // already queued. This checkout is announced rather than opened over it.
+                let superseded = ctx
+                    .state
+                    .worktree_picker
+                    .as_ref()
+                    .is_some_and(|picker| picker.form.is_some())
+                    || ctx
+                        .state
+                        .worktree_operations
+                        .iter()
+                        .any(|op| matches!(op.kind, WorktreeOperationKind::Create { .. }));
+                if picker_here && superseded {
+                    relist(ctx);
+                } else if picker_here {
                     return enter_tree(ctx, worktree);
                 }
-                if operation.open_when_done && foreground {
+                if operation.open_when_done && foreground && !superseded {
                     let target = ctx.state.current().remote_target.clone();
                     let checkouts = ctx
                         .state
@@ -1885,6 +1908,53 @@ mod tests {
                 backend.state().worktree_operations.is_empty(),
                 "a background completion must retire the operation"
             );
+        });
+    }
+
+    /// A create finishing must not close the form the user is filling in for the next one.
+    #[test]
+    fn a_create_finishing_leaves_a_newer_create_form_open() {
+        crate::test_support::on_large_stack(|| {
+            use crate::state::WorktreeFormField;
+            let (mut backend, outbound) = reads_backend();
+            let fill = |backend: &mut TestBackend<AppRoot>, branch: &str| {
+                backend.dispatch(Msg::WorktreeNew).unwrap();
+                let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
+                let form = picker.form.as_mut().unwrap();
+                form.input_mut(WorktreeFormField::Branch).set_text(branch);
+                form.input_mut(WorktreeFormField::Base).set_text("main");
+            };
+            fill(&mut backend, "feat/a");
+            backend.dispatch(Msg::WorktreeFormSubmit).unwrap();
+            let sent = requests(&outbound);
+            let (id, _) = sent
+                .iter()
+                .find(|(_, request)| {
+                    matches!(
+                        request,
+                        crate::session::protocol::WorktreeRequest::Create { .. }
+                    )
+                })
+                .unwrap();
+            fill(&mut backend, "feat/b");
+
+            let epoch = backend.state().runtime_epoch;
+            let mut created = backend.state().worktree_picker.as_ref().unwrap().entries[0].clone();
+            created.path = "/src/repo-worktrees/feat-a".into();
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch,
+                    request_id: *id,
+                    result: WorktreeResult::Created {
+                        worktree: created,
+                        unignored: None,
+                    },
+                })
+                .unwrap();
+            let state = backend.state();
+            assert_eq!(state.runtime_epoch, epoch, "no session was opened");
+            let form = state.worktree_picker.as_ref().unwrap().form.as_ref();
+            assert_eq!(form.unwrap().branch.text(), "feat/b");
         });
     }
 

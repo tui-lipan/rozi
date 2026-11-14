@@ -43,6 +43,11 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         tree.linked && !tree.bare && tree.lock.as_ref().is_none_or(|lock| lock.stale)
     });
     let armed = armed.is_some();
+    // Nor does one already being unlocked take a second unlock, or a removal on top of it.
+    let unchanging = selected.is_some_and(|tree| {
+        !ctx.state
+            .worktree_changing(&tree.path, picker.target.as_ref())
+    });
     let actions = vec![
         OverlayAction::new("enter", "open", Msg::WorktreeOpenSelected, idle).hint_only(),
         OverlayAction::new(
@@ -63,7 +68,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
             ctx,
             remove_label,
             Msg::WorktreeRemoveSelected,
-            writable && idle && removable,
+            writable && unchanging && removable,
             armed,
         )
         .with_confirm_cue(confirm),
@@ -71,7 +76,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
             "ctrl-u",
             "unlock",
             Msg::WorktreeUnlockSelected,
-            writable && idle && selected.is_some_and(|tree| tree.lock.is_some()),
+            writable && unchanging && selected.is_some_and(|tree| tree.lock.is_some()),
         ),
         OverlayAction::new("esc", "close", Msg::CloseWorktrees, true).hide_hint(),
     ];

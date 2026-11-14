@@ -923,8 +923,32 @@ impl State {
         path: &str,
         target: Option<&crate::session::remote::RemoteTarget>,
     ) -> bool {
+        self.worktree_operation_on(path, target, false)
+    }
+
+    /// Whether a removal or an unlock of the checkout at `path` on `target` is running or queued.
+    /// A second one would only fail once the first has finished.
+    pub(crate) fn worktree_changing(
+        &self,
+        path: &str,
+        target: Option<&crate::session::remote::RemoteTarget>,
+    ) -> bool {
+        self.worktree_operation_on(path, target, true)
+    }
+
+    fn worktree_operation_on(
+        &self,
+        path: &str,
+        target: Option<&crate::session::remote::RemoteTarget>,
+        unlocks: bool,
+    ) -> bool {
         self.worktree_operations.iter().any(|operation| {
-            matches!(&operation.kind, WorktreeOperationKind::Remove { path: removing, .. } if removing == path)
+            let on_path = match &operation.kind {
+                WorktreeOperationKind::Remove { path: subject, .. } => subject == path,
+                WorktreeOperationKind::Unlock { path: subject } => unlocks && subject == path,
+                WorktreeOperationKind::Create { .. } => false,
+            };
+            on_path
                 && self.worktree_operation_reachable(operation)
                 && self
                     .worktree_operation_attachment(operation)

@@ -2570,11 +2570,17 @@
           "type": "object"
         },
         {
-          "description": "Ask another agent of the caller's session, without waiting: the session delivers the prompt\nwhen the agent is ready and keeps the answer. The caller is derived from the request's\n`source_session` and `source_pane`.",
+          "description": "Ask another agent of the caller's session, without waiting: the session delivers the prompt\nwhen the agent is ready and keeps the answer. The caller is derived from the request's\n`source_session` and `source_pane`. `parent` names the request the caller asks on behalf\nof; without it, the session infers it when the caller owes exactly one.",
           "properties": {
             "cmd": {
               "const": "agent-ask",
               "type": "string"
+            },
+            "parent": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "prompt": {
               "type": "string"
@@ -4566,11 +4572,17 @@
           "type": "object"
         },
         {
-          "description": "Ask another agent of the caller's session, without waiting: the session delivers the prompt\nwhen the agent is ready and keeps the answer. The caller is derived from the request's\n`source_session` and `source_pane`.",
+          "description": "Ask another agent of the caller's session, without waiting: the session delivers the prompt\nwhen the agent is ready and keeps the answer. The caller is derived from the request's\n`source_session` and `source_pane`. `parent` names the request the caller asks on behalf\nof; without it, the session infers it when the caller owes exactly one.",
           "properties": {
             "cmd": {
               "const": "agent-ask",
               "type": "string"
+            },
+            "parent": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "prompt": {
               "type": "string"

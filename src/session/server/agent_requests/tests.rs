@@ -55,14 +55,14 @@ impl Rig {
         let from = from.map(|pane| self.agent(pane));
         info(
             self.server
-                .ask_agent(from, AgentTarget::Pane(to), text.into()),
+                .ask_agent(from, AgentTarget::Pane(to), text.into(), None),
         )
     }
 
     fn try_ask(&mut self, from: PaneId, to: PaneId) -> ControlResponse {
         let from = self.agent(from);
         self.server
-            .ask_agent(Some(from), AgentTarget::Pane(to), "another".into())
+            .ask_agent(Some(from), AgentTarget::Pane(to), "another".into(), None)
     }
 
     fn request(&self, id: &str) -> AgentRequestInfo {
@@ -232,6 +232,43 @@ fn a_request_answered_later_outlives_its_turn_until_the_reply() {
     pane.agent.sync_references(&pane.runtime);
     rig.server.pump_agent_requests();
     assert_eq!(rig.request(&second.id).state, AgentRequestState::Failed);
+}
+
+#[test]
+fn an_agent_owing_several_requests_names_the_one_it_asks_for() {
+    let mut rig = Rig::new(&[2, 3, 4]);
+    let first = rig.ask(Some(2), 3, "run the slow suite");
+    assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", first.id)));
+    info(rig.server.reply_later(Some(rig.agent(3)), &first.id));
+    let second = rig.ask(Some(4), 3, "run the fuzzer");
+    assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", second.id)));
+    info(rig.server.reply_later(Some(rig.agent(3)), &second.id));
+
+    // Either promise could be the one asking, so the ask must say which.
+    let from = rig.agent(3);
+    let mut ask = |parent: Option<&str>| {
+        rig.server.ask_agent(
+            Some(from.clone()),
+            AgentTarget::Pane(2),
+            "which tests are slow?".into(),
+            parent,
+        )
+    };
+    assert_eq!(code(ask(None)), Some(ControlErrorCode::InvalidArgument));
+    assert_eq!(
+        code(ask(Some("elsewhere"))),
+        Some(ControlErrorCode::NotPermitted)
+    );
+    let follow_up = info(ask(Some(&first.id)));
+    assert_eq!(follow_up.parent.as_deref(), Some(first.id.as_str()));
+    // So the asker of the first request cannot wait for it while it blocks the answer.
+    let asker = rig.agent(2);
+    assert_eq!(
+        rig.server
+            .agent_requests
+            .await_cycle(Some(&asker), &first.id),
+        Some(follow_up.id.as_str())
+    );
 }
 
 #[test]

@@ -319,7 +319,8 @@ EOF
 - To answer after your turn ends, such as when a background command finishes, run
   `rozi agents reply <ID> --later` before the turn ends, then `reply` when you have the answer.
   Otherwise the end of your turn answers the request with your terminal. You can take other
-  requests meanwhile.
+  requests meanwhile. While you owe more than one request, an `ask` you make for one of them
+  needs `--for <ID>`.
 - If your harness asks before each command, an approval for `rozi agents` keeps requests flowing;
   without it, the other agent's request waits on your approval.
 - If `await` refuses because the other agent has asked you something (a wait cycle), read that

@@ -786,10 +786,15 @@ impl SessionServer {
             ControlCommand::PaneLogging { target, enabled } => {
                 self.session_pane_logging(target, enabled, broadcasts)
             }
-            ControlCommand::AgentAsk { target, prompt } => self.ask_agent(
+            ControlCommand::AgentAsk {
+                target,
+                prompt,
+                parent,
+            } => self.ask_agent(
                 self.caller_agent(request.source_session.as_ref(), request.source_pane),
                 target,
                 prompt,
+                parent.as_deref(),
             ),
             ControlCommand::AgentReply { id, text } => self.reply_to_request(
                 self.caller_agent(request.source_session.as_ref(), request.source_pane),

@@ -147,23 +147,57 @@ impl AgentRequestStore {
             })
     }
 
-    /// Where a request asked by `from` sits in the lineage: under the request `from` is answering,
-    /// or else the newest one it promised to answer later.
-    fn lineage(&self, from: Option<&protocol::AgentRef>) -> Option<(String, String, usize)> {
-        let from = from?;
-        let parent = match self.answering(from) {
-            Some(id) => self.get(id)?,
-            None => self.requests.iter().rev().find(|stored| {
-                stored.later
-                    && stored.info.state == AgentRequestState::Active
-                    && stored.info.to == *from
-            })?,
+    /// Where a request asked by `from` sits in the lineage: under `parent` when it names one,
+    /// else under the one request `from` owes, whether it is answering it now or promised to
+    /// answer it later. Several owed requests make the parent ambiguous, so the ask must name it.
+    fn lineage(
+        &self,
+        from: Option<&protocol::AgentRef>,
+        parent: Option<&str>,
+    ) -> std::result::Result<Option<(String, String, usize)>, ControlResponse> {
+        let Some(from) = from else {
+            return match parent {
+                Some(_) => Err(invalid("only an agent can ask on behalf of a request")),
+                None => Ok(None),
+            };
         };
-        Some((
+        let owed: Vec<&StoredRequest> = self
+            .requests
+            .iter()
+            .filter(|stored| {
+                self.answering(from) == Some(stored.info.id.as_str())
+                    || (stored.later
+                        && stored.info.state == AgentRequestState::Active
+                        && stored.info.to == *from)
+            })
+            .collect();
+        let parent = match (parent, owed.as_slice()) {
+            (Some(id), _) => *owed
+                .iter()
+                .find(|stored| stored.info.id == id)
+                .ok_or_else(|| {
+                    not_permitted(format!(
+                        "request `{id}` is not one this agent is answering or promised to answer"
+                    ))
+                })?,
+            (None, []) => return Ok(None),
+            (None, [only]) => only,
+            (None, several) => {
+                let ids = several
+                    .iter()
+                    .map(|stored| format!("`{}`", stored.info.id))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(invalid(format!(
+                    "this agent owes requests {ids}; pass --for <ID> to say which one this ask is for"
+                )));
+            }
+        };
+        Ok(Some((
             parent.info.id.clone(),
             parent.info.root.clone(),
             parent.depth + 1,
-        ))
+        )))
     }
 
     fn admit(
@@ -378,6 +412,7 @@ impl SessionServer {
         from: Option<protocol::AgentRef>,
         target: AgentTarget,
         prompt: String,
+        parent: Option<&str>,
     ) -> ControlResponse {
         if prompt.trim().is_empty() {
             return invalid("a request needs prompt text");
@@ -395,7 +430,10 @@ impl SessionServer {
         if from.as_ref() == Some(&to) {
             return invalid("an agent cannot ask itself");
         }
-        let lineage = self.agent_requests.lineage(from.as_ref());
+        let lineage = match self.agent_requests.lineage(from.as_ref(), parent) {
+            Ok(lineage) => lineage,
+            Err(response) => return response,
+        };
         if let Err(response) = self.agent_requests.admit(&to, lineage.as_ref()) {
             return response;
         }

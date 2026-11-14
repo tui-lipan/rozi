@@ -161,6 +161,15 @@ fn requests_reach_a_target_one_turn_at_a_time() {
     assert!(response.content.text.contains("parser is fine"));
     assert_eq!(rig.request(&second.id).state, AgentRequestState::Active);
 
+    // A reply after the turn ended replaces what was read from the screen, and then stands.
+    let replied = info(rig.reply(3, &first.id, "the parser is fine"));
+    assert_eq!(replied.state, AgentRequestState::Answered);
+    assert_eq!(replied.response.unwrap().content.text, "the parser is fine");
+    assert_eq!(
+        code(rig.reply(3, &first.id, "something else")),
+        Some(ControlErrorCode::Conflict)
+    );
+
     // An integration's answer published after delivery beats the screen, without the turn ending.
     rig.server.agent_responses.insert(
         rig.agent(3),

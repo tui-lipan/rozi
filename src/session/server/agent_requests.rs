@@ -481,7 +481,11 @@ impl SessionServer {
                 "the agent has moved to another conversation since request `{id}` was sent"
             )));
         }
-        if let Some(existing) = &request.response {
+        let from_screen = request
+            .response
+            .as_ref()
+            .is_some_and(|existing| existing.content.fidelity == AgentResponseFidelity::Rendered);
+        if let Some(existing) = request.response.as_ref().filter(|_| !from_screen) {
             let repeat = existing.content.source == AgentResponseSource::AgentCli
                 && existing.content.text == text;
             return Some(if repeat {
@@ -490,7 +494,9 @@ impl SessionServer {
                 conflict(format!("request `{id}` is already answered"))
             });
         }
-        if request.state.is_resolved() {
+        // A turn can end before the agent replies, such as while a command it started in the
+        // background still runs. Its reply then replaces what was read from its terminal.
+        if request.state.is_resolved() && !from_screen {
             return Some(conflict(format!(
                 "request `{id}` is {}",
                 state_name(request.state)

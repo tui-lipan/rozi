@@ -428,7 +428,7 @@ ends, read the same way, including an alternate-screen transcript.
 | --- | --- |
 | `queued` | Not typed yet; `reason` says what it waits for. A reply answers it without typing it. |
 | `active` | Typed into the agent. |
-| `answered` | `response` holds the answer. The first answer stands; a different reply is refused with `conflict`. |
+| `answered` | `response` holds the answer. The first answer stands, except that the agent's reply replaces one read from its terminal; a different reply is refused with `conflict`. |
 | `failed` | The agent exited, was replaced, or moved to another conversation. |
 | `cancelled` | Cancelled by whoever asked, or the asking agent left or changed conversation before delivery. |
 

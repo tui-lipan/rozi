@@ -98,10 +98,22 @@ enum TurnOutcome {
 }
 
 impl AgentRequestStore {
-    pub(super) fn handoff(&mut self, old: &protocol::AgentRef, new: &protocol::AgentRef) {
+    /// Move every request and slot `old` holds to `new`, the same agent under a published row's
+    /// reference. A request that did not yet know its target's conversation is pinned to
+    /// `native_session`, the one the row names, so a later conversation in that row cannot answer
+    /// it.
+    pub(super) fn handoff(
+        &mut self,
+        old: &protocol::AgentRef,
+        new: &protocol::AgentRef,
+        native_session: Option<String>,
+    ) {
         for stored in &mut self.requests {
             if stored.info.to == *old {
                 stored.info.to = new.clone();
+                if stored.info.to_native_session.is_none() {
+                    stored.info.to_native_session = native_session.clone();
+                }
             }
             if stored.info.from.as_ref() == Some(old) {
                 stored.info.from = Some(new.clone());

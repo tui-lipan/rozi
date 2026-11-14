@@ -107,12 +107,17 @@ fn code(response: ControlResponse) -> Option<ControlErrorCode> {
 
 #[test]
 fn a_request_follows_a_detected_agent_into_its_published_row() {
-    for scenario in [
-        "handoff",
-        "background",
-        "several",
-        "different agent",
-        "new launch",
+    // Each publishes the conversation on screen beside a background one; those marked `true`
+    // keep the request, the rest are a replacement.
+    for (scenario, follows) in [
+        ("handoff", true),
+        ("program status", true),
+        ("hook on the conversation", true),
+        ("new conversation", true),
+        ("hook on another conversation", false),
+        ("nothing on screen", false),
+        ("different agent", false),
+        ("new launch", false),
     ] {
         let mut rig = Rig::new(&[3]);
         let (client, _stream) = super::super::tests::attach_client(&mut rig.server);
@@ -143,32 +148,50 @@ fn a_request_follows_a_detected_agent_into_its_published_row() {
             epoch: 1,
             responses: Vec::new(),
         };
-        let mut rows = vec![row.clone()];
+        let background = protocol::PublishedRow {
+            id: "background".into(),
+            active: false,
+            native_session: Some("background".into()),
+            ..row.clone()
+        };
+        let mut rows = vec![row.clone(), background.clone()];
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        let integration = |name: &str, native_session: Option<&str>| {
+            Some(Box::new(protocol::AgentIntegrationReport {
+                integration: name.into(),
+                identity: protocol::AgentIdentity::new("claude", "Claude Code"),
+                reference: detected.clone(),
+                state: protocol::AgentState::Working,
+                reason: None,
+                native_session: native_session.map(Into::into),
+                unless_quiet: None,
+                seq: 1,
+                reported_at_unix_ms: 0,
+            }))
+        };
         match scenario {
-            "background" => rows[0].active = false,
-            "several" => rows.push(protocol::PublishedRow {
-                id: "background".into(),
-                active: false,
-                ..row.clone()
-            }),
-            "different agent" => {
-                rig.server
-                    .panes
-                    .get_mut(&3)
-                    .unwrap()
-                    .runtime
-                    .detected_agent
-                    .as_mut()
-                    .unwrap()
-                    .agent = protocol::AgentIdentity::new("codex", "Codex").into();
+            "program status" => {
+                pane.runtime.integration =
+                    integration(super::super::runtime::PROGRAM_STATUS_INTEGRATION, None);
             }
-            "new launch" => rig.server.panes.get_mut(&3).unwrap().runtime.agent_launch += 1,
+            "hook on the conversation" => {
+                pane.runtime.integration = integration("hook-1", Some("first-thread"));
+            }
+            "hook on another conversation" => {
+                pane.runtime.integration = integration("hook-1", Some("background"));
+            }
+            "nothing on screen" => rows[0].active = false,
+            "different agent" => {
+                pane.runtime.detected_agent.as_mut().unwrap().agent =
+                    protocol::AgentIdentity::new("codex", "Codex").into();
+            }
+            "new launch" => pane.runtime.agent_launch += 1,
             _ => {}
         }
         rig.server
             .report_pane_rows(client, 3, 1, false, publisher(), rows)
             .unwrap();
-        if scenario != "handoff" {
+        if !follows {
             assert_eq!(
                 rig.request(&request.id).state,
                 AgentRequestState::Failed,
@@ -179,30 +202,39 @@ fn a_request_follows_a_detected_agent_into_its_published_row() {
         let published = rig.agent(3);
         assert!(published.slot.is_some());
         assert_eq!(published.incarnation, detected.incarnation);
-        assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
-        assert_eq!(rig.request(&request.id).to, published);
+        let moved = rig.request(&request.id);
+        assert_eq!(moved.state, AgentRequestState::Active, "{scenario}");
+        assert_eq!(moved.to, published);
 
+        if scenario == "new conversation" {
+            // The same row now shows another conversation, which cannot answer this request.
+            let next = protocol::PublishedRow {
+                native_session: Some("second-thread".into()),
+                ..row
+            };
+            rig.server
+                .report_pane_rows(client, 3, 1, false, publisher(), vec![next, background])
+                .unwrap();
+            assert_eq!(
+                code(rig.reply(3, &request.id, "5")),
+                Some(ControlErrorCode::NotPermitted)
+            );
+            continue;
+        }
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        pane.screen_mut().process_bytes(b"5");
+        if let Some(report) = pane.runtime.integration.as_mut() {
+            report.state = protocol::AgentState::Idle;
+        }
+        let idle = protocol::PublishedRow {
+            status: "idle".into(),
+            ..row
+        };
         rig.server
-            .panes
-            .get_mut(&3)
-            .unwrap()
-            .screen_mut()
-            .process_bytes(b"5");
-        rig.server
-            .report_pane_rows(
-                client,
-                3,
-                1,
-                false,
-                publisher(),
-                vec![protocol::PublishedRow {
-                    status: "idle".into(),
-                    ..row
-                }],
-            )
+            .report_pane_rows(client, 3, 1, false, publisher(), vec![idle, background])
             .unwrap();
         let answered = rig.request(&request.id);
-        assert_eq!(answered.state, AgentRequestState::Answered);
+        assert_eq!(answered.state, AgentRequestState::Answered, "{scenario}");
         assert!(answered.response.unwrap().content.text.contains('5'));
     }
 }

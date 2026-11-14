@@ -136,24 +136,37 @@ impl AgentScratch {
         }
     }
 
-    /// A single foreground row can take over the detected process's identity. Never guess
-    /// which conversation it was when a publisher lists several or only a background row.
+    /// The conversation a publisher marks on screen can take over the detected process's identity,
+    /// with the native session it now names. Background rows beside it are other conversations,
+    /// so they never block it; several rows on screen, or none, leave nothing to follow.
+    ///
+    /// A claim on the pane does not block it either while it is the same agent and the same
+    /// conversation: the agent's own OSC 7501 report, or a hook naming the row's session.
     fn handoff_detected_row(
         &mut self,
         runtime: &PaneRuntimeState,
         rows: &[protocol::PublishedRow],
-    ) -> Option<(u64, protocol::RowKey)> {
-        if runtime.integration.is_some()
-            || runtime.rows.iter().any(protocol::PublishedRow::is_agent)
+    ) -> Option<(u64, protocol::RowKey, Option<String>)> {
+        if runtime.rows.iter().any(protocol::PublishedRow::is_agent)
             || self.reference_launch != runtime.agent_launch
         {
             return None;
         }
         let detected = runtime.detected_agent.as_ref()?;
-        let mut agents = rows.iter().filter(|row| row.is_agent());
-        let row = agents.next()?;
-        if !row.active || agents.next().is_some() {
+        let mut active = rows.iter().filter(|row| row.is_agent() && row.active);
+        let row = active.next()?;
+        if active.next().is_some() {
             return None;
+        }
+        if let Some(integration) = &runtime.integration {
+            let confirms = integration.identity.id == detected.agent.id
+                && (is_program_report(integration)
+                    || integration.native_session.is_some()
+                        && integration.native_session.as_deref()
+                            == protocol::row_reporting_session(row));
+            if !confirms {
+                return None;
+            }
         }
         let tracked = self.references.get(&None)?;
         if tracked.identity != detected.agent.id {
@@ -163,7 +176,7 @@ impl AgentScratch {
         let incarnation = tracked.incarnation;
         let slot = row.key();
         self.references.insert(Some(slot.clone()), tracked);
-        Some((incarnation, slot))
+        Some((incarnation, slot, row.native_session.clone()))
     }
 
     /// Track the pane-level reference an integration claim is bound to. The claim names its own
@@ -1162,7 +1175,7 @@ impl SessionServer {
         retire_orphaned_row_reports(pane);
         let resume_changed = super::resurrect::resume_target(pane) != resume_before;
         let state = pane.runtime.clone();
-        if let Some((incarnation, slot)) = handoff {
+        if let Some((incarnation, slot, native_session)) = handoff {
             let old = protocol::AgentRef {
                 pane: protocol::PaneRef {
                     session_instance,
@@ -1176,7 +1189,7 @@ impl SessionServer {
                 slot: Some(slot),
                 ..old.clone()
             };
-            self.agent_requests.handoff(&old, &new);
+            self.agent_requests.handoff(&old, &new, native_session);
             self.handoff_agent_waits(&old, &new);
             self.handoff_agent_history(&old, &new);
             self.agent_responses.handoff(&old, &new);

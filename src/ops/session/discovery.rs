@@ -608,6 +608,7 @@ pub(crate) fn attachment_session_row(
         host: attachment.remote_host.clone(),
         remote_target: attachment.remote_target.clone(),
         status: crate::session::discovery::DiscoveredSessionStatus::Running {
+            terminal_engine: None,
             panes: attachment.workspaces.iter().map(|w| w.panes.len()).sum(),
             has_layout: true,
             clients: attachment.attached_client_count(),

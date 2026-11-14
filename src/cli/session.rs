@@ -90,11 +90,11 @@ pub(super) fn format_sessions_text(
     let show_host = rows.iter().any(|row| row.host.is_some());
     let headers = if show_host {
         vec![
-            "NAME", "STATUS", "PANES", "CLIENTS", "LAYOUT", "VERSION", "PROTOCOL", "HOST",
+            "NAME", "STATUS", "PANES", "CLIENTS", "LAYOUT", "VERSION", "PROTOCOL", "ENGINE", "HOST",
         ]
     } else {
         vec![
-            "NAME", "STATUS", "PANES", "CLIENTS", "LAYOUT", "VERSION", "PROTOCOL",
+            "NAME", "STATUS", "PANES", "CLIENTS", "LAYOUT", "VERSION", "PROTOCOL", "ENGINE",
         ]
     };
     let table_rows = rows
@@ -108,6 +108,7 @@ pub(super) fn format_sessions_text(
                         has_layout,
                         effective_protocol,
                         rozi_version,
+                        ..
                     } => (
                         "running",
                         OutputTone::Success,
@@ -167,6 +168,13 @@ pub(super) fn format_sessions_text(
                         "—".to_string(),
                     ),
                 };
+            let engine = match &session.status {
+                session::discovery::DiscoveredSessionStatus::Running {
+                    terminal_engine: Some(engine),
+                    ..
+                } => engine.as_str(),
+                _ => "—",
+            };
             let mut cells = vec![
                 TableCell::new(&session.name, OutputTone::Key),
                 TableCell::new(status, status_tone),
@@ -175,6 +183,7 @@ pub(super) fn format_sessions_text(
                 TableCell::plain(layout),
                 TableCell::new(version, OutputTone::Muted),
                 TableCell::new(protocol, OutputTone::Muted),
+                TableCell::new(engine, OutputTone::Muted),
             ];
             if show_host {
                 cells.push(TableCell::new(
@@ -333,6 +342,7 @@ mod tests {
                     has_layout: true,
                     effective_protocol: Some(52),
                     rozi_version: Some("0.0.43".into()),
+                    terminal_engine: Some("ghostty".into()),
                 },
                 ephemeral: false,
                 host: None,
@@ -350,9 +360,9 @@ mod tests {
         let plain = format_sessions_text(&rows, OutputStyles::plain());
         assert_eq!(
             plain,
-            "NAME        STATUS      PANES  CLIENTS  LAYOUT  VERSION  PROTOCOL\n\
-             dev         running     5      1        yes     0.0.43   52\n\
-             saved-work  restorable  —      0        —       —        —\n"
+            "NAME        STATUS      PANES  CLIENTS  LAYOUT  VERSION  PROTOCOL  ENGINE\n\
+             dev         running     5      1        yes     0.0.43   52        ghostty\n\
+             saved-work  restorable  —      0        —       —        —         —\n"
         );
         assert!(plain.lines().all(|line| !line.ends_with(' ')));
 

@@ -1154,7 +1154,7 @@ Unstable settings. They may change or disappear in any release.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `terminal_engine` | string | `"alacritty"` | The terminal emulator behind every pane: `"alacritty"` or `"ghostty"`. Read when rozi or a session starts. A build without Ghostty ([Build from source](installation.md#build-from-source)) warns and uses `"alacritty"`. |
+| `terminal_engine` | string | `"alacritty"` | The terminal emulator behind every pane: `"alacritty"` or `"ghostty"`. Read when rozi or a session starts, so a running session keeps its engine; `rozi context` and `rozi sessions` show the engine in use. A build without Ghostty ([Build from source](installation.md#build-from-source)) warns and uses `"alacritty"`. |
 
 ## `[keys]`
 

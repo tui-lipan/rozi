@@ -704,6 +704,7 @@ fn golden_session_info_json_shape() {
             },
             instance: Some(super::SessionInstanceId::for_test("abc123")),
             rozi_version: None,
+            terminal_engine: None,
         })
         .unwrap(),
         serde_json::json!({

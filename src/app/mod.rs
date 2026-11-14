@@ -673,6 +673,7 @@ mod tests {
                         origin: Default::default(),
                         ephemeral: false,
                         status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                            terminal_engine: None,
                             panes: 3,
                             clients: 0,
                             has_layout: false,
@@ -795,6 +796,7 @@ mod tests {
                         origin: Default::default(),
                         ephemeral: false,
                         status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                            terminal_engine: None,
                             panes: 1,
                             clients: 0,
                             has_layout: false,
@@ -906,6 +908,7 @@ mod tests {
                         origin: Default::default(),
                         ephemeral: false,
                         status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                            terminal_engine: None,
                             panes: 1,
                             clients: 0,
                             has_layout: false,
@@ -1156,6 +1159,7 @@ mod tests {
             picker.running.insert(
                 "rust-dev".to_string(),
                 crate::session::discovery::DiscoveredSessionStatus::Running {
+                    terminal_engine: None,
                     panes: 2,
                     clients: 1,
                     has_layout: true,
@@ -2366,6 +2370,7 @@ mod tests {
                     host: None,
                     remote_target: None,
                     status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                        terminal_engine: None,
                         panes: 1,
                         clients: 1,
                         has_layout: true,
@@ -2380,6 +2385,7 @@ mod tests {
                     host: None,
                     remote_target: None,
                     status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                        terminal_engine: None,
                         panes: 2,
                         clients: 1,
                         has_layout: true,
@@ -2396,6 +2402,7 @@ mod tests {
                         "workbox".to_string(),
                     )),
                     status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                        terminal_engine: None,
                         panes: 3,
                         clients: 0,
                         has_layout: true,

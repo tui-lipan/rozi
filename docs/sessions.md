@@ -65,8 +65,9 @@ the session command.
 Subcommand names cannot be bare session or profile targets. For a session or profile literally
 named `attach`, use `rozi --session attach`.
 
-`rozi sessions list` shows the rozi release and protocol generation each running session runs on;
-`--format json` reports them as `rozi_version` and `effective_protocol`, and adds an `origin` object
+`rozi sessions list` shows the rozi release, protocol generation, and terminal engine each running
+session runs on; `--format json` reports them as `rozi_version`, `effective_protocol`, and
+`terminal_engine`, and adds an `origin` object
 for a session created from a profile or a Git worktree.
 
 Remote hosts use the same session commands. See [Remote sessions](remote.md).

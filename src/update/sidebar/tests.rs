@@ -166,6 +166,7 @@ fn discovered(name: &str) -> crate::session::discovery::DiscoveredSession {
         host: None,
         remote_target: None,
         status: crate::session::discovery::DiscoveredSessionStatus::Running {
+            terminal_engine: None,
             panes: 1,
             clients: 0,
             has_layout: true,

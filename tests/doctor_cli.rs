@@ -209,6 +209,7 @@ fn doctor_counts_session_replies_and_snapshots_and_keeps_stale_entries() {
                 origin: Default::default(),
                 instance: None,
                 rozi_version: Some("0.0.41".into()),
+                terminal_engine: Some("ghostty".into()),
             },
         ),
         (
@@ -295,7 +296,7 @@ fn doctor_counts_session_replies_and_snapshots_and_keeps_stale_entries() {
     assert_eq!(
         fields["sessions_versions"],
         format!(
-            "0.0.41 (protocol {})",
+            "0.0.41 (protocol {}, ghostty)",
             rozi::session::protocol::PROTOCOL_VERSION
         )
     );

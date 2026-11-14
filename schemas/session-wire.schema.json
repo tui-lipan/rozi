@@ -6489,6 +6489,13 @@
             "session": {
               "type": "string"
             },
+            "terminal_engine": {
+              "description": "The emulator engine the server's panes run on (`alacritty`, `ghostty`). Fixed when the\nserver starts, so it can differ from what the config selects now.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "type": {
               "const": "session-info",
               "type": "string"

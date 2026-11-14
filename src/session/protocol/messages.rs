@@ -690,6 +690,10 @@ pub enum ServerMessage {
         /// The server's release (`CARGO_PKG_VERSION`). See [`ServerMessage::Attached`].
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rozi_version: Option<String>,
+        /// The emulator engine the server's panes run on (`alacritty`, `ghostty`). Fixed when the
+        /// server starts, so it can differ from what the config selects now.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        terminal_engine: Option<String>,
     },
     /// Reply to a [`ClientMessage::SessionControl`] request.
     ///

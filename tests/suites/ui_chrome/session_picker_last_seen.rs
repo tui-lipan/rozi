@@ -44,6 +44,7 @@ fn live(name: &str, target: &RemoteTarget) -> DiscoveredSession {
         host: Some(target.display_label()),
         remote_target: Some(target.clone()),
         status: DiscoveredSessionStatus::Running {
+            terminal_engine: None,
             panes: 1,
             has_layout: true,
             clients: 1,

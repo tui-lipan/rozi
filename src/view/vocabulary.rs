@@ -876,6 +876,7 @@ mod tests {
             remote_target: Some(target.clone()),
             ephemeral: false,
             status: DiscoveredSessionStatus::Running {
+                terminal_engine: None,
                 panes: 1,
                 clients: 0,
                 has_layout: false,
@@ -896,6 +897,7 @@ mod tests {
             "1 pane · Codex blocked · shared with 2 others · from web"
         );
         entry.status = DiscoveredSessionStatus::Running {
+            terminal_engine: None,
             panes: 1,
             clients: 0,
             has_layout: false,
@@ -908,6 +910,7 @@ mod tests {
             "same-version session stays unbadged"
         );
         entry.status = DiscoveredSessionStatus::Running {
+            terminal_engine: None,
             panes: 1,
             clients: 0,
             has_layout: false,

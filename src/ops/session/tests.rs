@@ -15,6 +15,7 @@ fn session_row(name: &str, host: Option<&str>) -> DiscoveredSession {
         remote_target: host
             .map(|host| crate::session::remote::RemoteTarget::Alias(host.to_string())),
         status: crate::session::discovery::DiscoveredSessionStatus::Running {
+            terminal_engine: None,
             panes: 1,
             has_layout: true,
             clients: 1,

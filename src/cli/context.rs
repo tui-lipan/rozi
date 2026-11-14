@@ -29,6 +29,7 @@ fn caller_ui(
         displays_session: session
             .map(|session| metadata.displayed_session.as_ref() == Some(&session.instance)),
         holds_session: session.map(|session| metadata.held_sessions.contains(&session.instance)),
+        terminal_engine: metadata.terminal_engine,
     }
 }
 
@@ -261,10 +262,12 @@ mod tests {
             control::UiContextMetadata {
                 displayed_session: Some(SessionInstanceId::for_test("on-screen")),
                 held_sessions: vec![caller.clone()],
+                terminal_engine: None,
             },
             Some(&control::CallerSession {
                 name: "dev".into(),
                 instance: caller,
+                terminal_engine: None,
             }),
         );
         assert!(ui.available);

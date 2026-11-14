@@ -1646,6 +1646,7 @@ impl SessionServer {
                 origin: self.origin.clone(),
                 instance: Some(self.instance_id.clone()),
                 rozi_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                terminal_engine: Some(crate::pane::engine::active().name().to_string()),
             },
         )]
     }

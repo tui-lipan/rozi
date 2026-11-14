@@ -461,8 +461,7 @@ survive a session restart.
 ### Watch agents talk
 
 A pane's title shows its agent's open requests: `→2` for two it asked and waits on, `←1` for one it
-was asked. The marks turn the accent colour once a request has reached its agent, and light up for
-a moment when one is delivered or answered.
+was asked. They light up for a moment when a request is delivered or answered.
 
 **Agent conversations…** in the command palette (`agent-conversations`) lists the session's
 requests, each chain together with the requests asked while answering another nested under it,

@@ -173,7 +173,8 @@ impl RenderedRow {
         use crate::view::vocabulary::{ASKING, fields};
         let from = agent_name(state, request.from.as_ref());
         let to = agent_name(state, Some(&request.to));
-        let indent = "  ".repeat(depth.min(4));
+        // A child's `└` stands under the first letter of the request it was asked while answering.
+        let indent = "  ".repeat(depth.saturating_sub(1).min(4));
         let lead = if depth > 0 { "└ " } else { "" };
         let label = vec![
             Span::new(format!("{indent}{lead}")).style(fg_only(&theme.muted)),
@@ -341,7 +342,10 @@ fn chain_overlay(ctx: &Context<AppRoot>, root: &str) -> Element {
     let max_height = (ctx.viewport().h * ACTION_PALETTE_MAX_HEIGHT_PERCENT / 100)
         .saturating_sub(CHAIN_CHROME_ROWS)
         .max(5);
+    // The modal hugs the diagram, so a chain of two agents is not lost in empty space.
     let body = ScrollView::new()
+        .width(Length::Auto)
+        .align(Align::Center)
         .child(diagram)
         .scrollbar(true)
         .scrollbar_config(modal_scrollbar_config(theme))
@@ -365,7 +369,7 @@ fn chain_overlay(ctx: &Context<AppRoot>, root: &str) -> Element {
         "rozi-agent-conversation-chain",
         Msg::AgentConversationsBack,
         content,
-        WIDTH,
+        Length::Auto,
         0,
     )
 }

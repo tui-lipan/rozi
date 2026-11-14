@@ -15,8 +15,6 @@ pub(crate) struct PaneLinks {
     pub(crate) asking: usize,
     /// Unanswered requests this pane's agents were asked.
     pub(crate) answering: usize,
-    /// Whether any of them has been typed into its agent, rather than still queued.
-    pub(crate) delivered: bool,
 }
 
 impl PaneLinks {
@@ -73,7 +71,6 @@ fn links(requests: &[AgentRequestSummary], panes: &[PaneRef]) -> PaneLinks {
         let answering = in_pane(&request.to, panes);
         links.asking += usize::from(asked);
         links.answering += usize::from(answering);
-        links.delivered |= (asked || answering) && request.state == AgentRequestState::Active;
     }
     links
 }
@@ -332,7 +329,6 @@ mod tests {
             PaneLinks {
                 asking: 2,
                 answering: 1,
-                delivered: true
             }
         );
         assert_eq!(
@@ -340,7 +336,6 @@ mod tests {
             PaneLinks {
                 asking: 1,
                 answering: 1,
-                delivered: false
             }
         );
     }

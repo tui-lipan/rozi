@@ -93,7 +93,7 @@ pub(crate) fn release_notes_overlay(ctx: &Context<AppRoot>) -> Element {
         "rozi-release-notes-modal",
         Msg::CloseReleaseNotes,
         content,
-        RELEASE_NOTES_WIDTH,
+        Length::Px(RELEASE_NOTES_WIDTH),
         depth,
     )
 }

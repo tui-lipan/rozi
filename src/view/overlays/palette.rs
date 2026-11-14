@@ -596,7 +596,16 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             body = body.child(overlay_hints(ctx, &actions));
         }
 
-        wrap_palette(ctx, title, header_right, key, close, body, width, depth)
+        wrap_palette(
+            ctx,
+            title,
+            header_right,
+            key,
+            close,
+            body,
+            Length::Px(width),
+            depth,
+        )
     }
 }
 
@@ -682,11 +691,13 @@ pub(super) fn wrap_palette(
     key: &'static str,
     close: Msg,
     body: VStack,
-    width: u16,
+    width: Length,
     depth: u16,
 ) -> Element {
     let modal = match header_right {
-        None => action_palette_modal_with_width(ctx, &title, width).child(body),
+        None => action_palette_modal_with_width(ctx, &title, 0)
+            .width(width)
+            .child(body),
         Some(header_right) => {
             let panel: Element = Frame::new()
                 .header_left(title.into_owned())
@@ -702,7 +713,7 @@ pub(super) fn wrap_palette(
                 .animation(crate::view::animation::picker_animation(
                     ctx.state.config.animations,
                 ))
-                .width(Length::Px(width))
+                .width(width)
                 .height(Length::Auto)
                 .max_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))
                 .reserve_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))

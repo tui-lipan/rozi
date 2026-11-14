@@ -133,7 +133,8 @@ fn push_title_status(
 }
 
 /// The requests between this pane's agents and others: `→2` asked and waiting, `←1` asked of it.
-/// In the accent colour once one has reached its agent, muted while all are still queued.
+/// They wear the title's own colour, as everything else in it does, and light up for a moment
+/// when a request reaches this pane's agent or its answer comes back.
 fn push_agent_links(
     ctx: &Context<AppRoot>,
     pane: &Pane,
@@ -145,18 +146,7 @@ fn push_agent_links(
     if links.is_empty() {
         return;
     }
-    let theme = &ctx.state.theme;
-    let style = if links.delivered {
-        super::fg_only(&theme.accent)
-    } else {
-        super::fg_only(&theme.muted)
-    };
-    // Lit for a moment when a request reaches this pane's agent or its answer comes back.
-    let style = if ctx.state.agent_link_blink.panes.contains(&pane.id) {
-        super::fg_only(&theme.accent).reverse().bold()
-    } else {
-        style
-    };
+    let lit = ctx.state.agent_link_blink.panes.contains(&pane.id);
     let marks = [(ASKING, links.asking), (ANSWERING, links.answering)]
         .into_iter()
         .filter(|(_, count)| *count > 0)
@@ -167,7 +157,11 @@ fn push_agent_links(
     if !gap.is_empty() {
         spans.push(Span::new(gap));
     }
-    spans.push(Span::new(marks).style(style));
+    spans.push(if lit {
+        Span::new(marks).style(Style::new().reverse().bold())
+    } else {
+        Span::new(marks)
+    });
 }
 
 /// What ends a title row: the pane's badge, preformatted by the layout, then the recording marker.

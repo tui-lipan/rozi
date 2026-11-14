@@ -700,12 +700,12 @@ pub(crate) fn help_overlay(
             ctx.state.config.animations,
         ))
         .width(Length::Px(HELP_MODAL_WIDTH))
-        // Content-sized so filtering down to a handful of rows shrinks the modal, capped at 70% of
+        // Content-sized so filtering down to a handful of rows shrinks the modal, capped at 65% of
         // the viewport. `reserve_height` pins the top edge, so the modal shrinks downward while you
         // type rather than re-centering under the cursor.
         .height(Length::Auto)
-        .max_height(Length::Percent(HELP_MAX_HEIGHT_PERCENT))
-        .reserve_height(Length::Percent(HELP_MAX_HEIGHT_PERCENT))
+        .max_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))
+        .reserve_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))
         .border(false)
         .padding(0)
         .frame_style(Style::new().bg(theme.surface.element))
@@ -1188,7 +1188,7 @@ fn keybinding_change_overlay(ctx: &Context<AppRoot>) -> Element {
                 "prefix",
             ))
             .child(keybinding_change_hints(ctx, &change));
-    nested_action_palette_modal(ctx, heading.title, HELP_MAX_HEIGHT_PERCENT)
+    nested_action_palette_modal(ctx, heading.title, ACTION_PALETTE_MAX_HEIGHT_PERCENT)
         .width(Length::Px(KEYBINDING_CARD_WIDTH))
         .backdrop_style(receding_backdrop(theme))
         .dismiss_on_escape(false)
@@ -1302,7 +1302,7 @@ fn keybinding_modifier_overlay(ctx: &Context<AppRoot>) -> Element {
             "modifier",
         ))
         .child(hints);
-    nested_action_palette_modal(ctx, "Change modifier", HELP_MAX_HEIGHT_PERCENT)
+    nested_action_palette_modal(ctx, "Change modifier", ACTION_PALETTE_MAX_HEIGHT_PERCENT)
         .width(Length::Px(KEYBINDING_CARD_WIDTH))
         .backdrop_style(receding_backdrop(theme))
         .dismiss_on_escape(false)
@@ -1334,7 +1334,7 @@ fn keybinding_reset_all_overlay(ctx: &Context<AppRoot>) -> Element {
             highlight: None,
             caption: None,
             dim_behind: false,
-            parent_reserve_percent: Some(HELP_MAX_HEIGHT_PERCENT),
+            parent_reserve_percent: Some(ACTION_PALETTE_MAX_HEIGHT_PERCENT),
             layers: 1,
             key: None,
             tone: None,
@@ -1344,9 +1344,6 @@ fn keybinding_reset_all_overlay(ctx: &Context<AppRoot>) -> Element {
     )
 }
 
-/// Cap and reserved band for the Keybindings list overlay. Nested cards (Change keybinding,
-/// Reset all) reserve two fewer rows so they sit one row below this top edge.
-const HELP_MAX_HEIGHT_PERCENT: u16 = 70;
 const HELP_MODAL_WIDTH: u16 = 64;
 
 /// Height cap for the keybinding list: every row is one line, so the count is exact, and the list
@@ -1357,7 +1354,7 @@ fn help_list_rows(ctx: &Context<AppRoot>, rows: usize) -> u16 {
     // wrapped hint rows come out of the list, not this cap.
     const ABOVE_LIST: u16 = 8;
 
-    let cap = (ctx.viewport().h * HELP_MAX_HEIGHT_PERCENT / 100)
+    let cap = (ctx.viewport().h * ACTION_PALETTE_MAX_HEIGHT_PERCENT / 100)
         .saturating_sub(ABOVE_LIST)
         .max(3);
     u16::try_from(rows).unwrap_or(u16::MAX).clamp(1, cap)

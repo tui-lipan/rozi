@@ -2,7 +2,6 @@ use super::*;
 
 use crate::state::SettingControl;
 
-const SETTINGS_MAX_HEIGHT_PERCENT: u16 = 70;
 const SETTINGS_MODAL_WIDTH: u16 = 64;
 const SETTINGS_CHOICE_WIDTH: u16 = 40;
 
@@ -191,7 +190,7 @@ fn settings_section_item(title: &str, theme: &Theme) -> ListItem {
 
 fn settings_list_rows(ctx: &Context<AppRoot>, rows: usize) -> u16 {
     const ABOVE_LIST: u16 = 7;
-    let cap = (ctx.viewport().h * SETTINGS_MAX_HEIGHT_PERCENT / 100)
+    let cap = (ctx.viewport().h * ACTION_PALETTE_MAX_HEIGHT_PERCENT / 100)
         .saturating_sub(ABOVE_LIST)
         .max(3);
     u16::try_from(rows).unwrap_or(u16::MAX).clamp(1, cap)
@@ -421,8 +420,8 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
         ))
         .width(Length::Px(SETTINGS_MODAL_WIDTH))
         .height(Length::Auto)
-        .max_height(Length::Percent(SETTINGS_MAX_HEIGHT_PERCENT))
-        .reserve_height(Length::Percent(SETTINGS_MAX_HEIGHT_PERCENT))
+        .max_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))
+        .reserve_height(Length::Percent(ACTION_PALETTE_MAX_HEIGHT_PERCENT))
         .border(false)
         .padding(0)
         .frame_style(Style::new().bg(ctx.state.theme.surface.element))
@@ -607,7 +606,7 @@ pub(crate) fn settings_number_overlay(ctx: &Context<AppRoot>) -> Element {
                 Msg::CloseSettingsNumberEditor,
             )),
     );
-    nested_action_palette_modal(ctx, editor.title, SETTINGS_MAX_HEIGHT_PERCENT)
+    nested_action_palette_modal(ctx, editor.title, ACTION_PALETTE_MAX_HEIGHT_PERCENT)
         .width(Length::Auto)
         .on_close(ctx.link().callback(|_| Msg::CloseSettingsNumberEditor))
         .child(body)
@@ -649,7 +648,7 @@ pub(crate) fn settings_choice_overlay(ctx: &Context<AppRoot>) -> Element {
             ctx.link()
                 .callback(|event: SearchEvent<usize>| Msg::SettingsChoicePick(event.item.value)),
         );
-    nested_action_palette_modal(ctx, editor.title, SETTINGS_MAX_HEIGHT_PERCENT)
+    nested_action_palette_modal(ctx, editor.title, ACTION_PALETTE_MAX_HEIGHT_PERCENT)
         .width(Length::Px(SETTINGS_CHOICE_WIDTH))
         .backdrop_style(receding_backdrop(theme))
         .dismiss_on_escape(false)

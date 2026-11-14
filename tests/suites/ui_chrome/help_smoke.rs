@@ -68,11 +68,11 @@ fn body() {
     let mut backend = help_backend(110, 50);
     let full = frame(&mut backend);
     assert!(full.contains("Keybindings"), "{full}");
-    // The unfiltered list outgrows the viewport, so the modal stops at its 70% cap.
+    // The unfiltered list outgrows the viewport, so the modal stops at its 65% cap.
     let capped = modal_rows(&full);
     assert_eq!(
-        capped, 35,
-        "unfiltered modal is not at the 70% cap:\n{full}"
+        capped, 32,
+        "unfiltered modal is not at the 65% cap:\n{full}"
     );
 
     // The arrows move the highlight, and the capped list scrolls to keep it visible.

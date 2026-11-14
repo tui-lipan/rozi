@@ -2335,10 +2335,13 @@ impl ServerPane {
     }
 
     fn effective_title(&self) -> Option<String> {
+        self.program_title().or_else(|| self.title.clone())
+    }
+
+    fn program_title(&self) -> Option<String> {
         self.terminal
             .title()
             .and_then(crate::pane::sanitize_terminal_title)
-            .or_else(|| self.title.clone())
     }
 
     /// Note what a chunk of output did to this pane's watched state. `true` means it rang a bell

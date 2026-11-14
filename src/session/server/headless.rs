@@ -1297,6 +1297,7 @@ impl SessionServer {
                     title: pane
                         .effective_title()
                         .unwrap_or_else(|| format!("pane {id}")),
+                    program_title: pane.program_title(),
                     workspace: workspaces.get(id).copied().unwrap_or(0),
                     command: pane
                         .launch

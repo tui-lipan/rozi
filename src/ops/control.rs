@@ -602,6 +602,7 @@ impl PaneInfo {
             agent_ref: session_instance
                 .and_then(|_| runtime.as_ref().map(|runtime| runtime.reference.clone())),
             title: pane.display_title(pane.terminal.title()),
+            program_title: pane.terminal.title(),
             workspace,
             command: pane
                 .identity
@@ -3735,6 +3736,7 @@ mod tests {
             backend.state_mut().current_mut().session_name = Some("dev".into());
             let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
             pane.terminal.title = Some("build".into());
+            pane.identity.custom_title = Some("ci".into());
             pane.terminal.foreground_program = Some("cargo".into());
             pane.terminal.foreground_programs = vec!["cargo".into(), "rustc".into()];
             pane.terminal.foreground_arguments = vec!["test".into()];
@@ -3766,7 +3768,8 @@ mod tests {
             assert_eq!(data[0]["reported_status"], "working");
             assert_eq!(data[0]["status_reason"], "building");
             assert_eq!(data[0]["session"], "dev");
-            assert_eq!(data[0]["title"], "build");
+            assert_eq!(data[0]["title"], "ci");
+            assert_eq!(data[0]["program_title"], "build");
             assert_eq!(data[0]["foreground_program"], "cargo");
             assert_eq!(data[0]["foreground_programs"][1], "rustc");
             assert_eq!(data[0]["foreground_arguments"][0], "test");

@@ -47,6 +47,7 @@ fn apply_pane_meta(
         .as_deref()
         .filter(|t| !t.trim().is_empty())
         .map(String::from);
+    pane.terminal.title_from_program = program_titles;
     pane.terminal.original_user = meta.original_user.clone();
     pane.terminal.cwd = meta.runtime.cwd.clone();
     pane.terminal.cwd_host = meta.runtime.cwd_host.clone();
@@ -312,9 +313,11 @@ mod tests {
         meta.title = Some("ci".to_string());
         apply_pane_meta(&mut pane, &meta, true);
         assert_eq!(pane.terminal.title(), None);
-        // An older server sends no program title, so its title is all there is.
+        assert!(pane.terminal.title_from_program);
+        // An older server sends no program title: its title is shown, but may be the name.
         apply_pane_meta(&mut pane, &meta, false);
         assert_eq!(pane.terminal.title().as_deref(), Some("ci"));
+        assert!(!pane.terminal.title_from_program);
     }
 
     #[test]

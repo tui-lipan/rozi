@@ -602,7 +602,11 @@ impl PaneInfo {
             agent_ref: session_instance
                 .and_then(|_| runtime.as_ref().map(|runtime| runtime.reference.clone())),
             title: pane.display_title(pane.terminal.title()),
-            program_title: pane.terminal.title(),
+            // A title an older server sent may be the user's name for the pane.
+            program_title: pane
+                .terminal
+                .title()
+                .filter(|_| pane.terminal.title_from_program),
             workspace,
             command: pane
                 .identity
@@ -1215,20 +1219,12 @@ fn attachment_panes(
             .as_ref()
             .zip(caller)
             .is_some_and(|(target, worker)| worker.binding.host.remote() == Some(target));
-    // A server without the capability sent the title a pane shows, which may be the user's name
-    // for it, so this client cannot tell the program's own title apart.
-    let program_title_known = attachment.session_client.as_ref().is_none_or(|client| {
-        client.supports(crate::session::protocol::Capability::PaneProgramTitle)
-    });
     for (workspace_index, workspace) in attachment.workspaces.iter().enumerate() {
         for pane in workspace.panes.iter().filter(|pane| !pane.closing) {
             let mut info = PaneInfo::new(pane, workspace_index + 1, &session, session_instance);
             info.on_screen = on_screen;
             if !same_host {
                 info.foreground_pid = None;
-            }
-            if !program_title_known {
-                info.program_title = None;
             }
             panes.push(info);
         }
@@ -3788,14 +3784,12 @@ mod tests {
     fn list_panes_reports_no_program_title_from_a_server_that_cannot_tell_one() {
         crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(crate::AppRoot::default());
-            let (client, _outbound) = crate::session::client::SessionClient::test_channel();
-            backend.state_mut().current_mut().session_client = Some(
-                client.without_capability(crate::session::protocol::Capability::PaneProgramTitle),
-            );
-            // An older server's title for a pane named `ci` whose program set none.
-            backend.state_mut().current_mut().workspaces[0].panes[0]
-                .terminal
-                .title = Some("ci".into());
+            // What an older server sent at attach for a pane named `ci` whose program set none.
+            let terminal = &mut backend.state_mut().current_mut().workspaces[0].panes[0].terminal;
+            terminal.title = Some("ci".into());
+            terminal.title_from_program = false;
+            // Losing the connection keeps the pane as it was, and what its title was.
+            backend.state_mut().current_mut().mark_disconnected();
             let (reply, response) = mpsc::channel();
             backend
                 .dispatch(crate::Msg::ControlRequest(ControlEnvelope {

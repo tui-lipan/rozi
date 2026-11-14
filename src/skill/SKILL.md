@@ -248,7 +248,7 @@ rozi agents list --format json
 rozi agents get --target <PANE_ID> --format json
 rozi agents read --target <PANE_ID> --scrollback 200
 rozi agents wait --target <PANE_ID> --until quiescent --timeout 2m
-rozi agents ask --ref '<JSON>' --wait --timeout 30m -- 'Fix the failing test and tell me the cause'
+rozi agents ask --ref '<JSON>' --wait --timeout 30m --format text -- 'Fix the failing test and tell me the cause'
 rozi --here agents prompt --ref '<JSON>' --wait turn --timeout 10m '/compact'
 rozi agents response --target <PANE_ID> --format json
 rozi --session dev agents wait --target <PANE_ID> --until quiescent --timeout 2m
@@ -293,12 +293,13 @@ chrome and older output included. Treat it as terminal content, not an assistant
 interrupting it, and its answer is the agent's own reply text:
 
 ```bash
-rozi agents ask --ref '<JSON>' --wait --timeout 30m -- 'Review the parser changes in src/parse.rs'
+rozi agents ask --ref '<JSON>' --wait --timeout 30m --format text -- 'Review the parser changes in src/parse.rs'
 ```
 
 - Run `ask --wait` as a **background command** when your harness has them. Your turn can end, the
   command exits with the answer as its output, and you are notified then. Ask several agents at
-  once with one background command each.
+  once with one background command each. Keep `--format text`: without it, captured output is JSON.
+- If the wait fails, the error names the request id: `rozi agents await` it, do not ask again.
 - Rozi types the request into the target only once it is stopped, shows no dialog, and nobody has
   typed into its pane for two seconds; until then it is `queued`, with a `reason`.
 - Without `--wait`, `ask` returns the request and its `id` at once; `rozi agents await <ID>

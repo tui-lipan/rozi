@@ -925,20 +925,55 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
 /// ask is reported as itself.
 pub(crate) fn run_ask_and_await(mut command: ControlCli, timeout_ms: u64) -> Result<()> {
     let asked = send_control(&command)?;
-    let id = asked
+    let Some(request) = asked
         .get("ok")
         .and_then(serde_json::Value::as_bool)
         .filter(|ok| *ok)
-        .and_then(|_| asked.pointer("/data/id"))
-        .and_then(serde_json::Value::as_str);
-    let Some(id) = id else {
+        .and_then(|_| asked.get("data"))
+        .filter(|data| data.get("id").and_then(serde_json::Value::as_str).is_some())
+        .cloned()
+    else {
         return report_control(&command, None, asked);
     };
+    let id = request["id"].as_str().expect("checked id").to_string();
     command.request.command = control::ControlCommand::AgentAwait {
-        id: id.to_string(),
+        id,
         timeout_ms: Some(timeout_ms),
     };
-    run_control_cli(command)
+    let awaited = send_control(&command).map_err(|error| error.to_string());
+    report_control(&command, None, keep_asked_request(request, awaited))
+}
+
+/// The request exists once the ask succeeded, so a failed await must not invite asking again: it
+/// keeps the request as `data` and names the command that collects its answer.
+fn keep_asked_request(
+    request: serde_json::Value,
+    awaited: std::result::Result<serde_json::Value, String>,
+) -> serde_json::Value {
+    let mut value = match awaited {
+        Ok(value) => value,
+        Err(error) => serde_json::to_value(control::ControlResponse::error_with(
+            control::ControlErrorCode::Unavailable,
+            error,
+        ))
+        .expect("response serializes"),
+    };
+    if value.get("ok").and_then(serde_json::Value::as_bool) != Some(false) {
+        return value;
+    }
+    let id = request["id"].as_str().unwrap_or_default();
+    let hint = format!(
+        "request `{id}` stays asked; collect its answer with `rozi agents await {id} --timeout <DUR>` rather than asking again"
+    );
+    let error = match value.get("error").and_then(serde_json::Value::as_str) {
+        Some(error) => format!("{error}\n{hint}"),
+        None => hint,
+    };
+    value["error"] = error.into();
+    if value.get("data").is_none_or(serde_json::Value::is_null) {
+        value["data"] = request;
+    }
+    value
 }
 
 fn send_control(command: &ControlCli) -> Result<serde_json::Value> {
@@ -1048,6 +1083,34 @@ pub(super) fn read_socket_line(reader: &mut impl BufRead) -> std::io::Result<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_await_after_an_ask_keeps_the_request() {
+        let request = serde_json::json!({ "id": "r7", "state": "queued" });
+        let lost = keep_asked_request(request.clone(), Err("control connection closed".into()));
+        let timed_out = keep_asked_request(
+            request.clone(),
+            Ok(serde_json::to_value(control::ControlResponse::error_with(
+                control::ControlErrorCode::Timeout,
+                "timed out waiting for request `r7`; it is active",
+            ))
+            .unwrap()),
+        );
+        for failed in [lost, timed_out] {
+            assert_eq!(failed["ok"], false);
+            assert_eq!(failed["data"]["id"], "r7");
+            assert!(
+                failed["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("rozi agents await r7"),
+                "{failed}"
+            );
+        }
+        let answered =
+            serde_json::json!({ "ok": true, "data": { "id": "r7", "state": "answered" } });
+        assert_eq!(keep_asked_request(request, Ok(answered.clone())), answered);
+    }
 
     fn capture_cli(
         render: control::CaptureRender,

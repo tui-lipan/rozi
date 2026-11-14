@@ -417,11 +417,12 @@ id=$(rozi agents ask --ref "$REVIEWER" --format json -- "Review the parser chang
 rozi agents await "$id" --timeout 10m
 ```
 
-`--wait --timeout <DUR>` does both in one command and prints the answer. An agent can run it as a
-background command, end its turn, and be notified when the answer arrives:
+`--wait --timeout <DUR>` does both in one command. With `--format text` it prints only the answer,
+so an agent can run it as a background command, end its turn, and be notified with the answer when
+it arrives. If the wait fails, the request stays asked; await its id rather than asking again.
 
 ```bash
-rozi agents ask --ref "$REVIEWER" --wait --timeout 30m -- "Review the parser changes"
+rozi agents ask --ref "$REVIEWER" --wait --timeout 30m --format text -- "Review the parser changes"
 ```
 
 rozi types the request into the other agent once it is idle, done, or in error, shows no dialog,

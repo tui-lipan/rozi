@@ -64,6 +64,7 @@ const ANIMATION_KEYS: &[&str] = &[
     "workspace_ms",
     "session",
     "focus_chrome",
+    "agent_handoff",
     "pane_style",
     "picker",
     "toast",

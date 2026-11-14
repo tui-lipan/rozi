@@ -553,6 +553,17 @@ pub static SETTINGS: &[SettingSpec] = {
             )),
         ),
         row(
+            ToggleAgentHandoffAnimation,
+            G::Animations,
+            "Agent handoffs",
+            &["ripple", "requests", "conversations"],
+            toggle(
+                config_field!(animations.agent_handoff),
+                "animations",
+                "agent_handoff",
+            ),
+        ),
+        row(
             CyclePaneOpenAnimation,
             G::Animations,
             "Pane open",

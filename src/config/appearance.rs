@@ -384,6 +384,7 @@ fn apply_animation_flags(target: &mut WindowAnimationConfig, raw: &AnimationFile
         (raw.sidebar, &mut target.sidebar),
         (raw.workspace, &mut target.workspace),
         (raw.focus_chrome, &mut target.focus_chrome),
+        (raw.agent_handoff, &mut target.agent_handoff),
     ] {
         if let Some(value) = value {
             *target_value = value;

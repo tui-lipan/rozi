@@ -111,6 +111,7 @@ settings_actions! {
     CycleSessionAnimation,
     CyclePickerAnimation,
     CycleToastAnimation,
+    ToggleAgentHandoffAnimation,
     CycleCursorTrailAnimation,
     CycleCursorTrailStyle,
     ToggleNerdIcons,
@@ -352,6 +353,7 @@ impl SettingsAction {
             | Self::CycleSessionAnimation
             | Self::CyclePickerAnimation
             | Self::CycleToastAnimation
+            | Self::ToggleAgentHandoffAnimation
             | Self::CycleCursorTrailAnimation
             | Self::CycleCursorTrailStyle
                 if !config.animations.enabled =>
@@ -852,6 +854,7 @@ mod tests {
             SettingsAction::CycleSessionAnimation,
             SettingsAction::CyclePickerAnimation,
             SettingsAction::CycleToastAnimation,
+            SettingsAction::ToggleAgentHandoffAnimation,
             SettingsAction::CycleCursorTrailAnimation,
             SettingsAction::CycleCursorTrailStyle,
             SettingsAction::CyclePaneOpenAnimation,

@@ -42,11 +42,19 @@ fn list_overlay(ctx: &Context<AppRoot>, selected: Option<&str>, query: &str) -> 
         .filter(|request| !request.state.is_resolved())
         .map(|request| request.root.as_str())
         .collect();
+    // The same branch guides as the sidebar's trees, so a chain reads like any other tree.
+    let guides = TreeGuides::new(IndentStyle::Branch).guide_style(fg_only(&theme.muted));
+    let max_depth = rows
+        .iter()
+        .map(|(_, branch)| branch.depth())
+        .max()
+        .unwrap_or(0);
     let rendered: Arc<Vec<RenderedRow>> = Arc::new(
         rows.iter()
-            .map(|(request, depth)| {
+            .map(|(request, branch)| {
                 let waiting = waiting_roots.contains(&request.root.as_str());
-                RenderedRow::new(&ctx.state, request, *depth, waiting, now, theme)
+                let guides = guides.spans(branch, max_depth);
+                RenderedRow::new(&ctx.state, request, guides, waiting, now, theme)
             })
             .collect(),
     );
@@ -165,7 +173,7 @@ impl RenderedRow {
     fn new(
         state: &crate::state::State,
         request: &AgentRequestSummary,
-        depth: usize,
+        guides: Vec<Span>,
         waiting: bool,
         now: u64,
         theme: &Theme,
@@ -173,15 +181,15 @@ impl RenderedRow {
         use crate::view::vocabulary::{ASKING, fields};
         let from = agent_name(state, request.from.as_ref());
         let to = agent_name(state, Some(&request.to));
-        // A child's `└` stands under the first letter of the request it was asked while answering.
-        let indent = "  ".repeat(depth.saturating_sub(1).min(4));
-        let lead = if depth > 0 { "└ " } else { "" };
-        let label = vec![
-            Span::new(format!("{indent}{lead}")).style(fg_only(&theme.muted)),
+        // One cell between a guide and its row, as the sidebar's trees leave.
+        let gap = (!guides.is_empty()).then(|| Span::new(" "));
+        let mut label = guides;
+        label.extend(gap);
+        label.extend([
             Span::new(from.clone()),
             Span::new(format!(" {ASKING} ")).style(fg_only(&theme.muted)),
             Span::new(to.clone()),
-        ];
+        ]);
         let age = if !request.state.is_resolved() {
             short_duration(now.saturating_sub(request.created_at_unix_ms))
         } else {

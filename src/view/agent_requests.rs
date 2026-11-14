@@ -7,6 +7,7 @@ use crate::control::{AgentRequestState, AgentRequestSummary};
 use crate::pane::id::PaneId;
 use crate::session::protocol::{AgentRef, PaneRef};
 use crate::state::{Pane, State};
+use tui_lipan::prelude::TreeBranch;
 
 /// The requests that touch one pane's agents, for the marks in its title.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -142,8 +143,11 @@ pub(crate) fn agent_name(state: &State, agent: Option<&AgentRef>) -> String {
 pub(crate) const OUTSIDE: &str = "rozi CLI";
 
 /// `requests` in list order: each chain together, newest chain first, and within a chain each
-/// request followed by the ones asked while answering it. Pairs each with its depth in the chain.
-pub(crate) fn threaded(requests: &[AgentRequestSummary]) -> Vec<(&AgentRequestSummary, usize)> {
+/// request followed by the ones asked while answering it. Pairs each with where it sits in its
+/// chain's tree, for the guides drawn in front of it.
+pub(crate) fn threaded(
+    requests: &[AgentRequestSummary],
+) -> Vec<(&AgentRequestSummary, TreeBranch)> {
     let mut roots: Vec<&AgentRequestSummary> = requests
         .iter()
         .filter(|request| {
@@ -156,7 +160,7 @@ pub(crate) fn threaded(requests: &[AgentRequestSummary]) -> Vec<(&AgentRequestSu
     roots.sort_by_key(|request| std::cmp::Reverse(request.created_at_unix_ms));
     let mut ordered = Vec::new();
     for root in roots {
-        push_thread(requests, root, 0, &mut ordered);
+        push_thread(requests, root, TreeBranch::root(), &mut ordered);
     }
     ordered
 }
@@ -164,17 +168,18 @@ pub(crate) fn threaded(requests: &[AgentRequestSummary]) -> Vec<(&AgentRequestSu
 fn push_thread<'a>(
     requests: &'a [AgentRequestSummary],
     request: &'a AgentRequestSummary,
-    depth: usize,
-    ordered: &mut Vec<(&'a AgentRequestSummary, usize)>,
+    branch: TreeBranch,
+    ordered: &mut Vec<(&'a AgentRequestSummary, TreeBranch)>,
 ) {
-    ordered.push((request, depth));
+    ordered.push((request, branch.clone()));
     let mut children: Vec<&AgentRequestSummary> = requests
         .iter()
         .filter(|child| child.parent.as_deref() == Some(request.id.as_str()))
         .collect();
     children.sort_by_key(|child| child.created_at_unix_ms);
-    for child in children {
-        push_thread(requests, child, depth + 1, ordered);
+    let last = children.len().saturating_sub(1);
+    for (index, child) in children.into_iter().enumerate() {
+        push_thread(requests, child, branch.child(index == last), ordered);
     }
 }
 
@@ -278,7 +283,7 @@ mod tests {
         ];
         let order: Vec<(&str, usize)> = threaded(&requests)
             .into_iter()
-            .map(|(request, depth)| (request.id.as_str(), depth))
+            .map(|(request, branch)| (request.id.as_str(), branch.depth()))
             .collect();
         assert_eq!(order, [("z", 0), ("a", 0), ("b", 1), ("c", 2)]);
         // `b` answers at 16, after `c` was asked at 12: the diagram keeps that order.

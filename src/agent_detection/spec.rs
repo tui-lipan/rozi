@@ -7,8 +7,8 @@
 use serde::Deserialize;
 
 use super::definition::{
-    AgentDefinition, AgentHistory, AgentStateOutcome, AgentStateRule, MatchScope, MatchSource,
-    Pattern, normalized_name, normalized_path,
+    AgentDefinition, AgentHistory, AgentStateOutcome, AgentStateRule, LaunchPrompt, MatchScope,
+    MatchSource, Pattern, normalized_name, normalized_path,
 };
 
 /// A file that carries nothing but agent definitions - the embedded built-in catalog.
@@ -36,6 +36,23 @@ pub struct AgentSpec {
     /// Whether Rozi may scroll this agent's transcript to read it. Unset keeps a built-in's
     /// setting; otherwise history may be read.
     pub history: Option<AgentHistorySpec>,
+    /// Which launch arguments carry a prompt. Unset keeps a built-in's rule; `false` drops it.
+    pub launch_prompt: Option<AgentLaunchPromptSpec>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum AgentLaunchPromptSpec {
+    Rule(AgentLaunchPromptRuleSpec),
+    Disabled(bool),
+}
+
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentLaunchPromptRuleSpec {
+    pub subcommands: Vec<String>,
+    pub flags: Vec<String>,
+    pub options: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -223,6 +240,22 @@ pub fn build_definitions(
             ),
         };
 
+        let launch_prompt = match spec.launch_prompt {
+            Some(AgentLaunchPromptSpec::Rule(rule)) => Some(LaunchPrompt {
+                subcommands: rule.subcommands,
+                flags: rule.flags,
+                options: rule.options,
+            }),
+            Some(AgentLaunchPromptSpec::Disabled(false)) => None,
+            Some(AgentLaunchPromptSpec::Disabled(true)) => {
+                warnings.push(format!(
+                    "Ignored {noun} `{id}` launch_prompt: use a launch_prompt table or `launch_prompt = false`"
+                ));
+                None
+            }
+            None => inherited.and_then(|definition| definition.launch_prompt.clone()),
+        };
+
         let label = spec
             .label
             .map(|label| label.trim().to_string())
@@ -244,6 +277,7 @@ pub fn build_definitions(
                     inherited.map_or_else(AgentHistory::default, |definition| definition.history)
                 }
             },
+            launch_prompt,
         });
     }
     built
@@ -642,6 +676,7 @@ mod tests {
             attach_argv: None,
             reported_resume_argv: None,
             history: AgentHistory::None,
+            launch_prompt: None,
         }];
         let built = build_definitions(
             parse(
@@ -685,6 +720,7 @@ mod tests {
             attach_argv: None,
             reported_resume_argv: None,
             history: AgentHistory::None,
+            launch_prompt: None,
         }];
         let built = build_definitions(
             parse(
@@ -714,6 +750,7 @@ mod tests {
             attach_argv: None,
             reported_resume_argv: None,
             history: AgentHistory::None,
+            launch_prompt: None,
         };
         let cases = [
             (
@@ -745,6 +782,39 @@ mod tests {
             assert!(warnings.is_empty(), "{warnings:?}");
             assert_eq!(built[0].history, expected, "{definition}");
         }
+    }
+
+    /// Retuning a built-in's screen rules must not drop how it reads a prompt from its launch.
+    #[test]
+    fn an_override_keeps_the_launch_prompt_unless_it_drops_it() {
+        let builtin = AgentDefinition {
+            identity: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
+            names: vec!["codex".into()],
+            paths: Vec::new(),
+            base: true,
+            states: Vec::new(),
+            resume_argv: None,
+            attach_argv: None,
+            reported_resume_argv: None,
+            history: AgentHistory::None,
+            launch_prompt: Some(LaunchPrompt::default()),
+        };
+        let build = |definition: &str| {
+            let mut warnings = Vec::new();
+            let built = build_definitions(
+                parse(&format!("[[agents]]\nid = \"codex\"\n{definition}\n")),
+                AgentOrigin::Config,
+                std::slice::from_ref(&builtin),
+                &mut warnings,
+            );
+            assert!(warnings.is_empty(), "{warnings:?}");
+            built[0].launch_prompt.clone()
+        };
+        assert!(
+            build("[[agents.states]]\nstate = \"working\"\nscreen = { any_of = [\"x\"] }")
+                .is_some()
+        );
+        assert!(build("launch_prompt = false").is_none());
     }
 
     #[test]

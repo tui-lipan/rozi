@@ -1456,8 +1456,17 @@ impl SessionServer {
                     "agent incarnation was replaced",
                 )
             })?;
-        validate_agent_result_state(runtime.state, request.result)?;
-        validate_agent_prompt_state(runtime.state, request.allow_working)?;
+        // A launching agent's working is its loading, and a prompt is the work it is waiting for.
+        let loading = runtime.state == protocol::AgentState::Working
+            && reference.slot.is_none()
+            && pane.agent.launch.is_some();
+        let state = if loading {
+            protocol::AgentState::Idle
+        } else {
+            runtime.state
+        };
+        validate_agent_result_state(state, request.result)?;
+        validate_agent_prompt_state(state, request.allow_working)?;
         Ok(reference)
     }
 
@@ -3363,32 +3372,271 @@ mod tests {
         );
     }
 
-    /// Codex reports `working` over OSC 7501 while it starts, then `idle`. Read literally, every
-    /// launch was a run that finished a second later.
+    /// Codex reports `working` over OSC 7501 while it starts, then `idle`. The agent's own word
+    /// goes through the same launch as its screen: shown as it is, but no run finished.
     #[test]
     fn an_agents_own_working_report_at_launch_is_not_a_run() {
         use protocol::AgentState::{Idle, Working};
         let mut server = SessionServer::new_named("dev");
         pane_with_agent(&mut server, 7);
-        server.panes.get_mut(&7).unwrap().agent.startup =
-            Some(super::super::AgentStartup::new(std::time::Instant::now()));
-        let print = |server: &mut SessionServer, bytes: &[u8]| {
+        server.panes.get_mut(&7).unwrap().agent.launch = Some(Default::default());
+        let print = |server: &mut SessionServer, state: &str| {
             let screen = server.panes.get_mut(&7).unwrap().screen_mut();
             screen.set_program_status_enabled(true);
-            screen.process_bytes(bytes);
+            screen.process_bytes(format!("\x1b]7501;state={state}:app=claude-code\x07").as_bytes());
             server.sync_pane_runtime(None, 7, 1);
             protocol::agent_signature(&server.panes[&7].runtime)[0].2
         };
+        let completions = |server: &SessionServer| server.agent_records(None, 7)[0].completions;
 
-        assert_eq!(
-            print(&mut server, b"\x1b]7501;state=working:app=claude-code\x07"),
-            Idle
+        assert_eq!(print(&mut server, "working"), Working);
+        assert_eq!(server.panes[&7].runtime.work_started_at, None);
+        assert_eq!(print(&mut server, "idle"), Idle);
+        assert_eq!(completions(&server), 0);
+
+        print(&mut server, "working");
+        print(&mut server, "idle");
+        assert_eq!(completions(&server), 1, "after the launch, work is a run");
+    }
+
+    /// A launching agent's loading reads as working, and a prompt is the work it is waiting for:
+    /// neither a plain prompt nor one asking for its result is refused for it.
+    #[test]
+    fn a_prompt_to_a_launching_agent_is_not_refused_as_working() {
+        for (launching, result, refused) in [
+            (true, false, false),
+            (true, true, false),
+            (false, true, true),
+        ] {
+            let mut server = SessionServer::new_named("dev");
+            pane_with_agent(&mut server, 7);
+            let pane = server.panes.get_mut(&7).unwrap();
+            pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+                agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+                state: protocol::DetectedAgentState::Working,
+            });
+            pane.agent.launch = launching.then(Default::default);
+            let response = server
+                .register_agent_prompt(
+                    1,
+                    SessionAgentPrompt {
+                        result,
+                        target: AgentTarget::Pane(7),
+                        prompt: "fix the tests",
+                        wait: result.then_some(crate::control::AgentWaitCondition::Turn),
+                        timeout_ms: Some(1000),
+                        capture: None,
+                        allow_working: false,
+                    },
+                    ReplyTo::Headless {
+                        capabilities: protocol::Capabilities::default(),
+                        effective_protocol: PROTOCOL_VERSION,
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                response.code == Some(ControlErrorCode::Conflict),
+                refused,
+                "launching {launching}, result {result}: {response:?}"
+            );
+        }
+    }
+
+    /// A hook report refused for naming another agent says nothing about the launch, whose loading
+    /// still finishes no run.
+    #[test]
+    fn a_refused_working_report_does_not_end_a_launch() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        server.panes.get_mut(&7).unwrap().agent.launch = Some(Default::default());
+        let refused = server.apply_agent_integration(
+            None,
+            7,
+            1,
+            super::super::runtime::AgentIntegrationUpdate {
+                response: None,
+                agent: Some("codex".into()),
+                integration: "hook-a".into(),
+                state: Some(protocol::AgentState::Working),
+                reason: None,
+                native_session: None,
+                unless_quiet: None,
+                ended: false,
+                seq: 1,
+            },
         );
-        server.panes.get_mut(&7).unwrap().agent.startup = None;
-        assert_eq!(
-            print(&mut server, b"\x1b]7501;state=working:app=claude-code\x07"),
-            Working
+        assert!(refused.is_err());
+        assert!(server.panes[&7].agent.launch.is_some());
+    }
+
+    /// A hook that owns the pane drives the conversation on screen through a turn, and the rows go
+    /// while it is blocked. The hook's report finishing the turn still finishes that run.
+    #[test]
+    fn a_hooked_turn_withdrawn_while_blocked_still_finishes() {
+        use protocol::AgentState::{Blocked, Idle, Working};
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        let row = protocol::PublishedRow {
+            publisher: "1/sessions".into(),
+            kind: protocol::PublisherKind::Agent,
+            id: "a".into(),
+            title: "a".into(),
+            status: "idle".into(),
+            reason: None,
+            active: true,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some("conversation-a".into()),
+            live_session: None,
+            reported: false,
+        };
+        super::super::runtime::publish_rows_for_test(server.panes.get_mut(&7).unwrap(), vec![row]);
+        let report = |server: &mut SessionServer, state, seq| {
+            let update = super::super::runtime::AgentIntegrationUpdate {
+                response: None,
+                agent: Some("claude".into()),
+                integration: "hook-a".into(),
+                state: Some(state),
+                reason: None,
+                native_session: Some("conversation-a".into()),
+                unless_quiet: None,
+                ended: false,
+                seq,
+            };
+            server.apply_agent_integration(None, 7, 1, update).unwrap();
+        };
+        report(&mut server, Working, 1);
+        report(&mut server, Blocked, 2);
+        super::super::runtime::publish_rows_for_test(server.panes.get_mut(&7).unwrap(), Vec::new());
+        report(&mut server, Idle, 3);
+        let finished: u64 = server
+            .agent_records(None, 7)
+            .iter()
+            .map(|record| record.completions)
+            .sum();
+        assert_eq!(finished, 1);
+    }
+
+    /// The hook owns one conversation while the publisher shows another of the same agent. That
+    /// other conversation's turn, withdrawn mid-turn, is not the hook's to finish.
+    #[test]
+    fn a_withdrawn_turn_is_not_handed_to_another_conversations_hook() {
+        use protocol::AgentState::Idle;
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        let row = |id: &str, status: &str, active| protocol::PublishedRow {
+            publisher: "1/sessions".into(),
+            kind: protocol::PublisherKind::Agent,
+            id: id.into(),
+            title: id.into(),
+            status: status.into(),
+            reason: None,
+            active,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some(format!("conversation-{id}")),
+            live_session: None,
+            reported: false,
+        };
+        let rows = |server: &mut SessionServer, rows| {
+            super::super::runtime::publish_rows_for_test(server.panes.get_mut(&7).unwrap(), rows);
+        };
+        let report = |server: &mut SessionServer, seq| {
+            let update = super::super::runtime::AgentIntegrationUpdate {
+                response: None,
+                agent: Some("claude".into()),
+                integration: "hook-a".into(),
+                state: Some(Idle),
+                reason: None,
+                native_session: Some("conversation-a".into()),
+                unless_quiet: None,
+                ended: false,
+                seq,
+            };
+            server.apply_agent_integration(None, 7, 1, update).unwrap();
+        };
+        rows(
+            &mut server,
+            vec![row("a", "idle", false), row("b", "idle", true)],
         );
+        report(&mut server, 1);
+        rows(
+            &mut server,
+            vec![row("a", "idle", false), row("b", "working", true)],
+        );
+        rows(
+            &mut server,
+            vec![row("a", "idle", false), row("b", "blocked", true)],
+        );
+        rows(&mut server, Vec::new());
+        report(&mut server, 2);
+        let finished: u64 = server
+            .agent_records(None, 7)
+            .iter()
+            .map(|record| record.completions)
+            .sum();
+        assert_eq!(finished, 0);
+    }
+
+    /// The agent's own report is bound to the conversation on screen at the last poll. Rows that
+    /// switch conversations and are withdrawn before the next one leave it naming the old one,
+    /// which did not run the new one's turn.
+    #[test]
+    fn a_withdrawn_turn_is_not_handed_to_a_report_bound_to_another_conversation() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        let row = |id: &str, status: &str, active| protocol::PublishedRow {
+            publisher: "1/sessions".into(),
+            kind: protocol::PublisherKind::Agent,
+            id: id.into(),
+            title: id.into(),
+            status: status.into(),
+            reason: None,
+            active,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some(format!("conversation-{id}")),
+            live_session: None,
+            reported: false,
+        };
+        let rows = |server: &mut SessionServer, rows| {
+            super::super::runtime::publish_rows_for_test(server.panes.get_mut(&7).unwrap(), rows);
+        };
+        rows(
+            &mut server,
+            vec![row("a", "idle", true), row("b", "idle", false)],
+        );
+        let screen = server.panes.get_mut(&7).unwrap().screen_mut();
+        screen.set_program_status_enabled(true);
+        screen.process_bytes(b"\x1b]7501;state=idle:app=claude-code\x07");
+        server.sync_pane_runtime(None, 7, 1);
+        assert_eq!(
+            server.panes[&7]
+                .runtime
+                .integration
+                .as_ref()
+                .and_then(|report| report.native_session.as_deref()),
+            Some("conversation-a")
+        );
+
+        rows(
+            &mut server,
+            vec![row("a", "idle", false), row("b", "working", true)],
+        );
+        rows(
+            &mut server,
+            vec![row("a", "idle", false), row("b", "blocked", true)],
+        );
+        rows(&mut server, Vec::new());
+        let finished: u64 = server
+            .agent_records(None, 7)
+            .iter()
+            .map(|record| record.completions)
+            .sum();
+        assert_eq!(finished, 0);
     }
 
     /// A terminal keeps an agent's `error` after it exits. The next agent launched in the pane has

@@ -55,21 +55,6 @@ pub(super) const GIT_REFRESH: Duration = Duration::from_secs(2);
 /// stopped reports it a moment late, which is worth far more than a state that oscillates.
 pub(super) const STATE_SETTLE_GRACE: Duration = Duration::from_secs(2);
 
-/// How long after an agent is first named that its screen cannot yet say it is working.
-///
-/// Several harnesses animate a spinner while they start - loading config, connecting MCP servers,
-/// restoring a conversation - and it is the same braille glyph at the head of a line that the shared
-/// working rule reads a turn by. Read literally, every launch was a run that ended a moment later:
-/// the clock started, then the "finished" pulse armed for work nobody asked for.
-///
-/// Nothing on screen tells a loading spinner from a turn's spinner, so this goes by what the launch
-/// has shown so far (see [`AgentStartup`]). The window ends early on the first sign of a ready
-/// agent: a dialog, a prompt that stays up once the loading screen has gone, or a submitted line.
-/// That way a quick first question is not lost. This is the fallback for an agent that shows none of them: a
-/// run still spinning when it closes is reported from then on, which is how a prompt passed on the
-/// command line reads - this much late. A blocked screen is never held back.
-pub(super) const AGENT_STARTUP_GRACE: Duration = Duration::from_secs(8);
-
 /// How long a held agent state survives with no confirming evidence.
 ///
 /// Generous on purpose: this is a backstop for a pane whose agent the scraper permanently lost
@@ -250,6 +235,23 @@ impl AgentScratch {
         Some(handoff)
     }
 
+    /// The last agent rows are gone while a claim on the pane - a hook, or the agent's own report -
+    /// holds a reference of its own beside them, and the turn it drove on the row ran under the
+    /// row's reference. The claim keeps its reference, which clients know it by, and takes over the
+    /// row's open run: a turn withdrawn while blocked can end without being seen working again.
+    /// Without a claim, [`Self::carry_detected`] hands the row's whole reference back instead.
+    fn carry_run_to_claim(&mut self, slot: &protocol::RowKey) {
+        let Some(row) = self.references.get(&Some(slot.clone())) else {
+            return;
+        };
+        let (identity, run_open) = (row.identity.clone(), row.run_open);
+        if let Some(claim) = self.references.get_mut(&None)
+            && claim.identity == identity
+        {
+            claim.run_open |= run_open;
+        }
+    }
+
     /// Track the pane-level reference an integration claim is bound to. The claim names its own
     /// incarnation, so re-binding the same one keeps the runs it has already finished.
     fn bind_claim(&mut self, integration: &protocol::AgentIntegrationReport) {
@@ -337,8 +339,8 @@ impl AgentScratch {
     /// Adopt `runtime`'s agents after a change: renew references, count each run that ended, and
     /// move the summary's change time when any agent's state moved.
     ///
-    /// A run starts when an agent is working, and ends when it is next idle or done under the same
-    /// reference, whether or not it stopped for approval on the way. That is the one definition
+    /// A run starts when an agent is working - outside a launch, see [`super::AgentLaunch`] - and
+    /// ends when it is next idle or done under the same reference, whether or not it stopped for approval on the way. That is the one definition
     /// every client reads, through [`protocol::AgentRecord::completions`]. A run can end from
     /// blocked: an approved tool can finish inside [`STATE_SETTLE_GRACE`], so `working` is never
     /// reported again before the agent stops. A dialog with no work before it is not a run, a
@@ -347,6 +349,7 @@ impl AgentScratch {
     pub(super) fn observe(&mut self, before: AgentStates, runtime: &PaneRuntimeState) {
         self.sync_references(runtime);
         let after = self.agent_states(runtime);
+        let counting = !self.launch_gates(runtime);
         for entry in &after {
             let Some(tracked) = self
                 .references
@@ -356,7 +359,11 @@ impl AgentScratch {
                 continue;
             };
             match entry.state {
-                protocol::AgentState::Working => tracked.run_open = true,
+                // A launch is only ambiguous for what the pane's own screen or report says. A
+                // published conversation's state is the publisher's word about a real turn.
+                protocol::AgentState::Working => {
+                    tracked.run_open |= counting || entry.slot.is_some();
+                }
                 protocol::AgentState::Blocked => {}
                 state => {
                     if tracked.run_open && state.is_quiescent() {
@@ -385,6 +392,19 @@ impl AgentScratch {
 
     pub(super) fn clear_runtime_identity(&mut self) {
         self.references.clear();
+    }
+
+    /// Whether a launch keeps the pane's own work from counting as a run. Published agent rows
+    /// speak for the pane while they last, so a launch is suspended under them - not ended, since
+    /// the rows can be withdrawn while the agent is still loading.
+    pub(super) fn launch_gates(&self, runtime: &PaneRuntimeState) -> bool {
+        self.launch.is_some() && !runtime.rows.iter().any(protocol::PublishedRow::is_agent)
+    }
+
+    /// A run has started on its own evidence, so the launch is over: work from here is a run, even
+    /// work that was already on screen as the launch's loading.
+    pub(super) fn start_run(&mut self) {
+        self.launch = None;
     }
 
     fn ensure_reference(
@@ -645,13 +665,6 @@ fn program_report(
         tui_lipan::ProgramStatusState::Blocked => protocol::AgentState::Blocked,
         tui_lipan::ProgramStatusState::Done => protocol::AgentState::Done,
         tui_lipan::ProgramStatusState::Error => protocol::AgentState::Error,
-    };
-    // Codex reports `working` while it starts, and the `idle` after it read as a run that ended.
-    // A launch that has not shown it is ready is held back here as its screen is.
-    let state = if state == protocol::AgentState::Working && pane.agent.startup.is_some() {
-        protocol::AgentState::Idle
-    } else {
-        state
     };
     // What it waits for, or why it failed. While it works, the message only says what it is doing
     // right now, which the record itself already shows.
@@ -1173,6 +1186,7 @@ impl SessionServer {
             pane.runtime.status.as_ref(),
             pane.runtime.detected_agent.as_ref(),
             pane.runtime.integration.as_deref(),
+            !pane.agent.launch_gates(&pane.runtime),
         );
         pane.agent.observe(before, &pane.runtime);
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
@@ -1562,7 +1576,9 @@ impl SessionServer {
                 }
             }
             fold_row_reports(&mut pane.runtime.rows, &pane.agent.row_reports);
+            end_launch_under_a_working_row(pane);
         } else if let Some((state, reason, native_session)) = report {
+            let starts_run = state == protocol::AgentState::Working;
             pane.runtime.integration = Some(Box::new(build_integration_report(
                 session_instance,
                 pane_id,
@@ -1578,6 +1594,10 @@ impl SessionServer {
                 seq,
                 previous.as_deref(),
             )?));
+            // A hook reports work when the agent is given some, which a loading screen is not.
+            if starts_run {
+                pane.agent.start_run();
+            }
             // Settled now, not at the next poll: a confirmation with no screen to wait for, or a
             // dialog already up, says what the pane reads as straight away.
             let detected = pane.runtime.detected_agent.clone();
@@ -1614,6 +1634,7 @@ impl SessionServer {
             pane.runtime.status.as_ref(),
             pane.runtime.detected_agent.as_ref(),
             pane.runtime.integration.as_deref(),
+            !pane.agent.launch_gates(&pane.runtime),
         );
         pane.agent.observe(before, &pane.runtime);
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
@@ -1882,6 +1903,7 @@ impl SessionServer {
                 next.status.as_ref(),
                 next.detected_agent.as_ref(),
                 None,
+                !pane.agent.launch_gates(&next),
             );
         }
         // A snapshot must stop offering a conversation the pane has visibly left.
@@ -2056,13 +2078,15 @@ fn refresh_agent_identity(
     let named = identify_pane_agent(pane, agents, foreground_program, foreground_job);
     let identity = named
         .as_ref()
-        .map(|(definition, _, _)| definition.id().to_string());
-    let relaunched = named.as_ref().is_some_and(|(_, _, relaunched)| *relaunched);
+        .map(|named| named.definition.id().to_string());
+    let relaunched = named.as_ref().is_some_and(|named| named.relaunched);
+    let prompted = named.as_ref().is_some_and(|named| named.prompted);
     let launched = identity != pane.agent.identity || relaunched;
     if launched {
         pane.agent.withdrawn_rows.clear();
         let launch = identity.is_some() && !adopting;
-        pane.agent.startup = launch.then(|| super::AgentStartup::new(Instant::now()));
+        // A prompt on the command line is a run from the start, loading screen and all.
+        pane.agent.launch = (launch && !prompted).then(super::AgentLaunch::default);
         if launch {
             pane.agent.launches = pane.agent.launches.wrapping_add(1);
         }
@@ -2078,7 +2102,7 @@ fn refresh_agent_identity(
     // A name-only record gives way to the first real process seen, which is better evidence.
     let anchored = !launched && pane.agent.process.as_ref().is_some_and(|p| p.pid != 0);
     if !anchored {
-        pane.agent.process = named.map(|(_, process, _)| process);
+        pane.agent.process = named.map(|named| named.process);
     }
 }
 
@@ -2209,11 +2233,28 @@ fn compute_pane_runtime(
         ),
     };
 
+    // Rows' states say nothing about what the pane's own launch is loading.
+    if !pane
+        .runtime
+        .rows
+        .iter()
+        .any(protocol::PublishedRow::is_agent)
+    {
+        advance_launch(
+            &mut pane.agent.launch,
+            crate::session::protocol::effective_semantic_agent_state(
+                integration.as_deref(),
+                pane.runtime.status.as_ref(),
+                detected_agent.as_ref(),
+            ),
+        );
+    }
     let work_started_at = next_work_started_at(
         &pane.runtime,
         pane.runtime.status.as_ref(),
         detected_agent.as_ref(),
         integration.as_deref(),
+        !pane.agent.launch_gates(&pane.runtime),
     );
     let foreground_shell = foreground
         .program
@@ -2627,11 +2668,14 @@ fn same_program(program: &str, path: &std::path::Path) -> bool {
 
 /// Keep one run's wall-clock start across blocked and resumed states. The server owns this value so
 /// a client can detach and reattach without turning a still-live run into a new one.
+///
+/// An agent's work only runs the clock outside its launch (`counting`); see [`super::AgentLaunch`].
 fn next_work_started_at(
     previous: &PaneRuntimeState,
     next_status: Option<&PaneStatus>,
     next_detected: Option<&DetectedAgent>,
     next_integration: Option<&protocol::AgentIntegrationReport>,
+    counting: bool,
 ) -> Option<u64> {
     if next_integration.is_none()
         && next_detected.is_none()
@@ -2646,6 +2690,9 @@ fn next_work_started_at(
                 .unwrap_or_default()
                 .as_secs(),
         );
+    }
+    if !counting {
+        return None;
     }
     let previous_status = crate::session::protocol::effective_semantic_agent_state(
         previous.integration.as_deref(),
@@ -2732,6 +2779,28 @@ fn publisher_id_is_valid(id: &str) -> bool {
     !id.is_empty() && id.len() <= 160 && !id.chars().any(|ch| ch.is_control() || ch == '/')
 }
 
+/// The conversation on screen is in a turn by its publisher's word, so the pane's launch has given
+/// way to a real run - one the pane carries on with if the rows are withdrawn mid-turn. Any other
+/// conversation working, in the background or active for a later publisher, says nothing about
+/// what the pane's own launch is loading.
+fn end_launch_under_a_working_row(pane: &mut ServerPane) {
+    let working = protocol::active_agent_row(&pane.runtime.rows).is_some_and(|row| {
+        protocol::aggregate_row_state(std::slice::from_ref(row))
+            == Some(protocol::DetectedAgentState::Working)
+    });
+    if working {
+        pane.agent.start_run();
+    }
+}
+
+/// Publish `rows` into `pane` the way an agent publisher's update does: the detected agent's
+/// reference moves to the row taking it over, then the rows are replaced.
+#[cfg(test)]
+pub(super) fn publish_rows_for_test(pane: &mut ServerPane, rows: Vec<protocol::PublishedRow>) {
+    let _ = pane.agent.handoff_detected_row(&pane.runtime, &rows);
+    let _ = replace_pane_rows(pane, rows);
+}
+
 /// Install a pane's new row list and everything that follows from it.
 ///
 /// The agent summary's change time moves only when the pane's agents changed: an activity
@@ -2749,6 +2818,24 @@ pub(super) fn replace_pane_rows(
         .any(protocol::PublishedRow::is_agent);
     let before = pane.agent.agent_states(&pane.runtime);
     let previous = std::mem::replace(&mut pane.runtime.rows, next);
+    // The last agent rows went while a claim held the pane's reference beside them; see
+    // `AgentScratch::carry_run_to_claim`. The claim speaks for the row only when it names the
+    // row's conversation: even the agent's own report is bound to the conversation on screen at
+    // the last poll, which rows switched since then have left behind.
+    if had_agent_rows
+        && !pane
+            .runtime
+            .rows
+            .iter()
+            .any(protocol::PublishedRow::is_agent)
+        && let Some(row) = protocol::active_agent_row(&previous)
+        && pane.runtime.integration.as_deref().is_some_and(|claim| {
+            claim.native_session.is_some()
+                && claim.native_session.as_deref() == protocol::row_reporting_session(row)
+        })
+    {
+        pane.agent.carry_run_to_claim(&row.key());
+    }
     pane.agent.response_sequences.retain(|reference, _| {
         reference
             .slot
@@ -2770,6 +2857,7 @@ pub(super) fn replace_pane_rows(
     if has_agent_rows {
         pane.agent.retained_resume = None;
     }
+    end_launch_under_a_working_row(pane);
     pane.agent.observe(before, &pane.runtime);
     pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
     let row_session = |rows: &[protocol::PublishedRow], key: &Option<protocol::RowKey>| {
@@ -3118,16 +3206,22 @@ fn resolve_detected_agent(
 /// process since the last sweep named one.
 ///
 /// The costly half of detection, and the only half [`AGENT_DETECT_REFRESH`] paces.
+/// The agent a sweep named in a pane, and what its process says about the launch.
+struct NamedAgent<'a> {
+    definition: &'a crate::agent_detection::AgentDefinition,
+    process: super::AgentProcess,
+    /// A different process from the one the pane last named.
+    relaunched: bool,
+    /// Launched with a prompt to work on; see [`crate::agent_detection::LaunchPrompt`].
+    prompted: bool,
+}
+
 fn identify_pane_agent<'a>(
     pane: &ServerPane,
     agents: &'a AgentCatalog,
     foreground_program: Option<&str>,
     foreground_job: Option<&ForegroundJob>,
-) -> Option<(
-    &'a crate::agent_detection::AgentDefinition,
-    super::AgentProcess,
-    bool,
-)> {
+) -> Option<NamedAgent<'a>> {
     let configured_hint = ["ROZI_AGENT", "HERDR_AGENT"].into_iter().find_map(|key| {
         pane.env
             .iter()
@@ -3141,6 +3235,7 @@ fn identify_pane_agent<'a>(
     );
     let foreground_job = foreground_job?;
     let (definition, process) = crate::agent_detection::identify(agents, Some(&foreground_job))?;
+    let prompted = crate::agent_detection::launch_carries_prompt(agents, definition, process);
     let process = super::AgentProcess {
         pid: process.pid,
         name: process.name.clone(),
@@ -3151,7 +3246,12 @@ fn identify_pane_agent<'a>(
         .process
         .as_ref()
         .is_some_and(|previous| agent_process_replaced(previous, &process, &foreground_job));
-    Some((definition, process, relaunched))
+    Some(NamedAgent {
+        definition,
+        process,
+        relaunched,
+        prompted,
+    })
 }
 
 /// Whether the agent process a sweep named is a different one from the last sweep's.
@@ -3262,48 +3362,65 @@ fn read_agent_state(pane: &mut ServerPane, agents: &AgentCatalog) -> Option<Dete
             resolved
         }
     };
-    let resolved = hold_back_startup_work(resolved, &mut pane.agent.startup, now);
     settle_state_flicker(resolved, &mut pane.agent.settled, now)
 }
 
-/// Read a `working` screen as idle while a launched agent has not yet shown it is ready.
-///
-/// Pure in `now`. Ready is a dialog, or a quiet screen that has held for [`STATE_SETTLE_GRACE`]
-/// after the loading screen - a quiet screen *before* any loading screen is a blank or splash
-/// frame, and a brief one after it is the spinner caught mid-redraw. Past [`AGENT_STARTUP_GRACE`]
-/// the agent counts as ready whatever it shows. Applied after the read cache, so a spinner still
-/// on screen when the window closes is reported then without waiting for a redraw.
-fn hold_back_startup_work(
-    resolved: Option<DetectedAgent>,
-    startup: &mut Option<super::AgentStartup>,
-    now: Instant,
-) -> Option<DetectedAgent> {
-    use crate::session::protocol::DetectedAgentState;
-
-    let (Some(detected), Some(phase)) = (resolved.as_ref(), startup.as_mut()) else {
-        return resolved;
+/// Follow a launch through to the agent being ready: its first settled idle after the loading
+/// screen. A quiet screen before any loading is a blank or splash frame, and a dialog is not the
+/// agent ready either - the loading after a trust prompt is still loading.
+fn advance_launch(
+    launch: &mut Option<super::AgentLaunch>,
+    state: Option<crate::session::protocol::AgentState>,
+) {
+    let Some(phase) = launch.as_mut() else {
+        return;
     };
-    let ready = now.duration_since(phase.since) >= AGENT_STARTUP_GRACE
-        || match detected.state {
-            DetectedAgentState::Blocked => true,
-            DetectedAgentState::Working => {
-                phase.loading_seen = true;
-                phase.quiet_since = None;
-                false
-            }
-            DetectedAgentState::Idle => {
-                let quiet_since = *phase.quiet_since.get_or_insert(now);
-                phase.loading_seen && now.duration_since(quiet_since) >= STATE_SETTLE_GRACE
-            }
-        };
-    if ready {
-        *startup = None;
-        return resolved;
+    match state {
+        Some(crate::session::protocol::AgentState::Working) => phase.loading_seen = true,
+        Some(state) if state.is_quiescent() && phase.loading_seen => *launch = None,
+        _ => {}
     }
-    resolved.map(|detected| DetectedAgent {
-        state: DetectedAgentState::Idle,
-        ..detected
-    })
+}
+
+/// Note input written to a pane: a submitted line gives a launching agent work, so its run starts.
+/// A line typed into a dialog answers it instead - the loading after a trust prompt is still
+/// loading.
+///
+/// The dialog is read from the screen as it is now, not from the last poll, which can be a frame
+/// behind what the user is answering, nor from the settled state, which keeps a dialog up for a
+/// moment after it closes. The agent's report showing one counts too: either is enough, since
+/// taking a prompt for an answer only misses a run. A screen's dialog is answered once - a second
+/// line typed before the agent redraws goes to whatever came after it.
+pub(super) fn note_pane_input(pane: &mut ServerPane, agents: &AgentCatalog, bytes: &[u8]) {
+    if pane.agent.launch.is_none() || !input_submits_line(bytes) {
+        return;
+    }
+    let screen = pane.screen_without_change().snapshot();
+    let reported = pane
+        .runtime
+        .integration
+        .as_deref()
+        .is_some_and(|report| report.state == protocol::AgentState::Blocked);
+    let shown = pane
+        .agent
+        .identity
+        .as_deref()
+        .and_then(|id| agents.by_id(id))
+        .is_some_and(|definition| {
+            let title = pane.effective_title().unwrap_or_default();
+            crate::agent_detection::observe(agents, definition, &screen, &title).state
+                == Some(protocol::DetectedAgentState::Blocked)
+        });
+    let answered = pane
+        .agent
+        .answered
+        .as_ref()
+        .is_some_and(|answered| std::sync::Arc::ptr_eq(answered, &screen));
+    if (reported || shown) && !answered {
+        pane.agent.answered = Some(screen);
+    } else {
+        pane.agent.start_run();
+    }
 }
 
 /// Whether input written to a pane submits a line: Enter as a plain carriage return, or as the
@@ -3596,16 +3713,6 @@ mod tests {
 
     fn catalog() -> AgentCatalog {
         AgentCatalog::builtin()
-    }
-
-    /// Move the pane's agent launch back past [`AGENT_STARTUP_GRACE`], so its work reads as a run.
-    fn past_startup(pane: &mut ServerPane) {
-        let startup = pane
-            .agent
-            .startup
-            .as_mut()
-            .expect("the agent was named as a launch");
-        startup.since -= AGENT_STARTUP_GRACE;
     }
 
     fn make_pane() -> ServerPane {
@@ -5086,7 +5193,6 @@ mod tests {
             "a pane drawing no run evidence is idle"
         );
 
-        past_startup(&mut pane);
         pane.terminal.process_bytes(b"esc to interrupt\r\n");
         pane.runtime =
             compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
@@ -5538,186 +5644,305 @@ mod tests {
         assert!(hold.is_none(), "an expired hold is dropped, not renewed");
     }
 
-    /// Reduced from harnesses that animate a braille spinner while they load: the shared working
-    /// rule cannot tell it from a turn's, so every launch read as a run that finished seconds
-    /// later and armed the "finished" pulse for work nobody asked for.
-    #[test]
-    fn a_loading_spinner_at_launch_is_not_a_run() {
-        use crate::session::protocol::DetectedAgentState;
-
-        let state = |pane: &ServerPane| pane.runtime.detected_agent.as_ref().map(|d| d.state);
-        let mut pane = make_pane();
-        pane.env.push(("ROZI_AGENT".into(), "pi".into()));
-        let mut scan = LazyProcessScan::default();
-
-        pane.terminal
-            .process_bytes("⠋ Loading extensions…\r\n".as_bytes());
-        pane.runtime =
-            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
-        assert_eq!(state(&pane), Some(DetectedAgentState::Idle));
-        assert_eq!(pane.runtime.work_started_at, None, "no run clock started");
-
-        pane.terminal.process_bytes(b"\x1b[2J\x1b[H> \r\n");
-        pane.runtime =
-            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
-        assert_eq!(state(&pane), Some(DetectedAgentState::Idle));
-
-        // The spinner that comes once the window has passed is a turn the user asked for.
-        past_startup(&mut pane);
-        pane.terminal.process_bytes("⠦ Working...\r\n".as_bytes());
-        pane.runtime =
-            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
-        assert_eq!(state(&pane), Some(DetectedAgentState::Working));
+    /// One launch through the runtime pass and run counting, as a poll drives them. The settle
+    /// grace is wall-clock time, so each step drops what it was holding.
+    struct LaunchRig {
+        pane: ServerPane,
+        scan: LazyProcessScan,
     }
 
-    #[test]
-    fn codex_idle_logo_stays_idle_after_the_startup_window() {
-        use crate::session::protocol::DetectedAgentState;
+    impl LaunchRig {
+        /// A freshly launched Pi, named by its hint like a launch from a shell.
+        fn new() -> Self {
+            let mut pane = make_pane();
+            pane.env.push(("ROZI_AGENT".into(), "pi".into()));
+            let mut rig = Self {
+                pane,
+                scan: LazyProcessScan::default(),
+            };
+            rig.screen("\x1b[2J\x1b[H");
+            assert!(rig.pane.agent.launch.is_some(), "the hint named a launch");
+            rig
+        }
 
-        let fixture: toml::Value =
-            toml::from_str(include_str!("../../../tests/fixtures/agents/codex.toml")).unwrap();
-        let case = fixture["case"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|case| case["name"].as_str() == Some("idle-with-braille-logo"))
-            .unwrap();
-        let mut pane = make_pane();
-        pane.env.push(("ROZI_AGENT".into(), "codex".into()));
-        // Preserve the tall capture so its logo remains among the last non-empty footer lines.
-        pane.terminal = crate::pane::engine::screen(100, 160, 100);
-        pane.terminal.process_bytes(
-            case["screen"]
-                .as_str()
-                .unwrap()
-                .replace('\n', "\r\n")
-                .as_bytes(),
-        );
-        let mut scan = LazyProcessScan::default();
-        pane.runtime =
-            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
-        assert_eq!(
-            pane.runtime
-                .detected_agent
-                .as_ref()
-                .map(|agent| agent.state),
-            Some(DetectedAgentState::Idle)
-        );
-        assert_eq!(pane.runtime.work_started_at, None);
+        fn screen(&mut self, bytes: &str) -> Option<crate::session::protocol::DetectedAgentState> {
+            self.pane.terminal.process_bytes(bytes.as_bytes());
+            self.pane.agent.settled = None;
+            let before = self.pane.agent.agent_states(&self.pane.runtime);
+            let next = compute_runtime_state(
+                &mut self.pane,
+                &StubInspector,
+                Some(&catalog()),
+                &mut self.scan,
+            );
+            self.pane.agent.observe(before, &next);
+            self.pane.runtime = next;
+            self.pane.runtime.detected_agent.as_ref().map(|d| d.state)
+        }
 
-        // Keep the same screen so this also checks the cached observation at the timeout.
-        past_startup(&mut pane);
-        pane.runtime =
-            compute_runtime_state(&mut pane, &StubInspector, Some(&catalog()), &mut scan);
-        assert_eq!(
-            pane.runtime
-                .detected_agent
-                .as_ref()
-                .map(|agent| agent.state),
-            Some(DetectedAgentState::Idle)
-        );
-        assert_eq!(pane.runtime.work_started_at, None);
-        assert!(pane.agent.startup.is_none());
+        fn completions(&self) -> u64 {
+            let pane_ref = protocol::PaneRef {
+                session_instance: protocol::SessionInstanceId::for_test("server"),
+                pane_id: 1,
+                generation: 1,
+            };
+            self.pane.agent.records(pane_ref)[0].completions
+        }
     }
 
-    /// A timeline for one launch, read through the startup window at each `(ms, observed)` step.
-    fn startup_timeline(
-        steps: &[(u64, crate::session::protocol::DetectedAgentState)],
-    ) -> Vec<crate::session::protocol::DetectedAgentState> {
-        let launched = Instant::now();
-        let mut startup = Some(crate::session::server::AgentStartup::new(launched));
-        steps
-            .iter()
-            .map(|&(ms, state)| {
-                let observed = Some(DetectedAgent {
-                    agent: crate::session::protocol::AgentIdentity::new("pi", "Pi").into(),
-                    state,
-                });
-                hold_back_startup_work(observed, &mut startup, launched + Duration::from_millis(ms))
-                    .expect("a recognized agent resolves")
-                    .state
-            })
-            .collect()
-    }
+    const LOADING: &str = "\x1b[2J\x1b[H⠋ Loading extensions…\r\n";
+    const PROMPT: &str = "\x1b[2J\x1b[H> \r\n";
+    const TURN: &str = "\x1b[2J\x1b[H⠦ Working...\r\n";
+    const DIALOG: &str = "\x1b[2J\x1b[HWaiting for user input\r\n";
 
-    /// The agent is ready a couple of seconds in and the first question is quick. A purely timed
-    /// window swallowed that whole run - no clock, no finish - because it fell inside the window.
+    /// A harness animates the same spinner while it loads as while it works. Read as a run, every
+    /// launch was one that finished a moment later: a clock, a finished pulse, a notification.
     #[test]
-    fn a_quick_first_run_after_the_prompt_comes_up_is_reported() {
+    fn a_loading_spinner_at_launch_is_shown_but_is_not_a_run() {
         use crate::session::protocol::DetectedAgentState::{Idle, Working};
 
-        let settled = STATE_SETTLE_GRACE.as_millis() as u64;
+        let mut rig = LaunchRig::new();
         assert_eq!(
-            startup_timeline(&[
-                (0, Working),                   // the loading spinner
-                (500, Idle),                    // the prompt comes up
-                (500 + settled, Idle),          // and stays up: the agent is ready
-                (500 + settled + 500, Working), // the first question
-                (500 + settled + 2000, Idle),   // answered
-            ]),
-            [Idle, Idle, Idle, Working, Idle]
-        );
-        assert!(500 + settled + 2000 < AGENT_STARTUP_GRACE.as_millis() as u64);
-    }
-
-    /// A spinner caught between an erase and a rewrite reads idle for a frame. Inside the loading
-    /// screen that is not the agent coming ready, or the rest of the spinner reads as a run.
-    #[test]
-    fn a_redraw_gap_in_the_loading_screen_is_not_ready() {
-        use crate::session::protocol::DetectedAgentState::{Idle, Working};
-
-        assert_eq!(
-            startup_timeline(&[(0, Working), (300, Idle), (600, Working), (2000, Idle)]),
-            [Idle, Idle, Idle, Idle]
-        );
-    }
-
-    /// A blank or splash first frame reads idle too, before any loading screen. It must not end
-    /// the window, or the spinner that follows it is a run.
-    #[test]
-    fn a_quiet_screen_before_the_loading_screen_is_not_ready() {
-        use crate::session::protocol::DetectedAgentState::{Idle, Working};
-
-        let settled = STATE_SETTLE_GRACE.as_millis() as u64;
-        assert_eq!(
-            startup_timeline(&[(0, Idle), (settled + 100, Working), (settled + 1000, Idle)]),
-            [Idle, Idle, Idle]
-        );
-    }
-
-    /// A trust dialog on launch is answered and the agent goes straight to work. The dialog was
-    /// the agent being ready; holding the work back after it broke the run clock mid-run.
-    #[test]
-    fn work_after_a_dialog_at_launch_is_reported() {
-        use crate::session::protocol::DetectedAgentState::{Blocked, Idle, Working};
-
-        assert_eq!(
-            startup_timeline(&[(0, Blocked), (1000, Working), (3000, Idle)]),
-            [Blocked, Working, Idle]
-        );
-    }
-
-    /// A prompt given on the command line goes straight from loading into a turn. The window only
-    /// delays it: once it closes, the spinner still on screen is reported without a redraw.
-    #[test]
-    fn a_run_still_spinning_after_startup_is_reported() {
-        use crate::session::protocol::DetectedAgentState::{Idle, Working};
-
-        let grace = AGENT_STARTUP_GRACE.as_millis() as u64;
-        assert_eq!(
-            startup_timeline(&[(0, Working), (grace - 1, Working), (grace, Working)]),
-            [Idle, Idle, Working]
-        );
-        let mut adopted = None;
-        let observed = Some(DetectedAgent {
-            agent: crate::session::protocol::AgentIdentity::new("pi", "Pi").into(),
-            state: Working,
-        });
-        assert_eq!(
-            hold_back_startup_work(observed, &mut adopted, Instant::now()).map(|d| d.state),
+            rig.screen(LOADING),
             Some(Working),
-            "an adopted agent has no window"
+            "the state is what it is"
         );
+        assert_eq!(rig.pane.runtime.work_started_at, None, "but no clock runs");
+        assert_eq!(rig.screen(PROMPT), Some(Idle));
+        assert_eq!(rig.completions(), 0);
+        assert!(
+            rig.pane.agent.launch.is_none(),
+            "the prompt is the agent ready"
+        );
+
+        // However long the loading took, the next work is a run.
+        rig.screen(TURN);
+        assert!(rig.pane.runtime.work_started_at.is_some());
+        rig.screen(PROMPT);
+        assert_eq!(rig.completions(), 1);
+    }
+
+    /// The user submits a prompt while the loading spinner is still up. Nothing on screen changes,
+    /// so the run starts from the submission, not from a state transition.
+    #[test]
+    fn a_prompt_submitted_during_loading_is_a_run() {
+        let mut rig = LaunchRig::new();
+        rig.screen(LOADING);
+        rig.pane.agent.start_run();
+        rig.screen("");
+        assert!(
+            rig.pane.runtime.work_started_at.is_some(),
+            "the clock starts"
+        );
+        rig.screen(TURN);
+        rig.screen(PROMPT);
+        assert_eq!(rig.completions(), 1);
+    }
+
+    /// A trust prompt partway through loading is not the agent ready: the loading after it is
+    /// still loading, and the prompt at the end finishes nothing.
+    #[test]
+    fn a_dialog_at_launch_is_shown_and_the_launch_goes_on() {
+        use crate::session::protocol::DetectedAgentState::Blocked;
+
+        let mut rig = LaunchRig::new();
+        rig.screen(LOADING);
+        assert_eq!(rig.screen(DIALOG), Some(Blocked));
+        assert!(rig.pane.agent.launch.is_some());
+        rig.screen(LOADING);
+        rig.screen(PROMPT);
+        assert_eq!(rig.completions(), 0);
+    }
+
+    /// Answering a launch's trust prompt with Enter submits a line, but gives the agent no work.
+    /// What the line answers is the screen at that moment: the last poll can be a frame behind it,
+    /// and the settled state keeps a dialog up after it closes.
+    #[test]
+    fn a_line_starts_a_run_unless_it_answers_a_dialog() {
+        let mut rig = LaunchRig::new();
+        let catalog = catalog();
+        rig.screen(LOADING);
+
+        // The dialog is drawn after the last poll, under a report that the agent is working, as
+        // Codex's report reads under its choosers.
+        rig.pane.runtime.integration = Some(Box::new(protocol::AgentIntegrationReport {
+            integration: PROGRAM_STATUS_INTEGRATION.into(),
+            identity: crate::session::protocol::AgentIdentity::new("pi", "Pi"),
+            reference: protocol::AgentRef {
+                pane: protocol::PaneRef {
+                    session_instance: protocol::SessionInstanceId::for_test("server"),
+                    pane_id: 1,
+                    generation: 1,
+                },
+                slot: None,
+                incarnation: 1,
+            },
+            state: protocol::AgentState::Working,
+            reason: None,
+            native_session: None,
+            unless_quiet: None,
+            seq: 1,
+            reported_at_unix_ms: 0,
+        }));
+        rig.pane.terminal.process_bytes(DIALOG.as_bytes());
+        note_pane_input(&mut rig.pane, &catalog, b"typing");
+        note_pane_input(&mut rig.pane, &catalog, b"\r");
+        assert!(
+            rig.pane.agent.launch.is_some(),
+            "the line answered the dialog"
+        );
+        note_pane_input(&mut rig.pane, &catalog, b"fix the tests\r");
+        assert!(
+            rig.pane.agent.launch.is_none(),
+            "the next line, before a redraw, is a prompt"
+        );
+
+        // A dialog closed since the last poll, which still settles on it.
+        let mut rig = LaunchRig::new();
+        rig.screen(DIALOG);
+        rig.pane.terminal.process_bytes(PROMPT.as_bytes());
+        note_pane_input(&mut rig.pane, &catalog, b"fix the tests\r");
+        assert!(rig.pane.agent.launch.is_none());
+    }
+
+    /// A background conversation a publisher lists is its word about a real turn, whatever the
+    /// pane's own launch is still loading - and says nothing about that loading.
+    #[test]
+    fn a_published_conversation_finishes_its_runs_during_a_launch() {
+        let mut rig = LaunchRig::new();
+        let row = |status: &str| crate::session::protocol::PublishedRow {
+            id: "conversation".into(),
+            title: String::new(),
+            status: status.into(),
+            reason: None,
+            active: false,
+            publisher: "1/sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+            live_session: None,
+            reported: false,
+        };
+        rig.screen(LOADING);
+        publish_rows_for_test(&mut rig.pane, vec![row("idle")]);
+        publish_rows_for_test(&mut rig.pane, vec![row("working")]);
+        publish_rows_for_test(&mut rig.pane, vec![row("idle")]);
+        let finished = |rig: &LaunchRig, row: bool| -> u64 {
+            records(&rig.pane)
+                .iter()
+                .filter(|record| record.reference.slot.is_some() == row)
+                .map(|record| record.completions)
+                .sum()
+        };
+        assert_eq!(finished(&rig, true), 1);
+
+        // The publisher goes away while the agent is still loading: its loading is no run.
+        publish_rows_for_test(&mut rig.pane, Vec::new());
+        rig.screen(LOADING);
+        rig.screen(PROMPT);
+        assert_eq!(finished(&rig, false), 0);
+    }
+
+    /// Approved, a tool can finish inside the settle grace, so a turn can end from blocked without
+    /// being seen working again. Withdrawn there, the row's turn is still the pane's to finish.
+    #[test]
+    fn a_turn_handed_back_from_blocked_still_finishes() {
+        let mut rig = LaunchRig::new();
+        rig.pane.agent.launch = None;
+        let row = |status: &str| crate::session::protocol::PublishedRow {
+            id: "conversation".into(),
+            title: String::new(),
+            status: status.into(),
+            reason: None,
+            active: true,
+            publisher: "1/sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+            live_session: None,
+            reported: false,
+        };
+        publish_rows_for_test(&mut rig.pane, vec![row("idle")]);
+        publish_rows_for_test(&mut rig.pane, vec![row("working")]);
+        publish_rows_for_test(&mut rig.pane, vec![row("blocked")]);
+        rig.screen(DIALOG);
+        publish_rows_for_test(&mut rig.pane, Vec::new());
+        rig.screen(PROMPT);
+        assert_eq!(records(&rig.pane)[0].completions, 1);
+    }
+
+    /// The publisher goes away mid-turn of the conversation on screen. The pane carries on with
+    /// that turn, which is a real run, not the launch's loading come back.
+    #[test]
+    fn a_turn_the_pane_carries_on_after_its_rows_go_is_a_run() {
+        let mut rig = LaunchRig::new();
+        let row = |publisher: &str, status: &str, active| crate::session::protocol::PublishedRow {
+            id: "conversation".into(),
+            title: String::new(),
+            status: status.into(),
+            reason: None,
+            active,
+            publisher: publisher.into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+            live_session: None,
+            reported: false,
+        };
+        rig.screen(LOADING);
+        publish_rows_for_test(&mut rig.pane, vec![row("3/c", "working", false)]);
+        assert!(
+            rig.pane.agent.launch.is_some(),
+            "a background turn says nothing about the launch"
+        );
+        // Each publisher marks its own active row; the pane's is the first publisher's.
+        publish_rows_for_test(
+            &mut rig.pane,
+            vec![row("1/a", "idle", true), row("2/b", "working", true)],
+        );
+        assert!(
+            rig.pane.agent.launch.is_some(),
+            "nor does a later publisher's active row"
+        );
+        publish_rows_for_test(&mut rig.pane, vec![row("1/a", "working", true)]);
+        publish_rows_for_test(&mut rig.pane, Vec::new());
+        rig.screen(TURN);
+        rig.screen(PROMPT);
+        let finished: u64 = records(&rig.pane)
+            .iter()
+            .map(|record| record.completions)
+            .sum();
+        assert_eq!(finished, 1);
+    }
+
+    /// `codex "fix the tests"` goes from loading straight into the turn it was given.
+    #[test]
+    fn a_launch_with_a_prompt_is_a_run_from_the_start() {
+        let launch = |argv: &[&str]| {
+            let mut pane = make_pane();
+            let job = ForegroundJob {
+                process_group_id: 100,
+                processes: vec![ForegroundProcess {
+                    pid: 100,
+                    name: "codex".into(),
+                    executable: None,
+                    argv: argv.iter().map(|arg| (*arg).into()).collect(),
+                    agent_hint: None,
+                }],
+            };
+            derive_detected_agent(&mut pane, Some(&catalog()), None, Some(&job), true);
+            assert!(pane.agent.identity.is_some());
+            pane.agent.launch.is_none()
+        };
+        assert!(launch(&["codex", "--model", "o3", "fix the tests"]));
+        assert!(!launch(&["codex"]));
+        assert!(!launch(&["codex", "resume", "019a"]), "a subcommand");
     }
 
     #[test]
@@ -5749,32 +5974,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_dialog_at_launch_is_never_held_back() {
-        use crate::session::protocol::DetectedAgentState;
-
-        let mut pane = make_pane();
-        pane.env.push(("ROZI_AGENT".into(), "cursor".into()));
-        pane.terminal.process_bytes(
-            "Do you trust the contents of this directory?\r\n▶ [a] Trust this workspace\r\n"
-                .as_bytes(),
-        );
-        pane.runtime = compute_runtime_state(
-            &mut pane,
-            &StubInspector,
-            Some(&catalog()),
-            &mut LazyProcessScan::default(),
-        );
-        assert_eq!(
-            pane.runtime.detected_agent.map(|d| d.state),
-            Some(DetectedAgentState::Blocked)
-        );
-        assert!(
-            pane.agent.startup.is_none(),
-            "the dialog was the agent ready"
-        );
-    }
-
     fn agent_job(group: u32, processes: &[(u32, &str)]) -> ForegroundJob {
         ForegroundJob {
             process_group_id: group,
@@ -5791,10 +5990,10 @@ mod tests {
         }
     }
 
-    /// Detect against `job` the way a refreshing sweep does, and say whether a startup is open.
+    /// Detect against `job` the way a refreshing sweep does, and say whether a launch is open.
     fn sweep(pane: &mut ServerPane, job: &ForegroundJob) -> bool {
         derive_detected_agent(pane, Some(&catalog()), None, Some(job), true);
-        pane.agent.startup.is_some()
+        pane.agent.launch.is_some()
     }
 
     /// A publisher notices its agent leaving only at its next poll, after the one sweep that saw
@@ -5842,7 +6041,7 @@ mod tests {
         let mut pane = make_pane();
         pane.env.push(("ROZI_AGENT".into(), "pi".into()));
         assert!(sweep(&mut pane, &agent_job(100, &[(100, "bash")])));
-        pane.agent.startup = None;
+        pane.agent.launch = None;
         assert!(!sweep(&mut pane, &agent_job(100, &[(100, "bash")])));
 
         assert!(
@@ -5860,7 +6059,7 @@ mod tests {
             &mut pane,
             &agent_job(100, &[(100, "sv"), (101, "pi")])
         ));
-        pane.agent.startup = None;
+        pane.agent.launch = None;
 
         // An agent's own children come and go, and can match its name, without it restarting.
         let children = [(100, "sv"), (101, "pi"), (105, "rg")];
@@ -5882,7 +6081,7 @@ mod tests {
         let mut pane = make_pane();
         let agent = [(100, "sv"), (101, "pi")];
         assert!(sweep(&mut pane, &agent_job(100, &agent)));
-        pane.agent.startup = None;
+        pane.agent.launch = None;
 
         let namesake = [(100, "sv"), (101, "pi"), (106, "pi")];
         assert!(!sweep(&mut pane, &agent_job(100, &namesake)));
@@ -5907,7 +6106,7 @@ mod tests {
                 .as_ref()
                 .is_some_and(|p| p.pid == 0 && p.stand_in)
         );
-        pane.agent.startup = None;
+        pane.agent.launch = None;
 
         assert!(sweep(&mut pane, &agent_job(200, &[(200, "pi")])));
     }
@@ -5918,10 +6117,10 @@ mod tests {
     fn a_sweep_without_the_job_does_not_restart_a_running_agent() {
         let mut pane = make_pane();
         assert!(sweep(&mut pane, &agent_job(100, &[(100, "pi")])));
-        pane.agent.startup = None;
+        pane.agent.launch = None;
 
         derive_detected_agent(&mut pane, Some(&catalog()), Some("pi"), None, true);
-        assert!(pane.agent.startup.is_none());
+        assert!(pane.agent.launch.is_none());
         assert_eq!(pane.agent.process.as_ref().map(|p| p.pid), Some(100));
         assert!(!sweep(&mut pane, &agent_job(100, &[(100, "pi")])));
     }
@@ -5938,7 +6137,7 @@ mod tests {
             &mut pane,
             &agent_job(100, &[(100, "sv"), (101, "pi")])
         ));
-        pane.agent.startup = None;
+        pane.agent.launch = None;
         pane.terminal.process_bytes("⠦ Working...\r\n".as_bytes());
         let state = |pane: &mut ServerPane, job: &ForegroundJob| {
             derive_detected_agent(pane, Some(&catalog()), None, Some(job), true).map(|d| d.state)
@@ -5947,12 +6146,9 @@ mod tests {
         assert_eq!(state(&mut pane, &old), Some(DetectedAgentState::Working));
 
         let new = agent_job(100, &[(100, "sv"), (102, "pi")]);
-        pane.terminal
-            .process_bytes("⠋ Loading extensions…\r\n".as_bytes());
-        assert_eq!(state(&mut pane, &new), Some(DetectedAgentState::Idle));
-        assert!(pane.agent.settled.is_none(), "nothing louder is held over");
         pane.terminal.process_bytes(b"\x1b[2J\x1b[H> \r\n");
         assert_eq!(state(&mut pane, &new), Some(DetectedAgentState::Idle));
+        assert!(pane.agent.settled.is_none(), "nothing louder is held over");
     }
 
     /// One server poll against `job`, published the way the runtime loop publishes it. The sweep
@@ -5999,7 +6195,7 @@ mod tests {
 
         let old = agent_job(100, &[(100, "sv"), (101, "pi")]);
         publish(&mut server, &old);
-        server.agent.startup = None;
+        server.agent.launch = None;
         server.terminal.process_bytes("⠦ Working...\r\n".as_bytes());
         let working = publish(&mut server, &old);
         assert_eq!(state(&working), Some(DetectedAgentState::Working));
@@ -6028,7 +6224,7 @@ mod tests {
             .terminal
             .process_bytes("⠋ Loading extensions…\r\n".as_bytes());
         let restarted = publish(&mut server, &new);
-        assert_eq!(state(&restarted), Some(DetectedAgentState::Idle));
+        assert_eq!(state(&restarted), Some(DetectedAgentState::Working));
         assert_ne!(server.agent.references(pane_ref), old_refs);
         let (applied, unseen) = deliver(&mut client, &server, restarted);
         assert!(
@@ -6036,9 +6232,16 @@ mod tests {
             "no finish edge for a run that died"
         );
         assert!(!unseen, "and no unseen finish");
+        server.agent.settled = None;
+        server.terminal.process_bytes(b"\x1b[2J\x1b[H> \r\n");
+        let loaded = publish(&mut server, &new);
+        let (applied, unseen) = deliver(&mut client, &server, loaded);
+        assert!(
+            !applied.edges.finished && !unseen,
+            "nor for the new process's loading"
+        );
 
         // The new process's own run is an ordinary lifecycle again.
-        server.agent.startup = None;
         server.terminal.process_bytes("⠦ Working...\r\n".as_bytes());
         let working = publish(&mut server, &new);
         deliver(&mut client, &server, working);
@@ -6058,7 +6261,7 @@ mod tests {
         let mut pane = make_pane();
         pane.env.push(("ROZI_AGENT".into(), "pi".into()));
         assert!(sweep(&mut pane, &agent_job(100, &[(100, "bash")])));
-        pane.agent.startup = None;
+        pane.agent.launch = None;
         assert!(!sweep(&mut pane, &agent_job(100, &[(100, "bash")])));
 
         let launched = agent_job(100, &[(100, "bash"), (101, "pi")]);
@@ -6067,7 +6270,7 @@ mod tests {
             "the agent itself arriving is a launch"
         );
         assert_eq!(pane.agent.process.as_ref().map(|p| p.pid), Some(101));
-        pane.agent.startup = None;
+        pane.agent.launch = None;
         assert!(!sweep(&mut pane, &launched), "and only once");
     }
 
@@ -6359,7 +6562,7 @@ mod tests {
         };
 
         assert_eq!(
-            next_work_started_at(&previous, Some(&idle), Some(&blocked), None),
+            next_work_started_at(&previous, Some(&idle), Some(&blocked), None, true),
             Some(42)
         );
     }

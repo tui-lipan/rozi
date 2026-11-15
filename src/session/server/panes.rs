@@ -428,13 +428,12 @@ impl SessionServer {
         generation: u64,
         bytes: &[u8],
     ) {
+        let agents = self.settings.agents.clone();
         if let Some(pane) = self.live_pane_mut(owner, pane_id, generation)
             && let Some(pty) = &pane.pty
         {
             let _ = pty.write(bytes);
-            if super::runtime::input_submits_line(bytes) {
-                pane.agent.startup = None;
-            }
+            super::runtime::note_pane_input(pane, &agents, bytes);
         }
     }
 

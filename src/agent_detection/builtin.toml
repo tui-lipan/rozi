@@ -153,6 +153,27 @@ argv = ["claude", "--resume", "{session}"]
 # Claude refuses to resume a conversation that is still running as a background session.
 attach = ["claude", "attach", "{short_session}"]
 
+# `claude "fix the tests"` starts a turn at launch. Options with optional or repeated values, such
+# as `--resume [id]` and `--add-dir <dirs...>`, are left out on purpose: after one, Rozi cannot tell
+# a value from a prompt, and an unknown option means no prompt.
+[agents.launch_prompt]
+subcommands = [
+    "agents", "attach", "auth", "auto-mode", "doctor", "gateway", "import", "install", "kill",
+    "logs", "mcp", "plugin", "plugins", "purge", "respawn", "rm", "setup-token", "stop",
+    "ultrareview", "update", "upgrade",
+]
+flags = [
+    "--allow-dangerously-skip-permissions", "--ax-screen-reader", "--bare", "--brief",
+    "--chrome", "--no-chrome", "-c", "--continue", "--dangerously-skip-permissions",
+    "--disable-slash-commands", "--fork-session", "--ide", "--restricted", "--safe-mode",
+    "--strict-mcp-config", "--verbose", "-p", "--print",
+]
+options = [
+    "--agent", "--agents", "--append-system-prompt", "--autocompact", "--debug-file", "--effort",
+    "--fallback-model", "--max-budget-usd", "--model", "-n", "--name", "--permission-mode",
+    "--plugin-dir", "--session-id", "--settings", "--setting-sources", "--system-prompt",
+]
+
 # The selection cursor on a numbered option: the stable structure of every approval dialog, and
 # the one thing a transcript discussing approvals does not reproduce.
 [[agents.states]]
@@ -272,6 +293,26 @@ match = { names = ["codex", "codex-cli"], paths = ["@openai/codex"] }
 [agents.resume]
 argv = ["codex", "resume", "{session}"]
 reported = ["codex", "resume", "--no-daemon", "{session}"]
+
+# `codex "fix the tests"` starts a turn at launch. `--image <FILE>...` takes several values, so it
+# is left out: an unknown option means no prompt.
+[agents.launch_prompt]
+subcommands = [
+    "a", "agents", "app-server", "apply", "archive", "cloud", "completion", "debug", "delete",
+    "doctor", "e", "exec", "exec-server", "features", "fork", "help", "login", "logout", "mcp",
+    "migrate-nfs-db", "migrate-rollouts", "plugin", "queue", "remote-control", "resume", "review",
+    "sandbox", "unarchive", "update",
+]
+flags = [
+    "--approve-for-me", "--dangerously-bypass-approvals-and-sandbox",
+    "--dangerously-bypass-hook-trust", "--no-alt-screen", "--no-daemon", "--oss", "--search",
+    "--strict-config", "--worktree",
+]
+options = [
+    "-a", "--ask-for-approval", "--add-dir", "-c", "--config", "-C", "--cd", "--disable",
+    "--enable", "--local-provider", "-m", "--model", "-p", "--profile", "--remote",
+    "--remote-auth-token-env", "-s", "--sandbox",
+]
 
 # Codex's choosers end in a hint, whatever they ask: `enter continue · esc back` under its folder
 # access question, `enter continue · esc use session` under its resume directory one,

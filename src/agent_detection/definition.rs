@@ -214,6 +214,51 @@ pub struct AgentDefinition {
     /// Whether Rozi may scroll this agent's alternate-screen transcript with synthetic wheel input
     /// to read it. On unless the definition opts out.
     pub history: AgentHistory,
+    /// How to tell a launch that carries a prompt, whose first work is a run from the start.
+    pub launch_prompt: Option<LaunchPrompt>,
+}
+
+/// Which launch arguments carry a prompt.
+///
+/// Read conservatively: an option the rule does not know might take a value, and that value would
+/// look like a prompt, so an unknown option means no prompt. Missing a prompt costs one run's
+/// clock and finish; inventing one reports a loading screen as a finished run.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LaunchPrompt {
+    /// First positional arguments that name a subcommand rather than a prompt.
+    pub subcommands: Vec<String>,
+    /// Options that take no value.
+    pub flags: Vec<String>,
+    /// Options followed by exactly one value.
+    pub options: Vec<String>,
+}
+
+impl LaunchPrompt {
+    /// Whether `args`, the agent's arguments after its own program, start with a prompt.
+    pub fn matches(&self, args: &[String]) -> bool {
+        let known = |list: &[String], option: &str| list.iter().any(|known| known == option);
+        let mut args = args.iter();
+        while let Some(arg) = args.next() {
+            if arg == "--" {
+                return args.next().is_some_and(|prompt| !prompt.is_empty());
+            }
+            if !arg.starts_with('-') || arg == "-" {
+                return !arg.is_empty() && !known(&self.subcommands, arg);
+            }
+            let (option, inline_value) = match arg.split_once('=') {
+                Some((option, _)) => (option, true),
+                None => (arg.as_str(), false),
+            };
+            if known(&self.options, option) {
+                if !inline_value && args.next().is_none() {
+                    return false;
+                }
+            } else if inline_value || !known(&self.flags, option) {
+                return false;
+            }
+        }
+        false
+    }
 }
 
 /// How, if at all, Rozi may read an alternate-screen agent's rendered transcript.
@@ -401,6 +446,7 @@ mod tests {
             attach_argv: None,
             reported_resume_argv: None,
             history: AgentHistory::None,
+            launch_prompt: None,
         }
     }
 
@@ -514,6 +560,35 @@ mod tests {
             evaluate(&definition, &[], input(&screen, "")),
             Some(DetectedAgentState::Working)
         );
+    }
+
+    /// A value taken for a prompt reports a loading screen as a finished run, so anything the rule
+    /// cannot place means no prompt.
+    #[test]
+    fn a_launch_prompt_is_read_conservatively() {
+        let rule = LaunchPrompt {
+            subcommands: vec!["resume".into()],
+            flags: vec!["--search".into()],
+            options: vec!["-m".into(), "--model".into()],
+        };
+        let matches = |args: &[&str]| {
+            rule.matches(
+                &args
+                    .iter()
+                    .map(|arg| (*arg).to_string())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert!(matches(&["fix the tests"]));
+        assert!(matches(&["--search", "-m", "o3", "fix the tests"]));
+        assert!(matches(&["--model=o3", "fix the tests"]));
+        assert!(matches(&["--", "--looks-like-a-flag"]));
+        assert!(!matches(&[]));
+        assert!(!matches(&["-m", "o3"]), "an option value is not a prompt");
+        assert!(!matches(&["--model"]));
+        assert!(!matches(&["resume", "019a"]), "a subcommand");
+        assert!(!matches(&["--image", "a.png", "fix"]), "an unknown option");
+        assert!(!matches(&["--search=yes", "fix"]), "a flag given a value");
     }
 
     #[test]

@@ -709,12 +709,12 @@ fn history_page_matching_a_working_rule_never_changes_agent_state() {
         .unwrap()
         .env
         .push(("ROZI_AGENT".into(), "claude".into()));
-    // Settle detection on the bottom page, outside any startup grace, before traversing.
+    // Settle detection on the bottom page, outside any launch, before traversing.
     rig.poll_runtime = true;
     for _ in 0..3 {
         rig.tick();
     }
-    rig.server.panes.get_mut(&3).unwrap().agent.startup = None;
+    rig.server.panes.get_mut(&3).unwrap().agent.launch = None;
     rig.tick();
     // Detection named the agent for real, so the reference the rig resolved earlier is stale.
     rig.reference = rig

@@ -595,7 +595,7 @@ pub(crate) fn kill_current_session(ctx: &mut Context<AppRoot>) -> Update {
         crate::ops::session::lifecycle::remove_killed_remote_session(ctx, &session_name, &target);
     }
     if picker_was_open {
-        return refresh_picker_after_kill(ctx);
+        return crate::ops::session::lifecycle::refresh_session_picker(ctx);
     }
     offer_session_picker_or_launcher(ctx)
 }
@@ -685,7 +685,7 @@ pub(crate) fn land_on_surviving_session(ctx: &mut Context<AppRoot>) -> Update {
     let picker_was_open = ctx.state.show_session_picker;
     enter_sessionless(ctx);
     if picker_was_open {
-        return refresh_picker_after_kill(ctx);
+        return crate::ops::session::lifecycle::refresh_session_picker(ctx);
     }
     offer_session_picker_or_launcher(ctx)
 }
@@ -726,21 +726,6 @@ pub(crate) fn offer_session_picker_or_launcher(ctx: &mut Context<AppRoot>) -> Up
         ctx.state.commands_dirty = true;
         Update::full()
     }
-}
-
-/// After a kill from the open picker: rebuild the list, keep the nearest selection, and close into
-/// the launcher when nothing remains to pick.
-pub(crate) fn refresh_picker_after_kill(ctx: &mut Context<AppRoot>) -> Update {
-    let update = crate::ops::session::lifecycle::refresh_session_picker(ctx);
-    let empty = ctx
-        .state
-        .session_picker
-        .as_ref()
-        .is_none_or(|picker| picker.entries.is_empty());
-    if empty && !crate::session::bootstrap::has_session_candidates() {
-        return crate::ops::session::lifecycle::close_session_picker(ctx);
-    }
-    update
 }
 
 /// Install a brand-new ephemeral session as current and spawn its attach, after the outgoing

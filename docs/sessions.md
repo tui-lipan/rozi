@@ -239,7 +239,8 @@ Set `[confirm] quit_ephemeral = false` to close a used temporary session on the 
 server is left running so you can [recover it](#recover-a-temporary-session).
 
 Killing the current session does not exit the client. rozi opens the picker if another session is
-available, or returns to the sessionless launcher. Killing a named session also deletes its
+available, or returns to the sessionless launcher. A kill from the open picker always leaves the
+picker open, even when the list is now empty. Killing a named session also deletes its
 [resurrection](#resurrection) snapshot.
 
 ## Choose startup behavior

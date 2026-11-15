@@ -6,8 +6,7 @@ use crate::ops::focus::{
 };
 use crate::ops::session::attach::{
     attach_ephemeral_by_name, attach_session_by_name, disconnect_host, held_ephemeral_session_in,
-    kill_current_session, refresh_picker_after_kill, restart_current_session,
-    start_launcher_shell_in,
+    kill_current_session, restart_current_session, start_launcher_shell_in,
 };
 use crate::ops::session::control_lease::require_attached;
 use crate::ops::session::discovery::{immediate_picker_rows, session_watch_command};
@@ -799,10 +798,10 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<AppRoot>) -> Update {
     if remote_shutdown {
         return update;
     }
-    // Keep the picker open with the row gone and selection clamped; only close when the
-    // list (and every other meaningful candidate) is empty.
+    // Keep the picker open with the row gone and selection clamped, even when it was the last one:
+    // the empty picker still offers a new or temporary session.
     if ctx.state.show_session_picker {
-        return refresh_picker_after_kill(ctx);
+        return refresh_session_picker(ctx);
     }
     update
 }
@@ -992,7 +991,7 @@ pub(crate) fn remote_session_killed(
         .retain(|row| row.name != entry.name || row.remote_target != entry.remote_target);
     ctx.state.sidebar.sessions_epoch = ctx.state.sidebar.sessions_epoch.wrapping_add(1);
     if ctx.state.show_session_picker {
-        return refresh_picker_after_kill(ctx);
+        return refresh_session_picker(ctx);
     }
     Update::full()
 }

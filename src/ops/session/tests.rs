@@ -1191,6 +1191,8 @@ fn cancelling_occupied_attach_does_not_retain_it_as_offline() {
     });
 }
 
+/// Killing the last session never auto-attaches. From inside the session it lands on the launcher;
+/// from the open picker the picker stays up, empty, so a new session is one key away.
 #[test]
 fn killing_the_last_attached_session_stays_sessionless_without_auto_attach() {
     use crate::AppRoot;
@@ -1201,37 +1203,49 @@ fn killing_the_last_attached_session_stays_sessionless_without_auto_attach() {
     use tui_lipan::TestBackend;
 
     crate::test_support::on_large_stack(|| {
+        crate::test_support::isolate_user_dirs();
         let _persist = crate::test_support::lock_persisted_state();
         crate::session::reset_host_session_cache();
 
-        let mut backend = TestBackend::new(AppRoot::default());
-        let (client, _rx) = SessionClient::test_channel();
-        {
-            let state = backend.state_mut();
-            state.config.confirm.kill_session = false;
-            state.current_mut().session_name = Some("solo".into());
-            state.current_mut().session_attached = true;
-            state.current_mut().connection = ConnectionState::Connected;
-            state.current_mut().session_client = Some(client);
-            state.current_mut().pending_session_attach = None;
-            state.background.clear();
-            state.remote.session_cache.clear();
-            state.show_session_picker = false;
-            state.session_picker = None;
+        for from_picker in [false, true] {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let (client, _rx) = SessionClient::test_channel();
+            {
+                let state = backend.state_mut();
+                state.config.confirm.kill_session = false;
+                state.current_mut().session_name = Some("solo".into());
+                state.current_mut().session_attached = true;
+                state.current_mut().connection = ConnectionState::Connected;
+                state.current_mut().session_client = Some(client);
+                state.current_mut().pending_session_attach = None;
+                state.background.clear();
+                state.remote.session_cache.clear();
+                state.show_session_picker = from_picker;
+                state.session_picker =
+                    from_picker.then(|| SessionPickerState::new(vec![session_row("solo", None)]));
+            }
+
+            if from_picker {
+                for _ in 0..2 {
+                    backend
+                        .dispatch(Msg::SessionPickerKillSelected)
+                        .expect("kill last session from the picker");
+                }
+            } else {
+                backend
+                    .dispatch(Msg::RunAction(Action::KillSession))
+                    .expect("kill last session");
+            }
+
+            let state = backend.state();
+            assert!(state.is_launcher());
+            assert!(state.current().pending_session_attach.is_none());
+            // Seeded with an empty discovery set and an empty host-session cache. Do not re-read
+            // `has_session_candidates()` here: that predicate looks at process-wide files another
+            // test may write after this kill has already decided.
+            assert_eq!(state.show_session_picker, from_picker);
+            assert_eq!(state.session_picker.is_some(), from_picker);
         }
-
-        backend
-            .dispatch(Msg::RunAction(Action::KillSession))
-            .expect("kill last session");
-
-        let state = backend.state();
-        assert!(state.is_launcher());
-        assert!(state.current().pending_session_attach.is_none());
-        // Seeded with an empty discovery set and an empty host-session cache. Do not re-read
-        // `has_session_candidates()` here: that predicate looks at process-wide files another
-        // test may write after this kill has already decided.
-        assert!(!state.show_session_picker);
-        assert!(state.session_picker.is_none());
     });
 }
 

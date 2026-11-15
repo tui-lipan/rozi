@@ -304,9 +304,10 @@ rozi agents ask --ref '<JSON>' --wait --timeout 30m --format text -- 'Review the
   once with one background command each. Keep `--format text`: without it, captured output is JSON.
 - If the wait fails, the error names the request id: `rozi agents await` it, do not ask again.
   For long work, await again after a timeout rather than giving `--timeout` a huge value.
-- The other agent replies by running `rozi agents reply`, so start it where it can reach Rozi.
-  A sandbox that blocks that, such as Codex's `workspace-write`, leaves you with a
-  `source: "terminal"` answer: its screen at the end of the turn, not its reply.
+- The other agent replies by running `rozi agents reply`, which connects to Rozi's local socket.
+  Codex's `workspace-write` sandbox counts that as network and denies it, leaving you a
+  `source: "terminal"` answer: its screen, not its reply. Start Codex with
+  `-c sandbox_workspace_write.network_access=true`, or outside the sandbox.
 - Rozi types the request into the target only once it is stopped, shows no dialog, and nobody has
   typed into its pane for two seconds; until then it is `queued`, with a `reason`.
 - Without `--wait`, `ask` returns the request and its `id` at once; `rozi agents await <ID>

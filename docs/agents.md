@@ -436,7 +436,9 @@ the request then stays `active` past the turn, and the agent can take the next r
 What the agent asks while it owes a request belongs to that request; an agent that owes several
 names the one with `agents ask --for <ID>`, or the ask is refused.
 An agent that asks before running commands asks before each reply too; for Claude Code, allow
-`Bash(rozi agents:*)` in its permissions.
+`Bash(rozi agents:*)` in its permissions. Codex's `workspace-write` sandbox blocks the connection to
+rozi that a reply needs, so its requests are answered from its terminal; allow it with
+`sandbox_workspace_write.network_access = true`.
 
 | State | Meaning |
 | --- | --- |

@@ -1335,20 +1335,16 @@ fn resolve_agent(
                     "agent reference belongs to a different session server instance",
                 ));
             }
-            let records: Vec<_> = ctx
-                .state
-                .current()
-                .workspaces
-                .iter()
-                .flat_map(|workspace| workspace.panes.iter())
-                .flat_map(|pane| pane.agents.iter().cloned())
-                .collect();
-            let followed = crate::session::protocol::follow_reference(&records, reference);
+            // The exact reference, else the one the agent goes by now; see `names_agent`.
             let exact = agents
                 .iter()
                 .position(|agent| agent.reference == *reference);
             exact
-                .or_else(|| agents.iter().position(|agent| agent.reference == followed))
+                .or_else(|| {
+                    agents.iter().position(|agent| {
+                        crate::session::protocol::names_agent(reference, &agent.reference)
+                    })
+                })
                 .map(|index| agents.swap_remove(index))
                 .ok_or_else(|| {
                     ControlResponse::error_with(

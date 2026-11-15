@@ -203,7 +203,6 @@ mod tests {
             pane.agents = vec![AgentRecord {
                 reference: reference.clone(),
                 completions: 1,
-                took_over_detected: false,
             }];
         }
         state

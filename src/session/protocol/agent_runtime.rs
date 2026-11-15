@@ -157,10 +157,6 @@ pub struct AgentRecord {
     pub reference: AgentRef,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub completions: u64,
-    /// This published row took over the pane's screen-detected agent, keeping its incarnation.
-    /// The reference that agent had, with no slot, still names it; see [`follow_reference`].
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub took_over_detected: bool,
 }
 
 impl From<AgentRef> for AgentRecord {
@@ -169,7 +165,6 @@ impl From<AgentRef> for AgentRecord {
         Self {
             reference,
             completions: 0,
-            took_over_detected: false,
         }
     }
 }
@@ -178,21 +173,12 @@ fn is_zero(value: &u64) -> bool {
     *value == 0
 }
 
-/// The row reference that took over the screen-detected agent `reference` named, among a pane's
-/// `records`. That row is still the same agent, so a reference read before it appeared names it;
-/// any other reference is returned as it is. Look for an exact match first: a claim on the pane
-/// can keep a slot-less record under the same incarnation.
-pub fn follow_reference(records: &[AgentRecord], reference: &AgentRef) -> AgentRef {
-    if reference.slot.is_none()
-        && let Some(record) = records.iter().find(|record| {
-            record.took_over_detected
-                && record.reference.pane == reference.pane
-                && record.reference.incarnation == reference.incarnation
-        })
-    {
-        return record.reference.clone();
-    }
-    reference.clone()
+/// Whether `candidate` is the agent `reference` names, under the reference it goes by now. An
+/// agent keeps its incarnation when a published row starts speaking for it, moves to another
+/// copy of the publisher, or goes away while the same process runs, so a reference read before
+/// any of that still names it. Another agent in the pane always gets a new incarnation.
+pub fn names_agent(reference: &AgentRef, candidate: &AgentRef) -> bool {
+    candidate.pane == reference.pane && candidate.incarnation == reference.incarnation
 }
 
 /// One automation-facing agent in a pane: an occupant of [`pane_occupants`] that is an agent,

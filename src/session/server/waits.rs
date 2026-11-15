@@ -622,24 +622,12 @@ impl SessionServer {
             ));
         }
         let runtimes = self.agent_runtimes_for(reference.pane.pane_id, pane);
-        // The instance and generation match, so the reference's pane is this one.
-        let followed =
-            protocol::follow_reference(&pane.agent.records(reference.pane.clone()), reference);
-        runtimes
-            .iter()
-            .find(|runtime| runtime.reference == *reference)
-            .or_else(|| {
-                runtimes
-                    .iter()
-                    .find(|runtime| runtime.reference == followed)
-            })
-            .cloned()
-            .ok_or_else(|| {
-                ControlResponse::error_with(
-                    ControlErrorCode::AgentReplaced,
-                    "agent reference no longer names the current incarnation",
-                )
-            })
+        find_agent(&runtimes, reference).cloned().ok_or_else(|| {
+            ControlResponse::error_with(
+                ControlErrorCode::AgentReplaced,
+                "agent reference no longer names the current incarnation",
+            )
+        })
     }
 
     fn evaluate_agent_wait(
@@ -661,10 +649,7 @@ impl SessionServer {
             );
         }
         let runtimes = self.agent_runtimes_for(reference.pane.pane_id, pane);
-        if let Some(runtime) = runtimes
-            .iter()
-            .find(|runtime| runtime.reference == *reference)
-        {
+        if let Some(runtime) = find_agent(&runtimes, reference) {
             if condition_matches(until, runtime.state) {
                 WaitEvaluation::Ready(Some(Box::new(runtime.clone())))
             } else {
@@ -742,6 +727,22 @@ fn wait_condition_name(condition: AgentWaitCondition) -> &'static str {
         AgentWaitCondition::Turn => "turn",
         AgentWaitCondition::Gone => "gone",
     }
+}
+
+/// The runtime of the agent `reference` names: the exact reference, else the one the agent goes by
+/// now. See [`protocol::names_agent`].
+pub(super) fn find_agent<'a>(
+    runtimes: &'a [protocol::AgentRuntime],
+    reference: &protocol::AgentRef,
+) -> Option<&'a protocol::AgentRuntime> {
+    runtimes
+        .iter()
+        .find(|runtime| runtime.reference == *reference)
+        .or_else(|| {
+            runtimes
+                .iter()
+                .find(|runtime| protocol::names_agent(reference, &runtime.reference))
+        })
 }
 
 #[cfg(all(test, unix))]

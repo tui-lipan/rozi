@@ -89,7 +89,8 @@ pub(super) fn integration_error_code(code: &str) -> crate::control::ControlError
 
 impl AgentScratch {
     pub(super) fn sync_references(&mut self, runtime: &PaneRuntimeState) {
-        if self.reference_launch != runtime.agent_launch {
+        let relaunched = self.reference_launch != runtime.agent_launch;
+        if relaunched {
             // A confirmed screen launch renews only the pane-level detected occupant. Claims and
             // published rows have independent identities that survive screen process changes.
             if runtime.integration.is_none() && runtime.detected_agent.is_some() {
@@ -109,6 +110,9 @@ impl AgentScratch {
             return;
         }
         let occupants = protocol::agent_occupant_identities(runtime);
+        if !relaunched {
+            self.carry_detected(runtime, &occupants);
+        }
         self.references.retain(|slot, tracked| {
             occupants.iter().any(|(candidate_slot, identity)| {
                 candidate_slot == slot && *identity == tracked.identity
@@ -126,7 +130,7 @@ impl AgentScratch {
                     incarnation: self.next_incarnation,
                     completions: 0,
                     run_open: false,
-                    took_over_detected: false,
+                    from_detected: false,
                 },
             );
         }
@@ -134,6 +138,50 @@ impl AgentScratch {
         // replacement - when the rows are withdrawn and it speaks for the pane alone again.
         if let Some(integration) = &runtime.integration {
             self.bind_claim(integration);
+        }
+    }
+
+    /// Keep the incarnation of an agent a published row took over from screen detection while that
+    /// agent still runs: when its row goes away and the detected agent speaks for the pane again,
+    /// or when another copy of the publisher lists it under its own key. Without this the agent
+    /// would get a new incarnation, and every reference to it would read as a replacement.
+    fn carry_detected(
+        &mut self,
+        runtime: &PaneRuntimeState,
+        occupants: &[(Option<protocol::RowKey>, String)],
+    ) {
+        let Some(detected) = runtime.detected_agent.as_ref() else {
+            return;
+        };
+        let identity = &detected.agent.id;
+        let Some(from) = self
+            .references
+            .iter()
+            .find(|(slot, tracked)| {
+                tracked.from_detected
+                    && tracked.identity == *identity
+                    && !occupants.contains(&((*slot).clone(), tracked.identity.clone()))
+            })
+            .map(|(slot, _)| slot.clone())
+        else {
+            return;
+        };
+        let mut targets = occupants.iter().filter(|(slot, candidate)| {
+            candidate == identity
+                && !self.references.contains_key(slot)
+                && slot.as_ref().is_none_or(|key| {
+                    runtime
+                        .rows
+                        .iter()
+                        .any(|row| row.has_key(key) && row.active)
+                })
+        });
+        let (Some((to, _)), None) = (targets.next(), targets.next()) else {
+            return;
+        };
+        let to = to.clone();
+        if let Some(tracked) = self.references.remove(&from) {
+            self.references.insert(to, tracked);
         }
     }
 
@@ -174,7 +222,7 @@ impl AgentScratch {
             return None;
         }
         let mut tracked = self.references.remove(&None)?;
-        tracked.took_over_detected = true;
+        tracked.from_detected = true;
         let handoff = RowHandoff {
             incarnation: tracked.incarnation,
             slot: row.key(),
@@ -208,7 +256,7 @@ impl AgentScratch {
                 incarnation,
                 completions,
                 run_open,
-                took_over_detected: false,
+                from_detected: false,
             },
         );
     }
@@ -292,7 +340,7 @@ impl AgentScratch {
                     incarnation: self.next_incarnation,
                     completions: 0,
                     run_open: false,
-                    took_over_detected: false,
+                    from_detected: false,
                 },
             );
         }
@@ -360,7 +408,6 @@ impl AgentScratch {
                     incarnation: tracked.incarnation,
                 },
                 completions: tracked.completions,
-                took_over_detected: tracked.took_over_detected,
             })
             .collect::<Vec<_>>();
         records.sort_by(|left, right| left.reference.slot.cmp(&right.reference.slot));

@@ -597,8 +597,9 @@ struct TrackedAgentReference {
     completions: u64,
     /// Whether it has been working since its last run ended. Being blocked leaves this set.
     run_open: bool,
-    /// A published row took this reference over from the pane's detected agent.
-    took_over_detected: bool,
+    /// The agent behind this reference was the pane's screen-detected agent, so its incarnation
+    /// follows it while it runs; see `AgentScratch::carry_detected`.
+    from_detected: bool,
 }
 
 /// The process a detection sweep named as a pane's agent.

@@ -1771,7 +1771,6 @@ mod tests {
                         pane.agents.push(AgentRecord {
                             reference: reference.clone(),
                             completions: 1,
-                            took_over_detected: false,
                         });
                         state
                             .agent_attention

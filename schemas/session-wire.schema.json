@@ -122,10 +122,6 @@
         },
         "reference": {
           "$ref": "#/$defs/AgentRef"
-        },
-        "took_over_detected": {
-          "description": "This published row took over the pane's screen-detected agent, keeping its incarnation.\nThe reference that agent had, with no slot, still names it; see [`follow_reference`].",
-          "type": "boolean"
         }
       },
       "required": [

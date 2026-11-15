@@ -302,7 +302,6 @@ mod tests {
         crate::session::protocol::AgentRecord {
             reference: crate::session::protocol::AgentRef::for_test(1, 7, None),
             completions,
-            took_over_detected: false,
         }
     }
 

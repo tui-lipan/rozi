@@ -808,6 +808,7 @@ fn finished_record(
     crate::session::protocol::AgentRecord {
         reference: crate::session::protocol::AgentRef::for_test(pane_id, generation, None),
         completions,
+        took_over_detected: false,
     }
 }
 

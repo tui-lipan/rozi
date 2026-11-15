@@ -204,10 +204,20 @@ fn a_request_follows_a_detected_agent_into_its_published_row() {
         rig.server
             .report_pane_rows(client, 3, 1, false, publisher(), rows)
             .unwrap();
+        // A reference read before the row appeared, such as one a script saved from
+        // `agents list`, names the row's agent only when it took the detected one over.
+        let followed = rig
+            .server
+            .resolve_agent_wait_target(crate::control::AgentTarget::Ref(detected.clone()))
+            .ok();
         if !follows {
             assert_eq!(
                 rig.request(&request.id).state,
                 AgentRequestState::Failed,
+                "{scenario}"
+            );
+            assert!(
+                followed.is_none_or(|reference| reference.slot.is_none()),
                 "{scenario}"
             );
             continue;
@@ -215,6 +225,7 @@ fn a_request_follows_a_detected_agent_into_its_published_row() {
         let published = rig.agent(3);
         assert!(published.slot.is_some());
         assert_eq!(published.incarnation, detected.incarnation);
+        assert_eq!(followed.as_ref(), Some(&published), "{scenario}");
         let moved = rig.request(&request.id);
         assert_eq!(moved.state, AgentRequestState::Active, "{scenario}");
         assert_eq!(moved.to, published);

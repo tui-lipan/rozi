@@ -185,7 +185,10 @@ impl SessionServer {
                         "agent reference belongs to a different session server instance",
                     ));
                 }
-                WaitSubject::Agent(reference)
+                WaitSubject::Agent(
+                    self.current_agent_runtime(&reference)
+                        .map_or(reference, |runtime| runtime.reference),
+                )
             }
             AgentTarget::Pane(pane_id) if self.pane_awaits_agent(pane_id) => {
                 if until == AgentWaitCondition::Gone {
@@ -618,9 +621,19 @@ impl SessionServer {
                 format!("pane {} has been replaced", reference.pane.pane_id),
             ));
         }
-        self.agent_runtimes_for(reference.pane.pane_id, pane)
-            .into_iter()
+        let runtimes = self.agent_runtimes_for(reference.pane.pane_id, pane);
+        // The instance and generation match, so the reference's pane is this one.
+        let followed =
+            protocol::follow_reference(&pane.agent.records(reference.pane.clone()), reference);
+        runtimes
+            .iter()
             .find(|runtime| runtime.reference == *reference)
+            .or_else(|| {
+                runtimes
+                    .iter()
+                    .find(|runtime| runtime.reference == followed)
+            })
+            .cloned()
             .ok_or_else(|| {
                 ControlResponse::error_with(
                     ControlErrorCode::AgentReplaced,

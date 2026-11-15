@@ -126,6 +126,7 @@ impl AgentScratch {
                     incarnation: self.next_incarnation,
                     completions: 0,
                     run_open: false,
+                    took_over_detected: false,
                 },
             );
         }
@@ -172,7 +173,8 @@ impl AgentScratch {
         if tracked.identity != detected.agent.id {
             return None;
         }
-        let tracked = self.references.remove(&None)?;
+        let mut tracked = self.references.remove(&None)?;
+        tracked.took_over_detected = true;
         let handoff = RowHandoff {
             incarnation: tracked.incarnation,
             slot: row.key(),
@@ -206,6 +208,7 @@ impl AgentScratch {
                 incarnation,
                 completions,
                 run_open,
+                took_over_detected: false,
             },
         );
     }
@@ -289,6 +292,7 @@ impl AgentScratch {
                     incarnation: self.next_incarnation,
                     completions: 0,
                     run_open: false,
+                    took_over_detected: false,
                 },
             );
         }
@@ -356,6 +360,7 @@ impl AgentScratch {
                     incarnation: tracked.incarnation,
                 },
                 completions: tracked.completions,
+                took_over_detected: tracked.took_over_detected,
             })
             .collect::<Vec<_>>();
         records.sort_by(|left, right| left.reference.slot.cmp(&right.reference.slot));

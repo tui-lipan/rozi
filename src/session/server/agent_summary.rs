@@ -54,6 +54,7 @@ impl SessionServer {
                     task: runtime.task,
                     screen_title,
                     completions: runtime.completions,
+                    answered: runtime.answered,
                     changed_at: pane.agent.summary_changed_at,
                 });
             }

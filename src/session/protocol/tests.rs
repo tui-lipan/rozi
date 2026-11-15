@@ -1444,6 +1444,7 @@ fn a_closed_vocabulary_on_the_wire_reads_a_newer_value_neutrally() {
         reason: None,
         task: None,
         completions: 0,
+        answered: 0,
         source: AgentAuthority::Reported,
     };
     let newer = decode_with(&runtime, "state", serde_json::json!("compacting"));

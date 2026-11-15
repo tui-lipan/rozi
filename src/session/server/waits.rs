@@ -185,7 +185,10 @@ impl SessionServer {
                         "agent reference belongs to a different session server instance",
                     ));
                 }
-                WaitSubject::Agent(reference)
+                WaitSubject::Agent(
+                    self.current_agent_runtime(&reference)
+                        .map_or(reference, |runtime| runtime.reference),
+                )
             }
             AgentTarget::Pane(pane_id) if self.pane_awaits_agent(pane_id) => {
                 if until == AgentWaitCondition::Gone {
@@ -618,15 +621,13 @@ impl SessionServer {
                 format!("pane {} has been replaced", reference.pane.pane_id),
             ));
         }
-        self.agent_runtimes_for(reference.pane.pane_id, pane)
-            .into_iter()
-            .find(|runtime| runtime.reference == *reference)
-            .ok_or_else(|| {
-                ControlResponse::error_with(
-                    ControlErrorCode::AgentReplaced,
-                    "agent reference no longer names the current incarnation",
-                )
-            })
+        let runtimes = self.agent_runtimes_for(reference.pane.pane_id, pane);
+        find_agent(&runtimes, reference).cloned().ok_or_else(|| {
+            ControlResponse::error_with(
+                ControlErrorCode::AgentReplaced,
+                "agent reference no longer names the current incarnation",
+            )
+        })
     }
 
     fn evaluate_agent_wait(
@@ -648,10 +649,7 @@ impl SessionServer {
             );
         }
         let runtimes = self.agent_runtimes_for(reference.pane.pane_id, pane);
-        if let Some(runtime) = runtimes
-            .iter()
-            .find(|runtime| runtime.reference == *reference)
-        {
+        if let Some(runtime) = find_agent(&runtimes, reference) {
             if condition_matches(until, runtime.state) {
                 WaitEvaluation::Ready(Some(Box::new(runtime.clone())))
             } else {
@@ -729,6 +727,22 @@ fn wait_condition_name(condition: AgentWaitCondition) -> &'static str {
         AgentWaitCondition::Turn => "turn",
         AgentWaitCondition::Gone => "gone",
     }
+}
+
+/// The runtime of the agent `reference` names: the exact reference, else the one the agent goes by
+/// now. See [`protocol::AgentInstance`].
+pub(super) fn find_agent<'a>(
+    runtimes: &'a [protocol::AgentRuntime],
+    reference: &protocol::AgentRef,
+) -> Option<&'a protocol::AgentRuntime> {
+    runtimes
+        .iter()
+        .find(|runtime| runtime.reference == *reference)
+        .or_else(|| {
+            runtimes
+                .iter()
+                .find(|runtime| runtime.reference.instance() == reference.instance())
+        })
 }
 
 #[cfg(all(test, unix))]

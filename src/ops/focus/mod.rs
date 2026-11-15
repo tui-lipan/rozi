@@ -115,7 +115,7 @@ pub(crate) fn acknowledge_pane_input_in_namespace(
     for runtime in on_screen {
         agent_cleared |= state
             .agent_attention
-            .acknowledge(&runtime.reference, runtime.completions);
+            .acknowledge(&runtime.reference, runtime.noticed_runs());
     }
     changed || agent_cleared
 }

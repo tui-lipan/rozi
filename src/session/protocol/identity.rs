@@ -74,6 +74,29 @@ pub struct AgentRef {
     pub incarnation: u64,
 }
 
+/// One agent, whichever row lists it: its pane and its incarnation.
+///
+/// An [`AgentRef`]'s slot is where the agent is listed now, not who it is. The agent keeps its
+/// incarnation when a published row starts speaking for it, when another copy of the publisher
+/// lists it under its own key, and when the rows go away while the same process runs, so its
+/// slot can change while it stays the same agent. Another agent in the pane, a relaunch included,
+/// always gets a new incarnation. Compare this to tell whether two references name one agent.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AgentInstance {
+    pub pane: PaneRef,
+    pub incarnation: u64,
+}
+
+impl AgentRef {
+    /// The agent this reference names, wherever it is listed.
+    pub fn instance(&self) -> AgentInstance {
+        AgentInstance {
+            pane: self.pane.clone(),
+            incarnation: self.incarnation,
+        }
+    }
+}
+
 #[cfg(test)]
 impl AgentRef {
     /// A first incarnation in a fixed test server, for fixtures that only care which pane and row.

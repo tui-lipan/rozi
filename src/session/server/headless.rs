@@ -3491,7 +3491,7 @@ mod tests {
             live_session: None,
             reported: false,
         };
-        super::super::runtime::replace_pane_rows(server.panes.get_mut(&7).unwrap(), vec![row]);
+        super::super::runtime::publish_rows_for_test(server.panes.get_mut(&7).unwrap(), vec![row]);
         let report = |server: &mut SessionServer, state, seq| {
             let update = super::super::runtime::AgentIntegrationUpdate {
                 response: None,
@@ -3508,7 +3508,7 @@ mod tests {
         };
         report(&mut server, Working, 1);
         report(&mut server, Blocked, 2);
-        super::super::runtime::replace_pane_rows(server.panes.get_mut(&7).unwrap(), Vec::new());
+        super::super::runtime::publish_rows_for_test(server.panes.get_mut(&7).unwrap(), Vec::new());
         report(&mut server, Idle, 3);
         let finished: u64 = server
             .agent_records(None, 7)
@@ -3541,7 +3541,7 @@ mod tests {
             reported: false,
         };
         let rows = |server: &mut SessionServer, rows| {
-            super::super::runtime::replace_pane_rows(server.panes.get_mut(&7).unwrap(), rows);
+            super::super::runtime::publish_rows_for_test(server.panes.get_mut(&7).unwrap(), rows);
         };
         let report = |server: &mut SessionServer, seq| {
             let update = super::super::runtime::AgentIntegrationUpdate {
@@ -3603,7 +3603,7 @@ mod tests {
             reported: false,
         };
         let rows = |server: &mut SessionServer, rows| {
-            super::super::runtime::replace_pane_rows(server.panes.get_mut(&7).unwrap(), rows);
+            super::super::runtime::publish_rows_for_test(server.panes.get_mut(&7).unwrap(), rows);
         };
         rows(
             &mut server,

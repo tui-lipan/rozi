@@ -1288,7 +1288,7 @@ fn resolve_agent(
     ctx: &Context<AppRoot>,
     target: &crate::control::AgentTarget,
 ) -> std::result::Result<crate::control::AgentInfo, ControlResponse> {
-    let agents = list_agents(ctx);
+    let mut agents = list_agents(ctx);
     match target {
         crate::control::AgentTarget::Pane(pane_id) => {
             let Some(pane) = crate::pane::lifecycle::find_pane(&ctx.state, *pane_id) else {
@@ -1335,9 +1335,17 @@ fn resolve_agent(
                     "agent reference belongs to a different session server instance",
                 ));
             }
-            agents
-                .into_iter()
-                .find(|agent| agent.reference == *reference)
+            // The exact reference, else the one the agent goes by now; see `AgentInstance`.
+            let exact = agents
+                .iter()
+                .position(|agent| agent.reference == *reference);
+            exact
+                .or_else(|| {
+                    agents
+                        .iter()
+                        .position(|agent| agent.reference.instance() == reference.instance())
+                })
+                .map(|index| agents.swap_remove(index))
                 .ok_or_else(|| {
                     ControlResponse::error_with(
                         ControlErrorCode::AgentReplaced,

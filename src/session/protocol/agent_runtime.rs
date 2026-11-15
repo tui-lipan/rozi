@@ -157,6 +157,18 @@ pub struct AgentRecord {
     pub reference: AgentRef,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub completions: u64,
+    /// Of `completions`, the runs that answered another agent's request: a run a request typed
+    /// into the agent started. Its answer went to the agent that asked, so a client does not ask
+    /// the user to look at it; see [`Self::noticed_runs`].
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub answered: u64,
+}
+
+impl AgentRecord {
+    /// The finished runs worth the user's attention: every one but those that answered a request.
+    pub fn noticed_runs(&self) -> u64 {
+        self.completions.saturating_sub(self.answered)
+    }
 }
 
 impl From<AgentRef> for AgentRecord {
@@ -165,6 +177,7 @@ impl From<AgentRef> for AgentRecord {
         Self {
             reference,
             completions: 0,
+            answered: 0,
         }
     }
 }
@@ -194,9 +207,20 @@ pub struct AgentRuntime {
     /// Runs this agent has finished. See [`AgentRecord::completions`].
     #[serde(default, skip_serializing_if = "is_zero")]
     pub completions: u64,
+    /// Of `completions`, the runs that answered another agent's request. See
+    /// [`AgentRecord::answered`].
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub answered: u64,
     #[serde(deserialize_with = "super::tolerant::deserialize")]
     #[cfg_attr(feature = "schema-gen", schemars(with = "AgentAuthority"))]
     pub source: AgentAuthority,
+}
+
+impl AgentRuntime {
+    /// The finished runs worth the user's attention. See [`AgentRecord::noticed_runs`].
+    pub fn noticed_runs(&self) -> u64 {
+        self.completions.saturating_sub(self.answered)
+    }
 }
 
 /// One thing happening in a pane: the activity projection, which feeds the Activity sidebar.
@@ -386,10 +410,10 @@ pub fn effective_agent_runtimes(
                     .reference
                     .clone(),
             };
-            let completions = records
+            let (completions, answered) = records
                 .iter()
                 .find(|record| record.reference == reference)
-                .map_or(0, |record| record.completions);
+                .map_or((0, 0), |record| (record.completions, record.answered));
             let task = occupant_task(&runtime.rows, occupant.slot.as_ref(), &occupant.label);
             Some(AgentRuntime {
                 reference,
@@ -399,6 +423,7 @@ pub fn effective_agent_runtimes(
                 reason: occupant.reason,
                 task,
                 completions,
+                answered,
                 source: occupant.source,
             })
         })
@@ -721,6 +746,7 @@ mod tests {
             reason: None,
             task: None,
             completions: 0,
+            answered: 0,
             source: AgentAuthority::Published,
         }
     }

@@ -74,7 +74,10 @@ pub(super) fn integration_error_code(code: &str) -> crate::control::ControlError
 
 impl AgentScratch {
     pub(super) fn sync_references(&mut self, runtime: &PaneRuntimeState) {
-        if self.reference_launch != runtime.agent_launch {
+        // Only the row change that made a carry hands it on; see `replace_pane_rows`.
+        self.carried.clear();
+        let relaunched = self.reference_launch != runtime.agent_launch;
+        if relaunched {
             // A confirmed screen launch renews only the pane-level detected occupant. Claims and
             // published rows have independent identities that survive screen process changes.
             if runtime.integration.is_none() && runtime.detected_agent.is_some() {
@@ -94,6 +97,9 @@ impl AgentScratch {
             return;
         }
         let occupants = protocol::agent_occupant_identities(runtime);
+        if !relaunched {
+            self.carry_detected(runtime, &occupants);
+        }
         self.references.retain(|slot, tracked| {
             occupants.iter().any(|(candidate_slot, identity)| {
                 candidate_slot == slot && *identity == tracked.identity
@@ -111,6 +117,9 @@ impl AgentScratch {
                     incarnation: self.next_incarnation,
                     completions: 0,
                     run_open: false,
+                    answered: 0,
+                    request_run: false,
+                    from_detected: false,
                 },
             );
         }
@@ -119,6 +128,59 @@ impl AgentScratch {
         if let Some(integration) = &runtime.integration {
             self.bind_claim(integration);
         }
+    }
+
+    /// Keep the incarnation of an agent a published row took over from screen detection while that
+    /// agent still runs: when its row goes away and the detected agent speaks for the pane again,
+    /// or when another copy of the publisher lists it under its own key. Without this the agent
+    /// would get a new incarnation, and every reference to it would read as a replacement.
+    fn carry_detected(
+        &mut self,
+        runtime: &PaneRuntimeState,
+        occupants: &[(Option<protocol::RowKey>, String)],
+    ) {
+        let Some(detected) = runtime.detected_agent.as_ref() else {
+            return;
+        };
+        let identity = &detected.agent.id;
+        let Some(from) = self
+            .references
+            .iter()
+            .find(|(slot, tracked)| {
+                tracked.from_detected
+                    && tracked.identity == *identity
+                    && !occupants.contains(&((*slot).clone(), tracked.identity.clone()))
+            })
+            .map(|(slot, _)| slot.clone())
+        else {
+            return;
+        };
+        let mut targets = occupants.iter().filter(|(slot, candidate)| {
+            candidate == identity
+                && !self.references.contains_key(slot)
+                && slot.as_ref().is_none_or(|key| {
+                    runtime
+                        .rows
+                        .iter()
+                        .any(|row| row.has_key(key) && row.active)
+                })
+        });
+        let (Some((to, _)), None) = (targets.next(), targets.next()) else {
+            return;
+        };
+        let to = to.clone();
+        let Some(tracked) = self.references.remove(&from) else {
+            return;
+        };
+        // The sessions are settled by `replace_pane_rows`, which still knows the row that left.
+        self.carried.push(RowHandoff {
+            incarnation: tracked.incarnation,
+            from,
+            to: to.clone(),
+            old_session: None,
+            new_session: None,
+        });
+        self.references.insert(to, tracked);
     }
 
     /// The conversation a publisher marks on screen can take over the detected process's identity,
@@ -157,42 +219,36 @@ impl AgentScratch {
         if tracked.identity != detected.agent.id {
             return None;
         }
-        let tracked = self.references.remove(&None)?;
+        let mut tracked = self.references.remove(&None)?;
+        tracked.from_detected = true;
         let handoff = RowHandoff {
             incarnation: tracked.incarnation,
-            slot: row.key(),
+            from: None,
+            to: Some(row.key()),
             old_session: runtime
                 .integration
                 .as_ref()
                 .and_then(|integration| integration.native_session.clone()),
             new_session: row.native_session.clone(),
         };
-        self.references.insert(Some(handoff.slot.clone()), tracked);
+        self.references.insert(handoff.to.clone(), tracked);
         Some(handoff)
     }
 
-    /// The reverse of [`Self::handoff_detected_row`]: the last agent rows are gone, and the pane
-    /// speaks for the conversation that was on screen again. It is the same agent, so it keeps the
-    /// row's reference - a turn in flight stays one run, even one that ends from blocked without
-    /// being seen working again. Placed before the references are synced, which keeps it only
-    /// while the pane's agent is still the one the row named.
-    ///
-    /// A claim on the pane can already hold a reference of its own beside the rows, while the
-    /// row's turn ran under the row's. The claim keeps its reference, which clients know it by,
-    /// and takes over the row's open run only when it `speaks_for_row`: another conversation of
-    /// the same agent did not run that turn.
-    fn hand_back_row(&mut self, slot: protocol::RowKey, speaks_for_row: bool) {
-        let Some(row) = self.references.remove(&Some(slot)) else {
+    /// The last agent rows are gone while a claim on the pane - a hook, or the agent's own report -
+    /// holds a reference of its own beside them, and the turn it drove on the row ran under the
+    /// row's reference. The claim keeps its reference, which clients know it by, and takes over the
+    /// row's open run: a turn withdrawn while blocked can end without being seen working again.
+    /// Without a claim, [`Self::carry_detected`] hands the row's whole reference back instead.
+    fn carry_run_to_claim(&mut self, slot: &protocol::RowKey) {
+        let Some(row) = self.references.get(&Some(slot.clone())) else {
             return;
         };
-        match self.references.get_mut(&None) {
-            None => {
-                self.references.insert(None, row);
-            }
-            Some(claim) if speaks_for_row && claim.identity == row.identity => {
-                claim.run_open |= row.run_open;
-            }
-            Some(_) => {}
+        let (identity, run_open) = (row.identity.clone(), row.run_open);
+        if let Some(claim) = self.references.get_mut(&None)
+            && claim.identity == identity
+        {
+            claim.run_open |= run_open;
         }
     }
 
@@ -202,12 +258,17 @@ impl AgentScratch {
         let incarnation = integration.reference.incarnation;
         let identity = integration.identity.id.clone();
         self.next_incarnation = self.next_incarnation.max(incarnation);
-        let (completions, run_open) = self
+        let (completions, run_open, answered, request_run) = self
             .references
             .get(&None)
             .filter(|tracked| tracked.incarnation == incarnation && tracked.identity == identity)
-            .map_or((0, false), |tracked| {
-                (tracked.completions, tracked.run_open)
+            .map_or((0, false, 0, false), |tracked| {
+                (
+                    tracked.completions,
+                    tracked.run_open,
+                    tracked.answered,
+                    tracked.request_run,
+                )
             });
         self.references.insert(
             None,
@@ -216,6 +277,9 @@ impl AgentScratch {
                 incarnation,
                 completions,
                 run_open,
+                answered,
+                request_run,
+                from_detected: false,
             },
         );
     }
@@ -231,6 +295,45 @@ impl AgentScratch {
                 state,
             })
             .collect()
+    }
+
+    /// A request was typed into the agent `reference` names: the run it starts answers another
+    /// agent, which [`protocol::AgentRecord::answered`] counts.
+    pub(super) fn begin_request_run(&mut self, reference: &protocol::AgentRef) {
+        if let Some(tracked) = self.tracked_mut(reference) {
+            tracked.request_run = true;
+        }
+    }
+
+    /// The request's turn is over. A run it started has been counted by now; if it started none,
+    /// the agent's next run is not an answer.
+    pub(super) fn end_request_run(&mut self, reference: &protocol::AgentRef) {
+        if let Some(tracked) = self.tracked_mut(reference)
+            && !tracked.run_open
+        {
+            tracked.request_run = false;
+        }
+    }
+
+    /// The tracker of the agent `reference` names: under its own slot, else wherever the agent's
+    /// incarnation went.
+    fn tracked_mut(
+        &mut self,
+        reference: &protocol::AgentRef,
+    ) -> Option<&mut TrackedAgentReference> {
+        let slot = if self
+            .references
+            .get(&reference.slot)
+            .is_some_and(|tracked| tracked.incarnation == reference.incarnation)
+        {
+            reference.slot.clone()
+        } else {
+            self.references
+                .iter()
+                .find(|(_, tracked)| tracked.incarnation == reference.incarnation)
+                .map(|(slot, _)| slot.clone())?
+        };
+        self.references.get_mut(&slot)
     }
 
     /// Adopt `runtime`'s agents after a change: renew references, count each run that ended, and
@@ -265,6 +368,12 @@ impl AgentScratch {
                 state => {
                     if tracked.run_open && state.is_quiescent() {
                         tracked.completions = tracked.completions.saturating_add(1);
+                        if tracked.request_run {
+                            tracked.answered = tracked.answered.saturating_add(1);
+                        }
+                    }
+                    if tracked.run_open {
+                        tracked.request_run = false;
                     }
                     tracked.run_open = false;
                 }
@@ -317,6 +426,9 @@ impl AgentScratch {
                     incarnation: self.next_incarnation,
                     completions: 0,
                     run_open: false,
+                    answered: 0,
+                    request_run: false,
+                    from_detected: false,
                 },
             );
         }
@@ -384,6 +496,7 @@ impl AgentScratch {
                     incarnation: tracked.incarnation,
                 },
                 completions: tracked.completions,
+                answered: tracked.answered,
             })
             .collect::<Vec<_>>();
         records.sort_by(|left, right| left.reference.slot.cmp(&right.reference.slot));
@@ -422,9 +535,12 @@ fn integration_has_strong_replacement_evidence(
 
 /// The detected agent's reference moving to the published row `slot`, and the ids its conversation
 /// goes by before and after.
+#[derive(Debug)]
 pub(super) struct RowHandoff {
     incarnation: u64,
-    slot: protocol::RowKey,
+    /// Where the reference was, and where it goes: `None` is the pane's detected agent.
+    from: Option<protocol::RowKey>,
+    to: Option<protocol::RowKey>,
     old_session: Option<String>,
     new_session: Option<String>,
 }
@@ -1215,34 +1331,17 @@ impl SessionServer {
             .is_none()
             .then(|| events::PaneRuntimeBaseline::capture(&session_instance, pane_id, pane));
         let resume_before = super::resurrect::resume_target(pane);
-        let handoff = pane.agent.handoff_detected_row(&pane.runtime, &next);
-        replace_pane_rows(pane, next);
+        let mut handoffs: Vec<_> = pane
+            .agent
+            .handoff_detected_row(&pane.runtime, &next)
+            .into_iter()
+            .collect();
+        handoffs.extend(replace_pane_rows(pane, next));
         retire_orphaned_row_reports(pane);
         let resume_changed = super::resurrect::resume_target(pane) != resume_before;
         let state = pane.runtime.clone();
-        if let Some(handoff) = handoff {
-            let old = protocol::AgentRef {
-                pane: protocol::PaneRef {
-                    session_instance,
-                    pane_id,
-                    generation,
-                },
-                slot: None,
-                incarnation: handoff.incarnation,
-            };
-            let handoff = super::responses::AgentHandoff {
-                new: protocol::AgentRef {
-                    slot: Some(handoff.slot),
-                    ..old.clone()
-                },
-                old,
-                old_session: handoff.old_session,
-                new_session: handoff.new_session,
-            };
-            self.agent_requests.handoff(&handoff);
-            self.handoff_agent_waits(&handoff);
-            self.handoff_agent_history(&handoff);
-            self.agent_responses.handoff(&handoff);
+        for handoff in handoffs {
+            self.hand_off_agent(pane_id, generation, handoff);
         }
         let message = self.finish_pane_runtime_change(owner, pane_id, generation, state, baseline);
         // The snapshot names the conversation a restore reopens. A publisher switching it is a
@@ -1259,6 +1358,33 @@ impl SessionServer {
         Ok(Some(message))
     }
 
+    /// Move everything aimed at an agent - requests, waits, history reads, and responses - to the
+    /// reference it goes by after `handoff`.
+    fn hand_off_agent(&mut self, pane_id: PaneId, generation: u64, handoff: RowHandoff) {
+        let old = protocol::AgentRef {
+            pane: protocol::PaneRef {
+                session_instance: self.instance_id.clone(),
+                pane_id,
+                generation,
+            },
+            slot: handoff.from,
+            incarnation: handoff.incarnation,
+        };
+        let handoff = super::responses::AgentHandoff {
+            new: protocol::AgentRef {
+                slot: handoff.to,
+                ..old.clone()
+            },
+            old,
+            old_session: handoff.old_session,
+            new_session: handoff.new_session,
+        };
+        self.agent_requests.handoff(&handoff);
+        self.handoff_agent_waits(&handoff);
+        self.handoff_agent_history(&handoff);
+        self.agent_responses.handoff(&handoff);
+    }
+
     /// Withdraw every row a departing client published into a shared pane, and say so to the
     /// clients that remain.
     ///
@@ -1268,6 +1394,7 @@ impl SessionServer {
     pub(super) fn withdraw_client_rows(&mut self, client: ClientId) -> Vec<ServerMessage> {
         let session_instance = self.instance_id.clone();
         let mut changed_panes = Vec::new();
+        let mut handoffs = Vec::new();
         let mut resume_changed = false;
         let now = unix_now_secs();
         let mut pane_ids: Vec<PaneId> = self.panes.keys().copied().collect();
@@ -1321,7 +1448,12 @@ impl SessionServer {
             let target_before = super::resurrect::resume_target(pane);
             let before = super::resurrect::live_agent_resume(pane);
             let others_speak = next.iter().any(protocol::PublishedRow::is_agent);
-            replace_pane_rows(pane, next);
+            let pane_handoffs = replace_pane_rows(pane, next);
+            handoffs.extend(
+                pane_handoffs
+                    .into_iter()
+                    .map(|handoff| (pane_id, pane.generation, handoff)),
+            );
             retire_orphaned_row_reports(pane);
             if let Some(before) = before
                 && !others_speak
@@ -1337,6 +1469,9 @@ impl SessionServer {
                 baseline,
                 promoted_publishers,
             ));
+        }
+        for (pane_id, generation, handoff) in handoffs {
+            self.hand_off_agent(pane_id, generation, handoff);
         }
         let mut messages = Vec::with_capacity(changed_panes.len());
         for (pane_id, generation, state, baseline, promoted_publishers) in changed_panes {
@@ -2658,33 +2793,48 @@ fn end_launch_under_a_working_row(pane: &mut ServerPane) {
     }
 }
 
+/// Publish `rows` into `pane` the way an agent publisher's update does: the detected agent's
+/// reference moves to the row taking it over, then the rows are replaced.
+#[cfg(test)]
+pub(super) fn publish_rows_for_test(pane: &mut ServerPane, rows: Vec<protocol::PublishedRow>) {
+    let _ = pane.agent.handoff_detected_row(&pane.runtime, &rows);
+    let _ = replace_pane_rows(pane, rows);
+}
+
 /// Install a pane's new row list and everything that follows from it.
 ///
 /// The agent summary's change time moves only when the pane's agents changed: an activity
 /// publisher updating its own rows says nothing new about the agent beside it.
-pub(super) fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::PublishedRow>) {
+/// Replace `pane`'s rows, and return where the pane's detected agent moved between them, for
+/// [`SessionServer::hand_off_agent`] to take its requests, waits, and responses along.
+pub(super) fn replace_pane_rows(
+    pane: &mut ServerPane,
+    next: Vec<protocol::PublishedRow>,
+) -> Vec<RowHandoff> {
     let had_agent_rows = pane
         .runtime
         .rows
         .iter()
         .any(protocol::PublishedRow::is_agent);
     let before = pane.agent.agent_states(&pane.runtime);
-    // The claim speaks for the row only when it names the row's conversation. Even the agent's
-    // own report is bound to the conversation on screen at the last poll, which rows switched
-    // since then have left behind.
-    let handed_back = (had_agent_rows && !next.iter().any(protocol::PublishedRow::is_agent))
-        .then(|| protocol::active_agent_row(&pane.runtime.rows))
-        .flatten()
-        .map(|row| {
-            let speaks_for_row = pane.runtime.integration.as_deref().is_some_and(|claim| {
-                claim.native_session.is_some()
-                    && claim.native_session.as_deref() == protocol::row_reporting_session(row)
-            });
-            (row.key(), speaks_for_row)
-        });
-    pane.runtime.rows = next;
-    if let Some((slot, speaks_for_row)) = handed_back {
-        pane.agent.hand_back_row(slot, speaks_for_row);
+    let previous = std::mem::replace(&mut pane.runtime.rows, next);
+    // The last agent rows went while a claim held the pane's reference beside them; see
+    // `AgentScratch::carry_run_to_claim`. The claim speaks for the row only when it names the
+    // row's conversation: even the agent's own report is bound to the conversation on screen at
+    // the last poll, which rows switched since then have left behind.
+    if had_agent_rows
+        && !pane
+            .runtime
+            .rows
+            .iter()
+            .any(protocol::PublishedRow::is_agent)
+        && let Some(row) = protocol::active_agent_row(&previous)
+        && pane.runtime.integration.as_deref().is_some_and(|claim| {
+            claim.native_session.is_some()
+                && claim.native_session.as_deref() == protocol::row_reporting_session(row)
+        })
+    {
+        pane.agent.carry_run_to_claim(&row.key());
     }
     pane.agent.response_sequences.retain(|reference, _| {
         reference
@@ -2710,6 +2860,25 @@ pub(super) fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::Publi
     end_launch_under_a_working_row(pane);
     pane.agent.observe(before, &pane.runtime);
     pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
+    let row_session = |rows: &[protocol::PublishedRow], key: &Option<protocol::RowKey>| {
+        key.as_ref().and_then(|key| {
+            rows.iter()
+                .find(|row| row.has_key(key))
+                .and_then(|row| row.native_session.clone())
+        })
+    };
+    let mut carried = std::mem::take(&mut pane.agent.carried);
+    for handoff in &mut carried {
+        handoff.new_session = row_session(&pane.runtime.rows, &handoff.to);
+        // Another copy's row may show another conversation, so a request keeps the one it was
+        // asked in and only one that knew none learns this one. With no row left, nothing says
+        // which conversation the agent shows: a request on the departed row's stops insisting.
+        handoff.old_session = match handoff.to {
+            Some(_) => handoff.new_session.clone(),
+            None => row_session(&previous, &handoff.from),
+        };
+    }
+    carried
 }
 
 /// `current` with `publisher`'s rows replaced by `rows`.
@@ -5657,9 +5826,9 @@ mod tests {
             reported: false,
         };
         rig.screen(LOADING);
-        replace_pane_rows(&mut rig.pane, vec![row("idle")]);
-        replace_pane_rows(&mut rig.pane, vec![row("working")]);
-        replace_pane_rows(&mut rig.pane, vec![row("idle")]);
+        publish_rows_for_test(&mut rig.pane, vec![row("idle")]);
+        publish_rows_for_test(&mut rig.pane, vec![row("working")]);
+        publish_rows_for_test(&mut rig.pane, vec![row("idle")]);
         let finished = |rig: &LaunchRig, row: bool| -> u64 {
             records(&rig.pane)
                 .iter()
@@ -5670,7 +5839,7 @@ mod tests {
         assert_eq!(finished(&rig, true), 1);
 
         // The publisher goes away while the agent is still loading: its loading is no run.
-        replace_pane_rows(&mut rig.pane, Vec::new());
+        publish_rows_for_test(&mut rig.pane, Vec::new());
         rig.screen(LOADING);
         rig.screen(PROMPT);
         assert_eq!(finished(&rig, false), 0);
@@ -5697,11 +5866,11 @@ mod tests {
             live_session: None,
             reported: false,
         };
-        replace_pane_rows(&mut rig.pane, vec![row("idle")]);
-        replace_pane_rows(&mut rig.pane, vec![row("working")]);
-        replace_pane_rows(&mut rig.pane, vec![row("blocked")]);
+        publish_rows_for_test(&mut rig.pane, vec![row("idle")]);
+        publish_rows_for_test(&mut rig.pane, vec![row("working")]);
+        publish_rows_for_test(&mut rig.pane, vec![row("blocked")]);
         rig.screen(DIALOG);
-        replace_pane_rows(&mut rig.pane, Vec::new());
+        publish_rows_for_test(&mut rig.pane, Vec::new());
         rig.screen(PROMPT);
         assert_eq!(records(&rig.pane)[0].completions, 1);
     }
@@ -5727,13 +5896,13 @@ mod tests {
             reported: false,
         };
         rig.screen(LOADING);
-        replace_pane_rows(&mut rig.pane, vec![row("3/c", "working", false)]);
+        publish_rows_for_test(&mut rig.pane, vec![row("3/c", "working", false)]);
         assert!(
             rig.pane.agent.launch.is_some(),
             "a background turn says nothing about the launch"
         );
         // Each publisher marks its own active row; the pane's is the first publisher's.
-        replace_pane_rows(
+        publish_rows_for_test(
             &mut rig.pane,
             vec![row("1/a", "idle", true), row("2/b", "working", true)],
         );
@@ -5741,8 +5910,8 @@ mod tests {
             rig.pane.agent.launch.is_some(),
             "nor does a later publisher's active row"
         );
-        replace_pane_rows(&mut rig.pane, vec![row("1/a", "working", true)]);
-        replace_pane_rows(&mut rig.pane, Vec::new());
+        publish_rows_for_test(&mut rig.pane, vec![row("1/a", "working", true)]);
+        publish_rows_for_test(&mut rig.pane, Vec::new());
         rig.screen(TURN);
         rig.screen(PROMPT);
         let finished: u64 = records(&rig.pane)

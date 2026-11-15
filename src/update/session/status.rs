@@ -46,7 +46,7 @@ pub(crate) fn summary_edges(
     AgentEdges {
         became_blocked: current.state == AgentState::Blocked
             && previous.is_none_or(|previous| previous.state != AgentState::Blocked),
-        finished: previous.is_some_and(|previous| current.completions > previous.completions),
+        finished: previous.is_some_and(|previous| current.noticed_runs() > previous.noticed_runs()),
         failed: current.state == AgentState::Error
             && previous.is_none_or(|previous| previous.state != AgentState::Error),
     }
@@ -56,8 +56,8 @@ pub(crate) fn summary_edges(
 /// sampled before it was overwritten. `agent_finished` says whether the pane's own agent finished a
 /// run in this update, by the server's count (see [`finished_records`]).
 ///
-/// Stamps the local fallback and banks the length of an active run as it ends, so a finished run
-/// can report what it cost. Whether an agent's finish has been seen is not kept here: that is
+/// Stamps the local fallback and banks the length of an attention-worthy run as it ends (or fails),
+/// leaving it alone for quiet answers. Whether an agent's finish has been seen is not kept here: that is
 /// [`crate::state::AgentAttention`]'s, for every agent alike. A pane whose status names no agent - a
 /// `rozi status` activity - keeps its own "unseen finish" flag: armed when an active status ends
 /// successfully, disarmed when it becomes active or fails again, and cleared when the pane is
@@ -82,7 +82,7 @@ pub(crate) fn update_agent_status_edge(
         } else {
             status_is_active_run(previous) && crate::session::protocol::status_ends_run(current)
         };
-        if ended {
+        if ended && (generic || agent_finished || current_activity == Some(ActivityState::Error)) {
             pane.last_run = previous_age;
         }
         pane.status_since = Some(std::time::Instant::now());
@@ -109,8 +109,10 @@ pub(crate) fn update_agent_status_edge(
 }
 
 /// Which of a pane's agents finished a run between two sets of its records: the pane's own agent
-/// (`None`) and each published row by key. Read from the server's completion counts, so a finish
-/// is a finish whether or not this client saw the agent working first.
+/// (`None`) and each published row by key, as `current` lists it. Read from the server's
+/// completion counts, so a finish is a finish whether or not this client saw the agent working
+/// first, and whether or not the agent moved to another row in the same update. A run that
+/// answered another agent's request is not one: its answer went to that agent.
 pub(crate) fn finished_records(
     previous: &[crate::session::protocol::AgentRecord],
     current: &[crate::session::protocol::AgentRecord],
@@ -119,7 +121,8 @@ pub(crate) fn finished_records(
         .iter()
         .filter(|record| {
             previous.iter().any(|earlier| {
-                earlier.reference == record.reference && record.completions > earlier.completions
+                earlier.reference.instance() == record.reference.instance()
+                    && record.noticed_runs() > earlier.noticed_runs()
             })
         })
         .map(|record| record.reference.slot.clone())
@@ -180,7 +183,11 @@ pub(crate) fn apply_pane_runtime_state(
     pane.terminal.drag_and_drop = state.drag_and_drop;
     pane.terminal.detected_agent = state.detected_agent;
     pane.terminal.work_started_at = state.work_started_at;
-    let mut finished_rows = pane.terminal.apply_rows(state.rows, state.integration);
+    let mut finished_rows: Vec<_> = finished.iter().flatten().cloned().collect();
+    let finished_activities =
+        pane.terminal
+            .apply_rows(state.rows, state.integration, &finished_rows);
+    finished_rows.extend(finished_activities);
     let (failed_rows, failed_here): (Vec<_>, Vec<_>) = pane
         .note_failures(&previous_failures)
         .into_iter()
@@ -196,7 +203,6 @@ pub(crate) fn apply_pane_runtime_state(
         .into_iter()
         .filter_map(|failure| failure.slot)
         .collect();
-    finished_rows.extend(finished.iter().flatten().cloned());
     let mut edges = update_agent_status_edge(
         &mut pane.terminal,
         previous_agent_status.as_deref(),
@@ -645,6 +651,38 @@ fn apply_program_status(
 mod tests {
     use super::*;
     use crate::session::protocol::{AgentIdentity, DetectedAgent, DetectedAgentState};
+
+    /// A run that answered another agent's request is not a finish to show the user: no Done
+    /// mark, sound, or notification. The agent's own run after it is.
+    #[test]
+    fn a_run_that_answered_a_request_is_not_a_finish() {
+        use crate::session::protocol::{AgentRecord, AgentRef};
+        let record = |completions, answered| AgentRecord {
+            reference: AgentRef::for_test(3, 1, None),
+            completions,
+            answered,
+        };
+        assert!(finished_records(&[record(3, 0)], &[record(4, 1)]).is_empty());
+        assert_eq!(finished_records(&[record(4, 1)], &[record(5, 1)]), [None]);
+    }
+
+    /// An agent can finish a run in the same update that lists it under another row. That is one
+    /// finish, of the row it is listed under now; an agent that only moved finished nothing.
+    #[test]
+    fn a_finish_counts_once_when_the_agent_moves_rows_in_the_same_update() {
+        use crate::session::protocol::{AgentRecord, AgentRef, RowKey};
+        let record = |id: &str, completions| AgentRecord {
+            reference: AgentRef::for_test(3, 1, Some(RowKey::new("1/s", id))),
+            completions,
+            answered: 0,
+        };
+        let moved = Some(RowKey::new("1/s", "b"));
+        assert_eq!(
+            finished_records(&[record("a", 3)], &[record("b", 4)]),
+            [moved]
+        );
+        assert!(finished_records(&[record("a", 3)], &[record("b", 3)]).is_empty());
+    }
 
     #[test]
     fn suppressed_osc_alerts_leave_cooldown_available_for_unattended_error() {

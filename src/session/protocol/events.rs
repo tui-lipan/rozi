@@ -312,9 +312,10 @@ pub fn pane_status_fields(
 
 /// `agent-state-changed`'s fields, for each agent whose state differs between `before` and `after`.
 ///
-/// An agent is matched by its reference, which names one incarnation of an agent across all the
-/// runs it finishes. A replacement - the agent relaunched in the same pane - is a new incarnation:
-/// the old one goes (`state` empty) and the new one appears (`previous_state` empty).
+/// An agent is matched by its [`AgentInstance`](super::AgentInstance): one incarnation across all
+/// the runs it finishes, whichever row lists it. A replacement - the agent relaunched in the same
+/// pane - is a new incarnation: the old one goes (`state` empty) and the new one appears
+/// (`previous_state` empty).
 pub fn agent_state_changes(
     pane: PaneId,
     before: &[AgentRuntime],
@@ -323,7 +324,7 @@ pub fn agent_state_changes(
     let earlier = |runtime: &AgentRuntime| {
         before
             .iter()
-            .find(|candidate| candidate.reference == runtime.reference)
+            .find(|candidate| candidate.reference.instance() == runtime.reference.instance())
     };
     let changed = after.iter().filter_map(|runtime| {
         let previous = earlier(runtime).map(|earlier| earlier.state);
@@ -335,7 +336,7 @@ pub fn agent_state_changes(
         .filter(|runtime| {
             !after
                 .iter()
-                .any(|candidate| candidate.reference == runtime.reference)
+                .any(|candidate| candidate.reference.instance() == runtime.reference.instance())
         })
         .map(|runtime| agent_state_fields(pane, runtime, None, Some(runtime.state)));
     changed.chain(gone).collect()

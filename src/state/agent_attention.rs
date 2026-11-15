@@ -4,8 +4,9 @@
 //! client has *seen* of those is the client's own business, and two clients watching one session
 //! disagree about it, correctly. This is the one record of it for every agent this client knows
 //! about, however it knows: a live pane in the session on screen, a pane in a background
-//! attachment, or a summary from a host monitor. All of them name an agent by its exact
-//! [`AgentRef`], so looking at an agent anywhere acknowledges it everywhere.
+//! attachment, or a summary from a host monitor. All of them name an agent by its
+//! [`AgentInstance`], so looking at an agent anywhere acknowledges it everywhere, and a row that
+//! starts or stops listing it does not make its finished runs news again.
 //!
 //! An agent whose latest finished run has not been seen is "done, not yet looked at": the filled
 //! dot in the sidebar, the finished pane border, and the workspace marker. Generic activities
@@ -13,12 +14,14 @@
 
 use std::collections::HashMap;
 
-use crate::session::protocol::{AgentRecord, AgentRef, AgentRuntime, AgentState, AgentSummary};
+use crate::session::protocol::{
+    AgentInstance, AgentRecord, AgentRef, AgentRuntime, AgentState, AgentSummary,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AgentAttention {
     /// The completion count each agent had when it was last looked at.
-    seen: HashMap<AgentRef, u64>,
+    seen: HashMap<AgentInstance, u64>,
 }
 
 /// How a newly observed agent's history is treated.
@@ -37,7 +40,7 @@ impl AgentAttention {
     /// what has been seen of it, whatever the source reporting it now.
     pub fn observe(&mut self, reference: &AgentRef, completions: u64, sighting: FirstSighting) {
         self.seen
-            .entry(reference.clone())
+            .entry(reference.instance())
             .or_insert(match sighting {
                 FirstSighting::Baseline => completions,
                 FirstSighting::New => 0,
@@ -67,7 +70,7 @@ impl AgentAttention {
         state.is_quiescent()
             && self
                 .seen
-                .get(reference)
+                .get(&reference.instance())
                 .is_some_and(|seen| completions > *seen)
     }
 
@@ -82,16 +85,16 @@ impl AgentAttention {
     /// The user looked at this agent: every run it has finished so far is seen. Returns whether
     /// that changed anything.
     pub fn acknowledge(&mut self, reference: &AgentRef, completions: u64) -> bool {
-        let seen = self.seen.entry(reference.clone()).or_insert(completions);
+        let seen = self.seen.entry(reference.instance()).or_insert(completions);
         let changed = *seen < completions;
         *seen = (*seen).max(completions);
         changed
     }
 
-    /// Forget agents no source reports any more. A reference names one incarnation, which never
-    /// comes back once gone, so nothing worth keeping is lost.
-    pub fn retain(&mut self, mut live: impl FnMut(&AgentRef) -> bool) {
-        self.seen.retain(|reference, _| live(reference));
+    /// Forget agents no source reports any more. An incarnation never comes back once gone, so
+    /// nothing worth keeping is lost.
+    pub fn retain(&mut self, mut live: impl FnMut(&AgentInstance) -> bool) {
+        self.seen.retain(|agent, _| live(agent));
     }
 
     #[cfg(test)]
@@ -104,7 +107,7 @@ impl crate::state::State {
     /// Forget attention for agents nothing reports any more: no live pane in any attachment, and no
     /// monitor snapshot.
     pub(crate) fn prune_agent_attention(&mut self) {
-        let mut live: std::collections::HashSet<AgentRef> = std::collections::HashSet::new();
+        let mut live: std::collections::HashSet<AgentInstance> = std::collections::HashSet::new();
         let attachments = std::iter::once(self.current()).chain(self.background.values());
         for attachment in attachments {
             for pane in attachment
@@ -112,20 +115,19 @@ impl crate::state::State {
                 .iter()
                 .flat_map(|workspace| &workspace.panes)
             {
-                live.extend(pane.agents.iter().map(|record| record.reference.clone()));
+                live.extend(pane.agents.iter().map(|record| record.reference.instance()));
             }
         }
         for pane in self.popup.iter().chain(&self.scratch.panes) {
-            live.extend(pane.agents.iter().map(|record| record.reference.clone()));
+            live.extend(pane.agents.iter().map(|record| record.reference.instance()));
         }
         let summaries = self
             .local_agent_snapshot
             .iter()
             .flat_map(|snapshot| &snapshot.agents)
             .chain(self.remote.agents.values().flatten());
-        live.extend(summaries.map(|summary| summary.reference.clone()));
-        self.agent_attention
-            .retain(|reference| live.contains(reference));
+        live.extend(summaries.map(|summary| summary.reference.instance()));
+        self.agent_attention.retain(|agent| live.contains(agent));
     }
 }
 
@@ -167,8 +169,24 @@ mod tests {
         // A second source reporting the same agent does not reset what has been seen.
         attention.observe(&reference(2), 1, FirstSighting::Baseline);
         assert!(attention.finished_unseen(&reference(2), 1, AgentState::Done));
-        attention.retain(|candidate| *candidate != reference(2));
+        attention.retain(|candidate| *candidate != reference(2).instance());
         assert_eq!(attention.tracked(), 0);
+    }
+
+    /// Another window's publisher taking over lists the same agent under another row. What was
+    /// seen of it stays seen; its next finish is news.
+    #[test]
+    fn an_agent_moving_to_another_row_keeps_what_was_seen() {
+        let row = |id: &str| AgentRef {
+            incarnation: 7,
+            ..AgentRef::for_test(3, 1, Some(crate::session::protocol::RowKey::new("1/s", id)))
+        };
+        let mut attention = AgentAttention::default();
+        attention.observe(&row("a"), 3, FirstSighting::New);
+        assert!(attention.acknowledge(&row("a"), 3));
+        attention.observe(&row("b"), 3, FirstSighting::New);
+        assert!(!attention.finished_unseen(&row("b"), 3, AgentState::Idle));
+        assert!(attention.finished_unseen(&row("b"), 4, AgentState::Idle));
     }
 
     /// One agent, two sources: its live pane and a monitor's summary of the same session. Looking

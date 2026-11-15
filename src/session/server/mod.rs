@@ -497,6 +497,8 @@ pub struct AgentScratch {
     /// Exact semantic occupants currently present in this pane. Separate from detection caches so
     /// a state transition does not change identity and a departed occupant cannot reuse its ref.
     references: HashMap<Option<protocol::RowKey>, TrackedAgentReference>,
+    /// Moves of the detected agent's reference the last sync made, for `replace_pane_rows`.
+    carried: Vec<runtime::RowHandoff>,
     response_sequences: HashMap<protocol::AgentRef, (u64, u64)>,
     next_incarnation: u64,
     /// Launch whose screen-detected reference was last synchronized.
@@ -597,6 +599,9 @@ struct TrackedAgentReference {
     completions: u64,
     /// Whether it has been working since its last run ended. Being blocked leaves this set.
     run_open: bool,
+    /// The agent behind this reference was the pane's screen-detected agent, so its incarnation
+    /// follows it while it runs; see `AgentScratch::carry_detected`.
+    from_detected: bool,
 }
 
 /// The process a detection sweep named as a pane's agent.

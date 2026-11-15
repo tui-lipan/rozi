@@ -204,10 +204,20 @@ fn a_request_follows_a_detected_agent_into_its_published_row() {
         rig.server
             .report_pane_rows(client, 3, 1, false, publisher(), rows)
             .unwrap();
+        // A reference read before the row appeared, such as one a script saved from
+        // `agents list`, names the row's agent only when it took the detected one over.
+        let followed = rig
+            .server
+            .resolve_agent_wait_target(crate::control::AgentTarget::Ref(detected.clone()))
+            .ok();
         if !follows {
             assert_eq!(
                 rig.request(&request.id).state,
                 AgentRequestState::Failed,
+                "{scenario}"
+            );
+            assert!(
+                followed.is_none_or(|reference| reference.slot.is_none()),
                 "{scenario}"
             );
             continue;
@@ -215,6 +225,7 @@ fn a_request_follows_a_detected_agent_into_its_published_row() {
         let published = rig.agent(3);
         assert!(published.slot.is_some());
         assert_eq!(published.incarnation, detected.incarnation);
+        assert_eq!(followed.as_ref(), Some(&published), "{scenario}");
         let moved = rig.request(&request.id);
         assert_eq!(moved.state, AgentRequestState::Active, "{scenario}");
         assert_eq!(moved.to, published);
@@ -252,6 +263,102 @@ fn a_request_follows_a_detected_agent_into_its_published_row() {
         assert_eq!(answered.state, AgentRequestState::Answered, "{scenario}");
         assert!(answered.response.unwrap().content.text.contains('5'));
     }
+}
+
+/// A reference read while the agent was only screen-detected keeps naming it as rows speak for
+/// it: one window's publisher takes it over, another window's copy takes over when the first
+/// leaves, and the rows go away while the agent runs on. A request it is answering moves with it
+/// and can still be answered. A new launch is another agent.
+#[test]
+fn a_detected_agents_reference_outlives_the_rows_that_speak_for_it() {
+    let mut rig = Rig::new(&[3]);
+    let (first, _first_stream) = super::super::tests::attach_client(&mut rig.server);
+    let (second, _second_stream) = super::super::tests::attach_client(&mut rig.server);
+    let detected = rig.agent(3);
+    let resolve = |rig: &Rig, reference: &protocol::AgentRef| {
+        rig.server
+            .resolve_agent_wait_target(AgentTarget::Ref(reference.clone()))
+            .ok()
+    };
+    let publisher = || super::super::runtime::PanePublisher {
+        id: "sessions".into(),
+        kind: protocol::PublisherKind::Agent,
+        epoch: 1,
+        responses: Vec::new(),
+    };
+    let row = protocol::PublishedRow {
+        publisher: String::new(),
+        kind: protocol::PublisherKind::Agent,
+        id: "thread".into(),
+        title: "Question".into(),
+        status: "idle".into(),
+        active: true,
+        native_session: Some("thread".into()),
+        live_session: None,
+        reported: false,
+        reason: None,
+        work_started_at: None,
+        cwd: None,
+        project: None,
+    };
+
+    rig.server
+        .report_pane_rows(first, 3, 1, false, publisher(), vec![row.clone()])
+        .unwrap();
+    let published = rig.agent(3);
+    assert!(published.slot.is_some());
+    assert_eq!(resolve(&rig, &detected), Some(published.clone()));
+
+    let request = rig.ask(None, 3, "What is 2+3?");
+    assert_eq!(request.state, AgentRequestState::Active);
+    assert_eq!(request.to, published);
+    let working = protocol::PublishedRow {
+        status: "working".into(),
+        ..row
+    };
+    rig.server
+        .report_pane_rows(first, 3, 1, false, publisher(), vec![working.clone()])
+        .unwrap();
+    rig.set_state(3, DetectedAgentState::Working);
+    let still_answering = |rig: &mut Rig, to: &protocol::AgentRef| {
+        rig.server.pump_agent_requests();
+        let request = rig.request(&request.id);
+        assert_eq!(
+            request.state,
+            AgentRequestState::Active,
+            "{:?}",
+            request.reason
+        );
+        assert_eq!(request.to, *to);
+    };
+
+    // The second window's copy waits while the first speaks, and takes over when it leaves.
+    rig.server
+        .report_pane_rows(second, 3, 1, false, publisher(), vec![working])
+        .unwrap();
+    rig.server.withdraw_client_rows(first);
+    let promoted = rig.agent(3);
+    assert!(promoted.slot.is_some() && promoted.slot != published.slot);
+    assert_eq!(resolve(&rig, &detected), Some(promoted.clone()));
+    assert_eq!(resolve(&rig, &published), Some(promoted.clone()));
+    still_answering(&mut rig, &promoted);
+
+    // Its rows withdrawn, the detected agent speaks for the pane again.
+    rig.server
+        .report_pane_rows(second, 3, 1, false, publisher(), Vec::new())
+        .unwrap();
+    let again = rig.agent(3);
+    assert_eq!(again, detected);
+    assert_eq!(resolve(&rig, &promoted), Some(detected.clone()));
+    still_answering(&mut rig, &detected);
+    assert!(rig.reply(3, &request.id, "5").ok);
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Answered);
+
+    let pane = rig.server.panes.get_mut(&3).unwrap();
+    pane.runtime.agent_launch += 1;
+    pane.agent.sync_references(&pane.runtime);
+    assert_ne!(rig.agent(3), detected);
+    assert_eq!(resolve(&rig, &detected), None);
 }
 
 #[test]

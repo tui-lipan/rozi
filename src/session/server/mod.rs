@@ -532,8 +532,8 @@ pub struct AgentScratch {
     /// Set from a launch until the agent is ready: until then, working is not a run. See
     /// [`AgentLaunch`].
     pub launch: Option<AgentLaunch>,
-    /// The reading a line already answered a dialog in, so the next line, typed before anything
-    /// new is read, goes to whatever came after the dialog.
+    /// The screen a line already answered a dialog on, so the next line, typed before the agent
+    /// redraws, goes to whatever came after the dialog.
     pub answered: Option<std::sync::Arc<str>>,
     /// Rozi is scrolling this pane to read its history, so the screen shows pages Rozi caused
     /// rather than what the agent is doing. Screen detection keeps its last answer meanwhile;

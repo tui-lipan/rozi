@@ -273,41 +273,6 @@ impl AgentScratch {
         self.launch = None;
     }
 
-    /// Note input written to the pane: a submitted line gives a launching agent work, so its run
-    /// starts. A line typed into a dialog answers it instead - the loading after a trust prompt is
-    /// still loading.
-    ///
-    /// The dialog is the one the agent's report or the latest reading shows, not the settled
-    /// state, which keeps a dialog up for a moment after it closes. And a reading's dialog is
-    /// answered once: a second line typed before anything new is read goes to whatever came after
-    /// it.
-    pub(super) fn note_input(&mut self, runtime: &PaneRuntimeState, bytes: &[u8]) {
-        if self.launch.is_none() || !input_submits_line(bytes) {
-            return;
-        }
-        // Either source showing a dialog is enough: a screen dialog can outrank a report that
-        // says the agent is working, and taking a prompt for an answer only misses a run.
-        let blocked = runtime
-            .integration
-            .as_deref()
-            .is_some_and(|report| report.state == protocol::AgentState::Blocked)
-            || self
-                .read
-                .as_ref()
-                .and_then(|read| read.resolved.as_ref())
-                .is_some_and(|detected| detected.state == protocol::DetectedAgentState::Blocked);
-        let screen = self.read.as_ref().map(|read| read.screen.clone());
-        let answered = matches!(
-            (&screen, &self.answered),
-            (Some(screen), Some(answered)) if std::sync::Arc::ptr_eq(screen, answered)
-        );
-        if blocked && !answered {
-            self.answered = screen;
-        } else {
-            self.start_run();
-        }
-    }
-
     fn ensure_reference(
         &mut self,
         pane: protocol::PaneRef,
@@ -3191,6 +3156,47 @@ fn advance_launch(
     }
 }
 
+/// Note input written to a pane: a submitted line gives a launching agent work, so its run starts.
+/// A line typed into a dialog answers it instead - the loading after a trust prompt is still
+/// loading.
+///
+/// The dialog is read from the screen as it is now, not from the last poll, which can be a frame
+/// behind what the user is answering, nor from the settled state, which keeps a dialog up for a
+/// moment after it closes. The agent's report showing one counts too: either is enough, since
+/// taking a prompt for an answer only misses a run. A screen's dialog is answered once - a second
+/// line typed before the agent redraws goes to whatever came after it.
+pub(super) fn note_pane_input(pane: &mut ServerPane, agents: &AgentCatalog, bytes: &[u8]) {
+    if pane.agent.launch.is_none() || !input_submits_line(bytes) {
+        return;
+    }
+    let screen = pane.screen_without_change().snapshot();
+    let reported = pane
+        .runtime
+        .integration
+        .as_deref()
+        .is_some_and(|report| report.state == protocol::AgentState::Blocked);
+    let shown = pane
+        .agent
+        .identity
+        .as_deref()
+        .and_then(|id| agents.by_id(id))
+        .is_some_and(|definition| {
+            let title = pane.effective_title().unwrap_or_default();
+            crate::agent_detection::observe(agents, definition, &screen, &title).state
+                == Some(protocol::DetectedAgentState::Blocked)
+        });
+    let answered = pane
+        .agent
+        .answered
+        .as_ref()
+        .is_some_and(|answered| std::sync::Arc::ptr_eq(answered, &screen));
+    if (reported || shown) && !answered {
+        pane.agent.answered = Some(screen);
+    } else {
+        pane.agent.start_run();
+    }
+}
+
 /// Whether input written to a pane submits a line: Enter as a plain carriage return, or as the
 /// kitty keyboard protocol reports it. Someone who has typed a prompt and sent it is talking to a
 /// ready agent, which is the one readiness signal an agent with no loading screen gives.
@@ -5523,75 +5529,54 @@ mod tests {
     }
 
     /// Answering a launch's trust prompt with Enter submits a line, but gives the agent no work.
-    /// The next line goes to the composer, even while the settled state still shows the dialog.
+    /// What the line answers is the screen at that moment: the last poll can be a frame behind it,
+    /// and the settled state keeps a dialog up after it closes.
     #[test]
     fn a_line_starts_a_run_unless_it_answers_a_dialog() {
-        use crate::session::protocol::DetectedAgentState::{Blocked, Idle};
+        let mut rig = LaunchRig::new();
+        let catalog = catalog();
+        rig.screen(LOADING);
 
-        let mut agent = AgentScratch {
-            launch: Some(Default::default()),
-            ..AgentScratch::default()
-        };
-        let settled = PaneRuntimeState {
-            detected_agent: Some(DetectedAgent {
-                agent: crate::session::protocol::AgentIdentity::new("pi", "Pi").into(),
-                state: Blocked,
-            }),
-            ..PaneRuntimeState::default()
-        };
-        let read = |agent: &mut AgentScratch, screen: &str, state| {
-            agent.read = Some(super::super::AgentRead {
-                screen: screen.into(),
-                title: None,
-                resolved: Some(DetectedAgent {
-                    agent: crate::session::protocol::AgentIdentity::new("pi", "Pi").into(),
-                    state,
-                }),
-            });
-        };
-
-        read(&mut agent, "trust this folder?", Blocked);
-        agent.note_input(&settled, b"typing");
-        agent.note_input(&settled, b"\r");
-        assert!(agent.launch.is_some(), "the line answered the dialog");
-        agent.note_input(&settled, b"fix the tests\r");
-        assert!(agent.launch.is_none(), "the next line is a prompt");
-
-        agent.launch = Some(Default::default());
-        read(&mut agent, "> ", Idle);
-        agent.note_input(&settled, b"fix the tests\r");
+        // The dialog is drawn after the last poll, under a report that the agent is working, as
+        // Codex's report reads under its choosers.
+        rig.pane.runtime.integration = Some(Box::new(protocol::AgentIntegrationReport {
+            integration: PROGRAM_STATUS_INTEGRATION.into(),
+            identity: crate::session::protocol::AgentIdentity::new("pi", "Pi"),
+            reference: protocol::AgentRef {
+                pane: protocol::PaneRef {
+                    session_instance: protocol::SessionInstanceId::for_test("server"),
+                    pane_id: 1,
+                    generation: 1,
+                },
+                slot: None,
+                incarnation: 1,
+            },
+            state: protocol::AgentState::Working,
+            reason: None,
+            native_session: None,
+            unless_quiet: None,
+            seq: 1,
+            reported_at_unix_ms: 0,
+        }));
+        rig.pane.terminal.process_bytes(DIALOG.as_bytes());
+        note_pane_input(&mut rig.pane, &catalog, b"typing");
+        note_pane_input(&mut rig.pane, &catalog, b"\r");
         assert!(
-            agent.launch.is_none(),
-            "a dialog only the settle grace still holds"
+            rig.pane.agent.launch.is_some(),
+            "the line answered the dialog"
+        );
+        note_pane_input(&mut rig.pane, &catalog, b"fix the tests\r");
+        assert!(
+            rig.pane.agent.launch.is_none(),
+            "the next line, before a redraw, is a prompt"
         );
 
-        // Codex can report working while its screen shows a chooser that outranks the report.
-        agent.launch = Some(Default::default());
-        read(&mut agent, "enter continue · esc back", Blocked);
-        let reporting = PaneRuntimeState {
-            integration: Some(Box::new(protocol::AgentIntegrationReport {
-                integration: PROGRAM_STATUS_INTEGRATION.into(),
-                identity: crate::session::protocol::AgentIdentity::new("codex", "Codex"),
-                reference: protocol::AgentRef {
-                    pane: protocol::PaneRef {
-                        session_instance: protocol::SessionInstanceId::for_test("server"),
-                        pane_id: 1,
-                        generation: 1,
-                    },
-                    slot: None,
-                    incarnation: 1,
-                },
-                state: protocol::AgentState::Working,
-                reason: None,
-                native_session: None,
-                unless_quiet: None,
-                seq: 1,
-                reported_at_unix_ms: 0,
-            })),
-            ..settled.clone()
-        };
-        agent.note_input(&reporting, b"\r");
-        assert!(agent.launch.is_some(), "the screen's dialog was answered");
+        // A dialog closed since the last poll, which still settles on it.
+        let mut rig = LaunchRig::new();
+        rig.screen(DIALOG);
+        rig.pane.terminal.process_bytes(PROMPT.as_bytes());
+        note_pane_input(&mut rig.pane, &catalog, b"fix the tests\r");
+        assert!(rig.pane.agent.launch.is_none());
     }
 
     /// A conversation a publisher lists is its word about a real turn, whatever the pane's own

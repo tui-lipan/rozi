@@ -72,9 +72,11 @@ fn apply_pane_meta(
     pane.terminal.program_status_attention = false;
     pane.terminal.program_status_notified = None;
     pane.terminal.child_pid = meta.pid;
-    let _ = pane
-        .terminal
-        .apply_rows(meta.runtime.rows.clone(), meta.runtime.integration.clone());
+    let _ = pane.terminal.apply_rows(
+        meta.runtime.rows.clone(),
+        meta.runtime.integration.clone(),
+        &[],
+    );
     pane.logging = meta.logging;
     pane.terminal.status = meta
         .exited

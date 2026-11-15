@@ -517,6 +517,11 @@ fn a_request_answered_later_outlives_its_turn_until_the_reply() {
         .screen_mut()
         .process_bytes(b"started the suite in the background");
     rig.set_state(3, DetectedAgentState::Idle);
+    assert_eq!(
+        rig.runs(3),
+        (1, 1),
+        "the deferred request's run stays quiet"
+    );
     let waiting = rig.request(&first.id);
     assert_eq!(waiting.state, AgentRequestState::Active);
     assert!(waiting.response.is_none());
@@ -545,6 +550,10 @@ fn an_agent_owing_several_requests_names_the_one_it_asks_for() {
     let second = rig.ask(Some(4), 3, "run the fuzzer");
     assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", second.id)));
     info(rig.server.reply_later(Some(rig.agent(3)), &second.id));
+
+    // Neither delivery was observed working. Deferring must not hide the next user run.
+    rig.run_turn(3);
+    assert_eq!(rig.runs(3), (1, 0));
 
     // Either promise could be the one asking, so the ask must say which.
     let from = rig.agent(3);

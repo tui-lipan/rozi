@@ -56,8 +56,8 @@ pub(crate) fn summary_edges(
 /// sampled before it was overwritten. `agent_finished` says whether the pane's own agent finished a
 /// run in this update, by the server's count (see [`finished_records`]).
 ///
-/// Stamps the local fallback and banks the length of an active run as it ends, so a finished run
-/// can report what it cost. Whether an agent's finish has been seen is not kept here: that is
+/// Stamps the local fallback and banks the length of an attention-worthy run as it ends (or fails),
+/// leaving it alone for quiet answers. Whether an agent's finish has been seen is not kept here: that is
 /// [`crate::state::AgentAttention`]'s, for every agent alike. A pane whose status names no agent - a
 /// `rozi status` activity - keeps its own "unseen finish" flag: armed when an active status ends
 /// successfully, disarmed when it becomes active or fails again, and cleared when the pane is
@@ -82,7 +82,7 @@ pub(crate) fn update_agent_status_edge(
         } else {
             status_is_active_run(previous) && crate::session::protocol::status_ends_run(current)
         };
-        if ended {
+        if ended && (generic || agent_finished || current_activity == Some(ActivityState::Error)) {
             pane.last_run = previous_age;
         }
         pane.status_since = Some(std::time::Instant::now());
@@ -183,7 +183,11 @@ pub(crate) fn apply_pane_runtime_state(
     pane.terminal.drag_and_drop = state.drag_and_drop;
     pane.terminal.detected_agent = state.detected_agent;
     pane.terminal.work_started_at = state.work_started_at;
-    let mut finished_rows = pane.terminal.apply_rows(state.rows, state.integration);
+    let mut finished_rows: Vec<_> = finished.iter().flatten().cloned().collect();
+    let finished_activities =
+        pane.terminal
+            .apply_rows(state.rows, state.integration, &finished_rows);
+    finished_rows.extend(finished_activities);
     let (failed_rows, failed_here): (Vec<_>, Vec<_>) = pane
         .note_failures(&previous_failures)
         .into_iter()
@@ -199,7 +203,6 @@ pub(crate) fn apply_pane_runtime_state(
         .into_iter()
         .filter_map(|failure| failure.slot)
         .collect();
-    finished_rows.extend(finished.iter().flatten().cloned());
     let mut edges = update_agent_status_edge(
         &mut pane.terminal,
         previous_agent_status.as_deref(),

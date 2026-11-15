@@ -644,6 +644,9 @@ impl SessionServer {
                 .slots
                 .remove(&to)
                 .expect("answering slot");
+            if let Some(pane) = self.panes.get_mut(&to.pane.pane_id) {
+                pane.agent.end_request_run(&to);
+            }
             turn_session = slot
                 .tracker
                 .fence()

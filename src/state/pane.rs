@@ -848,6 +848,7 @@ mod tests {
                 seq: 1,
                 reported_at_unix_ms: 1,
             })),
+            &[],
         );
         pane.agents = pane
             .terminal

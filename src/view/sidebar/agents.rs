@@ -1539,7 +1539,11 @@ mod tests {
                         .as_secs()
                         .saturating_sub(12),
                 );
-                assert!(terminal.apply_rows(vec![task.clone()], None).is_empty());
+                assert!(
+                    terminal
+                        .apply_rows(vec![task.clone()], None, &[])
+                        .is_empty()
+                );
                 let key = task.key();
                 terminal
                     .published_row_ui
@@ -1547,7 +1551,7 @@ mod tests {
                     .unwrap()
                     .finished_unseen = true;
                 task.status = current.into();
-                let finished = terminal.apply_rows(vec![task.clone()], None);
+                let finished = terminal.apply_rows(vec![task.clone()], None, &[]);
                 assert_eq!(
                     finished.is_empty(),
                     current == "error",
@@ -1556,7 +1560,7 @@ mod tests {
                 let ui = &terminal.published_row_ui[&key];
                 assert_eq!(ui.finished_unseen, current != "error");
                 assert!(ui.last_run.is_some());
-                assert!(terminal.apply_rows(vec![task], None).is_empty());
+                assert!(terminal.apply_rows(vec![task], None, &[]).is_empty());
             }
         }
     }
@@ -2544,6 +2548,7 @@ mod tests {
         let _ = host.terminal.apply_rows(
             vec![busy.clone(), quiet.clone()],
             Some(hook_report("native-quiet", AgentState::Blocked)),
+            &[],
         );
         sync_published_refs(&mut host);
         state.current_mut().workspaces[0].panes = vec![host];
@@ -2587,23 +2592,52 @@ mod tests {
         let mut terminal = crate::pane::TerminalPane::new(100);
         let mut quiet = row("quiet", "idle", false);
         quiet.native_session = Some("native-quiet".into());
-        quiet.work_started_at = Some(1);
+        let now = crate::runtime_metrics::unix_time_millis() / 1000;
+        quiet.work_started_at = Some(now - 60);
         assert!(
             terminal
                 .apply_rows(
                     vec![quiet.clone()],
-                    Some(hook_report("native-quiet", AgentState::Working))
+                    Some(hook_report("native-quiet", AgentState::Working)),
+                    &[],
                 )
                 .is_empty()
         );
+        let quiet_key = quiet.key();
         let finished = terminal.apply_rows(
             vec![quiet.clone()],
             Some(hook_report("native-quiet", AgentState::Done)),
+            std::slice::from_ref(&quiet_key),
         );
-        let quiet_key = crate::session::protocol::RowKey::new("sessions", "quiet");
         assert!(finished.is_empty());
         assert!(terminal.published_row_ui[&quiet_key].last_run.is_some());
         assert!(!terminal.published_row_ui[&quiet_key].finished_unseen);
+
+        let user_run = terminal.published_row_ui[&quiet_key].last_run;
+        quiet.work_started_at = Some(now - 5);
+        terminal.apply_rows(
+            vec![quiet.clone()],
+            Some(hook_report("native-quiet", AgentState::Working)),
+            &[],
+        );
+        terminal.apply_rows(
+            vec![quiet.clone()],
+            Some(hook_report("native-quiet", AgentState::Done)),
+            &[],
+        );
+        assert_eq!(terminal.published_row_ui[&quiet_key].last_run, user_run);
+
+        terminal.apply_rows(
+            vec![quiet.clone()],
+            Some(hook_report("native-quiet", AgentState::Working)),
+            &[],
+        );
+        terminal.apply_rows(
+            vec![quiet],
+            Some(hook_report("native-quiet", AgentState::Error)),
+            &[],
+        );
+        assert_ne!(terminal.published_row_ui[&quiet_key].last_run, user_run);
     }
 
     #[test]

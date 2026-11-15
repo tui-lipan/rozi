@@ -101,13 +101,19 @@ fn header_row(state: &State, label: &str, host: Option<(&HostEntry, HostStatus)>
             .closable(crate::state::SidebarClose::Host {
                 target: host.target.clone(),
             }),
-        HostStatus::Disconnected | HostStatus::Unreachable => {
-            // Only while unreachable: a live attachment outranks the probe in `status_for`, so a
+        HostStatus::Disconnected | HostStatus::Unreachable | HostStatus::Offline => {
+            // Only while it failed: a live attachment outranks the probe in `status_for`, so a
             // host that failed once and is connected now would otherwise keep explaining a failure
             // that no longer describes anything on screen.
-            let reason = (status == HostStatus::Unreachable)
+            let reason = (status != HostStatus::Disconnected)
                 .then(|| host.probe.error())
                 .flatten();
+            // A host that is only down is news, not a fault: muted like the badge beside it.
+            let reason_style = if status == HostStatus::Unreachable {
+                Style::new().fg(theme.status.error)
+            } else {
+                super::super::fg_only(&theme.muted)
+            };
             row = match reason {
                 // The reason has taken the second line, and a row that is already two lines high
                 // must not grow a third — so the affordance hides in the badge's slot, muted,
@@ -115,7 +121,7 @@ fn header_row(state: &State, label: &str, host: Option<(&HostEntry, HostStatus)>
                 Some(error) => row
                     .detail(
                         crate::session::discovery::probe_failure_reason(error),
-                        Style::new().fg(theme.status.error),
+                        reason_style,
                     )
                     .hover_badge_text("connect", super::super::fg_only(&theme.muted)),
                 // Nothing to explain, so the second line is free. Spend it: a standing invitation
@@ -238,7 +244,7 @@ pub(super) fn sessions_rows(state: &State) -> Vec<SidebarRow> {
                     .keyed(format!("new:{id}")),
                 );
             }
-            HostStatus::Disconnected | HostStatus::Unreachable => {
+            HostStatus::Disconnected | HostStatus::Unreachable | HostStatus::Offline => {
                 // Offline: the host row connects it; last-seen sessions remain visible from cache.
                 if let Some(cached) =
                     crate::session::host_sessions_for(&state.remote.session_cache, &host.target)

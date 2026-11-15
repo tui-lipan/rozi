@@ -438,6 +438,29 @@ pub(crate) fn session_picker_creation_target(
     }
 }
 
+/// The host of the Sessions picker's tab when the last attempt to reach it failed. That tab creates
+/// nothing: a new session there would only wait out the SSH timeout and fail. It offers to connect
+/// instead, the way the host's sidebar row does.
+pub(crate) fn session_picker_failed_host(
+    state: &State,
+) -> Option<crate::session::remote::RemoteTarget> {
+    let target = state.session_picker.as_ref()?.tab.remote_target()?;
+    matches!(
+        crate::view::vocabulary::host_connection_status(state, target, false),
+        crate::state::HostStatus::Unreachable | crate::state::HostStatus::Offline
+    )
+    .then(|| target.clone())
+}
+
+/// Try the failed host of the Sessions picker's tab again. The picker stays open, and the tab fills
+/// in once the host answers.
+pub(crate) fn connect_session_picker_host(ctx: &mut Context<AppRoot>) -> Update {
+    match session_picker_failed_host(&ctx.state) {
+        Some(target) => crate::update::sidebar::sessions::connect_host(ctx, target),
+        None => Update::none(),
+    }
+}
+
 /// Go to this client's scratch session on the Sessions picker's active tab: its `Ctrl+T`, and its
 /// `Enter` when both the query and the list are empty.
 ///

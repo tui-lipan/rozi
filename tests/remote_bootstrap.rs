@@ -47,6 +47,11 @@ fn run_case(case: &str) {
     executable(
         &bin.join("ssh"),
         br##"#!/bin/sh
+if [ "$ROZI_BOOTSTRAP_CASE" = unreachable ]; then
+    echo connect >> "$ROZI_TEST_SSH_LOG"
+    echo 'ssh: connect to host fixture port 22: Connection timed out' >&2
+    exit 255
+fi
 while [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done
 shift
 shift
@@ -298,6 +303,11 @@ fn without_an_exact_copy_the_newest_compatible_release_wins() {
 }
 
 #[test]
+fn an_unreachable_host_is_tried_once() {
+    run_case("unreachable");
+}
+
+#[test]
 fn bootstrap_child() {
     let Ok(case) = std::env::var("ROZI_BOOTSTRAP_CASE") else {
         return;
@@ -392,6 +402,16 @@ fn bootstrap_child() {
                 )
                 .unwrap(),
                 b"previous managed runtime"
+            );
+        }
+        "unreachable" => {
+            let error = ensure_remote_binary(&target, &config, false).unwrap_err();
+            assert!(error.contains("Connection timed out"), "{error}");
+            let log =
+                std::fs::read_to_string(std::env::var_os("ROZI_TEST_SSH_LOG").unwrap()).unwrap();
+            assert_eq!(
+                log, "connect\n",
+                "a host that never answered was tried again"
             );
         }
         _ => panic!("unknown fixture"),

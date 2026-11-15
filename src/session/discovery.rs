@@ -1117,6 +1117,16 @@ pub fn probe_failure_reason(error: &str) -> &'static str {
     }
 }
 
+/// Whether a failed probe only found the host down: nothing answered, or nothing accepted SSH.
+/// Another attempt can fix that on its own, unlike a rejected login, a changed host key, or a
+/// missing binary, which need the user.
+pub fn probe_failure_is_offline(error: &str) -> bool {
+    matches!(
+        probe_failure_reason(error),
+        "Host not responding" | "Host unreachable" | "SSH port closed"
+    )
+}
+
 /// Largest remote `sessions list --format json` output accepted.
 const REMOTE_LIST_LIMIT: usize = 8 * 1024 * 1024;
 

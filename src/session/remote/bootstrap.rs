@@ -607,7 +607,7 @@ fn detect_remote_family(
     connect_timeout_secs: u64,
 ) -> Result<RemoteFamily, String> {
     let powershell_probe = encode_powershell_command(WINDOWS_FAMILY_PROBE_SCRIPT);
-    if let Ok(stdout) = run_family_probe(
+    match run_family_probe(
         resolved,
         config,
         connect_timeout_secs,
@@ -618,11 +618,21 @@ fn detect_remote_family(
             "-EncodedCommand",
             &powershell_probe,
         ],
-    ) && stdout
-        .lines()
-        .any(|line| line.trim() == "rozi_family=windows")
-    {
-        return Ok(RemoteFamily::Windows);
+    ) {
+        Ok(stdout)
+            if stdout
+                .lines()
+                .any(|line| line.trim() == "rozi_family=windows") =>
+        {
+            return Ok(RemoteFamily::Windows);
+        }
+        // ssh itself failed, so nothing ran on the host: the POSIX probe would only wait out the
+        // same connection timeout a second time.
+        Err(FamilyProbeError {
+            message,
+            ssh_failed: true,
+        }) => return Err(message),
+        _ => {}
     }
 
     let stdout = run_family_probe(
@@ -630,7 +640,8 @@ fn detect_remote_family(
         config,
         connect_timeout_secs,
         &["sh", "-c", "'echo rozi_family=posix'"],
-    )?;
+    )
+    .map_err(|error| error.message)?;
     if stdout
         .lines()
         .any(|line| line.trim() == "rozi_family=posix")
@@ -643,12 +654,18 @@ fn detect_remote_family(
     ))
 }
 
+struct FamilyProbeError {
+    message: String,
+    /// ssh exited 255, its own failure (connect, auth, host key) rather than the probed command's.
+    ssh_failed: bool,
+}
+
 fn run_family_probe(
     resolved: &ResolvedRemote,
     config: &RemoteConfig,
     connect_timeout_secs: u64,
     argv: &[&str],
-) -> Result<String, String> {
+) -> Result<String, FamilyProbeError> {
     let mut command = ssh_base_command_with_connect_timeout(resolved, config, connect_timeout_secs);
     append_ssh_destination(&mut command, resolved);
     command
@@ -662,18 +679,22 @@ fn run_family_probe(
     } else {
         deadline.command()
     };
-    let output = run_ssh_command(&mut command, None, timeout).map_err(|err| {
-        format!(
+    let output = run_ssh_command(&mut command, None, timeout).map_err(|err| FamilyProbeError {
+        message: format!(
             "failed to probe remote shell family for {}: {err}",
             resolved.host
-        )
+        ),
+        ssh_failed: false,
     })?;
     if output.status != Some(0) {
-        return Err(format!(
-            "remote shell probe of {} failed: {}",
-            resolved.host,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
+        return Err(FamilyProbeError {
+            message: format!(
+                "remote shell probe of {} failed: {}",
+                resolved.host,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+            ssh_failed: output.status == Some(255),
+        });
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }

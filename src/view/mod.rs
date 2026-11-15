@@ -103,6 +103,16 @@ pub(crate) fn strip_background(theme: &Theme, follow_terminal: bool, host: Color
     }
 }
 
+/// Whether the workspace is covered by a panel rather than showing its panes: a relaunch bringing
+/// sessions back, or a first connect to a remote session. The panes a new session is seeded with
+/// have no screen until the host answers, which can take the whole SSH timeout.
+pub(crate) fn workspace_is_covered(state: &crate::state::State) -> bool {
+    crate::ops::relaunch::covering_activity(state).is_some()
+        || (state.current().connection == crate::state::ConnectionState::Connecting
+            && state.current().remote_target.is_some()
+            && state.current().pending_session_attach.is_some())
+}
+
 fn workspace_empty_panel(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     if let Some(activity) = crate::ops::relaunch::covering_activity(&ctx.state) {

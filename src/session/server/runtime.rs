@@ -522,6 +522,13 @@ fn program_report(
         tui_lipan::ProgramStatusState::Done => protocol::AgentState::Done,
         tui_lipan::ProgramStatusState::Error => protocol::AgentState::Error,
     };
+    // Codex reports `working` while it starts, and the `idle` after it read as a run that ended.
+    // A launch that has not shown it is ready is held back here as its screen is.
+    let state = if state == protocol::AgentState::Working && pane.agent.startup.is_some() {
+        protocol::AgentState::Idle
+    } else {
+        state
+    };
     // What it waits for, or why it failed. While it works, the message only says what it is doing
     // right now, which the record itself already shows.
     let reason = matches!(

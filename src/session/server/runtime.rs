@@ -1416,6 +1416,7 @@ impl SessionServer {
                 }
             }
             fold_row_reports(&mut pane.runtime.rows, &pane.agent.row_reports);
+            end_launch_under_a_working_row(pane);
         } else if let Some((state, reason, native_session)) = report {
             let starts_run = state == protocol::AgentState::Working;
             pane.runtime.integration = Some(Box::new(build_integration_report(
@@ -2618,6 +2619,21 @@ fn publisher_id_is_valid(id: &str) -> bool {
     !id.is_empty() && id.len() <= 160 && !id.chars().any(|ch| ch.is_control() || ch == '/')
 }
 
+/// The conversation on screen is in a turn by its publisher's word, so the pane's launch has given
+/// way to a real run - one the pane carries on with if the rows are withdrawn mid-turn. A
+/// background conversation working says nothing about what the pane's own launch is loading.
+fn end_launch_under_a_working_row(pane: &mut ServerPane) {
+    let working = pane.runtime.rows.iter().any(|row| {
+        row.is_agent()
+            && row.active
+            && protocol::aggregate_row_state(std::slice::from_ref(row))
+                == Some(protocol::DetectedAgentState::Working)
+    });
+    if working {
+        pane.agent.start_run();
+    }
+}
+
 /// Install a pane's new row list and everything that follows from it.
 ///
 /// The agent summary's change time moves only when the pane's agents changed: an activity
@@ -2651,6 +2667,7 @@ pub(super) fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::Publi
     if has_agent_rows {
         pane.agent.retained_resume = None;
     }
+    end_launch_under_a_working_row(pane);
     pane.agent.observe(before, &pane.runtime);
     pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
 }
@@ -5579,8 +5596,8 @@ mod tests {
         assert!(rig.pane.agent.launch.is_none());
     }
 
-    /// A conversation a publisher lists is its word about a real turn, whatever the pane's own
-    /// launch is still loading.
+    /// A background conversation a publisher lists is its word about a real turn, whatever the
+    /// pane's own launch is still loading - and says nothing about that loading.
     #[test]
     fn a_published_conversation_finishes_its_runs_during_a_launch() {
         let mut rig = LaunchRig::new();
@@ -5589,7 +5606,7 @@ mod tests {
             title: String::new(),
             status: status.into(),
             reason: None,
-            active: true,
+            active: false,
             publisher: "1/sessions".into(),
             kind: crate::session::protocol::PublisherKind::Agent,
             work_started_at: None,
@@ -5617,6 +5634,44 @@ mod tests {
         rig.screen(LOADING);
         rig.screen(PROMPT);
         assert_eq!(finished(&rig, false), 0);
+    }
+
+    /// The publisher goes away mid-turn of the conversation on screen. The pane carries on with
+    /// that turn, which is a real run, not the launch's loading come back.
+    #[test]
+    fn a_turn_the_pane_carries_on_after_its_rows_go_is_a_run() {
+        let mut rig = LaunchRig::new();
+        let row = |status: &str, active| crate::session::protocol::PublishedRow {
+            id: "conversation".into(),
+            title: String::new(),
+            status: status.into(),
+            reason: None,
+            active,
+            publisher: "1/sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+            live_session: None,
+            reported: false,
+        };
+        rig.screen(LOADING);
+        replace_pane_rows(&mut rig.pane, vec![row("working", false)]);
+        assert!(
+            rig.pane.agent.launch.is_some(),
+            "a background turn says nothing about the launch"
+        );
+        replace_pane_rows(&mut rig.pane, vec![row("idle", true)]);
+        replace_pane_rows(&mut rig.pane, vec![row("working", true)]);
+        replace_pane_rows(&mut rig.pane, Vec::new());
+        rig.screen(TURN);
+        rig.screen(PROMPT);
+        let finished: u64 = records(&rig.pane)
+            .iter()
+            .map(|record| record.completions)
+            .sum();
+        assert_eq!(finished, 1);
     }
 
     /// `codex "fix the tests"` goes from loading straight into the turn it was given.

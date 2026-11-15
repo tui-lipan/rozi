@@ -2620,14 +2620,13 @@ fn publisher_id_is_valid(id: &str) -> bool {
 }
 
 /// The conversation on screen is in a turn by its publisher's word, so the pane's launch has given
-/// way to a real run - one the pane carries on with if the rows are withdrawn mid-turn. A
-/// background conversation working says nothing about what the pane's own launch is loading.
+/// way to a real run - one the pane carries on with if the rows are withdrawn mid-turn. Any other
+/// conversation working, in the background or active for a later publisher, says nothing about
+/// what the pane's own launch is loading.
 fn end_launch_under_a_working_row(pane: &mut ServerPane) {
-    let working = pane.runtime.rows.iter().any(|row| {
-        row.is_agent()
-            && row.active
-            && protocol::aggregate_row_state(std::slice::from_ref(row))
-                == Some(protocol::DetectedAgentState::Working)
+    let working = protocol::active_agent_row(&pane.runtime.rows).is_some_and(|row| {
+        protocol::aggregate_row_state(std::slice::from_ref(row))
+            == Some(protocol::DetectedAgentState::Working)
     });
     if working {
         pane.agent.start_run();
@@ -5641,13 +5640,13 @@ mod tests {
     #[test]
     fn a_turn_the_pane_carries_on_after_its_rows_go_is_a_run() {
         let mut rig = LaunchRig::new();
-        let row = |status: &str, active| crate::session::protocol::PublishedRow {
+        let row = |publisher: &str, status: &str, active| crate::session::protocol::PublishedRow {
             id: "conversation".into(),
             title: String::new(),
             status: status.into(),
             reason: None,
             active,
-            publisher: "1/sessions".into(),
+            publisher: publisher.into(),
             kind: crate::session::protocol::PublisherKind::Agent,
             work_started_at: None,
             cwd: None,
@@ -5657,13 +5656,21 @@ mod tests {
             reported: false,
         };
         rig.screen(LOADING);
-        replace_pane_rows(&mut rig.pane, vec![row("working", false)]);
+        replace_pane_rows(&mut rig.pane, vec![row("1/a", "working", false)]);
         assert!(
             rig.pane.agent.launch.is_some(),
             "a background turn says nothing about the launch"
         );
-        replace_pane_rows(&mut rig.pane, vec![row("idle", true)]);
-        replace_pane_rows(&mut rig.pane, vec![row("working", true)]);
+        // Each publisher marks its own active row; the pane's is the first publisher's.
+        replace_pane_rows(
+            &mut rig.pane,
+            vec![row("1/a", "idle", true), row("2/b", "working", true)],
+        );
+        assert!(
+            rig.pane.agent.launch.is_some(),
+            "nor does a later publisher's active row"
+        );
+        replace_pane_rows(&mut rig.pane, vec![row("1/a", "working", true)]);
         replace_pane_rows(&mut rig.pane, Vec::new());
         rig.screen(TURN);
         rig.screen(PROMPT);

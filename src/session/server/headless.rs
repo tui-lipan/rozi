@@ -3363,6 +3363,34 @@ mod tests {
         );
     }
 
+    /// Codex reports `working` over OSC 7501 while it starts, then `idle`. Read literally, every
+    /// launch was a run that finished a second later.
+    #[test]
+    fn an_agents_own_working_report_at_launch_is_not_a_run() {
+        use protocol::AgentState::{Idle, Working};
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        server.panes.get_mut(&7).unwrap().agent.startup =
+            Some(super::super::AgentStartup::new(std::time::Instant::now()));
+        let print = |server: &mut SessionServer, bytes: &[u8]| {
+            let screen = server.panes.get_mut(&7).unwrap().screen_mut();
+            screen.set_program_status_enabled(true);
+            screen.process_bytes(bytes);
+            server.sync_pane_runtime(None, 7, 1);
+            protocol::agent_signature(&server.panes[&7].runtime)[0].2
+        };
+
+        assert_eq!(
+            print(&mut server, b"\x1b]7501;state=working:app=claude-code\x07"),
+            Idle
+        );
+        server.panes.get_mut(&7).unwrap().agent.startup = None;
+        assert_eq!(
+            print(&mut server, b"\x1b]7501;state=working:app=claude-code\x07"),
+            Working
+        );
+    }
+
     /// A terminal keeps an agent's `error` after it exits. The next agent launched in the pane has
     /// not said anything yet, and is a new incarnation, not the one that failed.
     #[test]

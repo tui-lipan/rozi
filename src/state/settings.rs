@@ -189,6 +189,7 @@ settings_actions! {
     ToggleKeepAwakeWhileAgentsWork,
     ToggleSessionResurrect,
     CycleResurrectForeground,
+    CycleResurrectAgents,
     CycleSessionOnAttach,
 }
 

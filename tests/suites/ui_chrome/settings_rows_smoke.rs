@@ -983,7 +983,7 @@ fn settings_up_and_down_wrap_around_the_list() {
         key(&mut backend, KeyCode::Up);
         assert_eq!(
             backend.state().settings_selected,
-            Some(SettingsAction::CycleResurrectForeground),
+            Some(SettingsAction::CycleResurrectAgents),
             "Up from the first row wraps to the last"
         );
         key(&mut backend, KeyCode::Down);
@@ -1006,7 +1006,7 @@ fn settings_up_and_down_wrap_around_the_list() {
         key(&mut backend, KeyCode::End);
         assert_eq!(
             backend.state().settings_selected,
-            Some(SettingsAction::CycleResurrectForeground)
+            Some(SettingsAction::CycleResurrectAgents)
         );
     });
 }
@@ -1271,7 +1271,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
             (SettingsTab::Panes, 13, "Scratchpad"),
             (SettingsTab::Bars, 15, "Position"),
             (SettingsTab::Alerts, 22, "Bell urgency"),
-            (SettingsTab::Sessions, 7, "On shared attach"),
+            (SettingsTab::Sessions, 8, "On shared attach"),
         ] {
             backend
                 .dispatch(rozi::Msg::SettingsTabSelected(tab))

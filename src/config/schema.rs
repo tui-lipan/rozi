@@ -427,27 +427,29 @@ impl SessionStartup {
     }
 }
 
-/// What resurrection does with the command a pane was observed running, as opposed to the command
-/// the pane was explicitly launched with.
+/// What resurrection does with something a pane was doing that its launch intent does not cover:
+/// a command observed running at its prompt, or an agent conversation it reported.
 ///
 /// An explicit launch intent (`rozi split -- btop`, a profile command) is replayable by
 /// construction: the user told Rozi to run it. A command typed at a prompt is only *observed*, and
 /// Rozi cannot tell `btop` from `terraform apply` by looking at argv. This is the knob that decides
-/// how much benefit of the doubt an observation gets, since no heuristic can earn it.
+/// how much benefit of the doubt an observation gets, since no heuristic can earn it. Reopening an
+/// agent conversation is a different risk - the agent acts on nothing until prompted - so it has
+/// its own setting with its own default.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ForegroundRestore {
-    /// Type the captured command at the restored pane's prompt and run it.
+pub enum RestoreMode {
+    /// Run it again: type a command back and submit it, or exec an agent's resume command.
     Auto,
-    /// Type the captured command at the restored pane's prompt and leave it there unsubmitted.
+    /// Type the line at the restored pane's prompt and leave it there unsubmitted.
     /// `Enter` runs it, anything else edits or discards it.
     #[default]
     Hold,
-    /// Restore the shell and its scrollback; forget what was running in it. Under this setting the
-    /// command is never written to the snapshot in the first place.
+    /// Restore the shell and its scrollback; forget what was running in it. Under this setting
+    /// nothing about it is written to the snapshot in the first place.
     Never,
 }
 
-impl ForegroundRestore {
+impl RestoreMode {
     /// Cycle order for the Settings row, ascending in how much it does without being asked.
     pub fn all() -> &'static [Self] {
         &[Self::Never, Self::Hold, Self::Auto]
@@ -477,6 +479,16 @@ impl ForegroundRestore {
     pub fn label(self) -> &'static str {
         match self {
             Self::Auto => "Run again",
+            Self::Hold => "Wait at prompt",
+            Self::Never => "Forget",
+        }
+    }
+
+    /// [`Self::label`] for the agents row, where `Auto` reopens a conversation rather than
+    /// re-running a command.
+    pub fn agent_label(self) -> &'static str {
+        match self {
+            Self::Auto => "Reopen",
             Self::Hold => "Wait at prompt",
             Self::Never => "Forget",
         }
@@ -546,10 +558,11 @@ pub struct SessionConfig {
     /// Persist and restart named sessions after their server disappears.
     pub resurrect: bool,
     /// What resurrection does with a command a pane was observed running at its prompt, rather
-    /// than launched with. See [`ForegroundRestore`].
-    pub resurrect_foreground: ForegroundRestore,
-    /// Persist explicit native agent session references in resurrection snapshots.
-    pub resurrect_agents: bool,
+    /// than launched with. See [`RestoreMode`].
+    pub resurrect_foreground: RestoreMode,
+    /// What resurrection does with an agent conversation a pane reported. `Never` also keeps the
+    /// native session reference out of the snapshot.
+    pub resurrect_agents: RestoreMode,
     /// Let a writable follower take layout control immediately instead of waiting for the current
     /// controller to grant its request.
     ///
@@ -573,8 +586,8 @@ impl Default for SessionConfig {
             startup: SessionStartup::default(),
             picker_open_on: SessionPickerOpenOn::default(),
             resurrect: true,
-            resurrect_foreground: ForegroundRestore::default(),
-            resurrect_agents: true,
+            resurrect_foreground: RestoreMode::Hold,
+            resurrect_agents: RestoreMode::Auto,
             allow_takeover: true,
             on_attach: SessionOnAttach::default(),
         }
@@ -3001,27 +3014,24 @@ mod tests {
 
     #[test]
     fn foreground_restore_cycles_both_ways_and_round_trips_its_id() {
-        let mut mode = ForegroundRestore::Never;
-        for _ in 0..ForegroundRestore::all().len() {
-            assert_eq!(ForegroundRestore::parse(mode.as_str()), Some(mode));
+        let mut mode = RestoreMode::Never;
+        for _ in 0..RestoreMode::all().len() {
+            assert_eq!(RestoreMode::parse(mode.as_str()), Some(mode));
             assert_eq!(mode.step_in(false).step_in(true), mode);
             mode = mode.step_in(false);
         }
         assert_eq!(
             mode,
-            ForegroundRestore::Never,
+            RestoreMode::Never,
             "forward stepping must close the ring"
         );
         assert_eq!(
-            ForegroundRestore::Never.step_in(true),
-            ForegroundRestore::Auto,
+            RestoreMode::Never.step_in(true),
+            RestoreMode::Auto,
             "reverse stepping must wrap"
         );
-        assert_eq!(
-            ForegroundRestore::parse("AUTO"),
-            Some(ForegroundRestore::Auto)
-        );
-        assert_eq!(ForegroundRestore::parse(" rerun "), None);
+        assert_eq!(RestoreMode::parse("AUTO"), Some(RestoreMode::Auto));
+        assert_eq!(RestoreMode::parse(" rerun "), None);
     }
 
     /// Without a default profile there is nothing for `profile` mode to open, so the Settings row

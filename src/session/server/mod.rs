@@ -599,6 +599,11 @@ struct TrackedAgentReference {
     completions: u64,
     /// Whether it has been working since its last run ended. Being blocked leaves this set.
     run_open: bool,
+    /// Of `completions`, the runs another agent's request started; see
+    /// [`protocol::AgentRecord::answered`].
+    answered: u64,
+    /// A request was typed into this agent, so the run it starts next answers it.
+    request_run: bool,
     /// The agent behind this reference was the pane's screen-detected agent, so its incarnation
     /// follows it while it runs; see `AgentScratch::carry_detected`.
     from_detected: bool,

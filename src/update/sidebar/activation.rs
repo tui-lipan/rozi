@@ -341,7 +341,7 @@ pub(crate) fn activate_published_row(
     if let Some(agent) = agent {
         ctx.state
             .agent_attention
-            .acknowledge(&agent.reference, agent.completions);
+            .acknowledge(&agent.reference, agent.noticed_runs());
     }
     crate::ops::published_rows::request_activation(&mut ctx.state, pane_id, &row);
     update

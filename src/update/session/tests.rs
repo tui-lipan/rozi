@@ -808,6 +808,7 @@ fn finished_record(
     crate::session::protocol::AgentRecord {
         reference: crate::session::protocol::AgentRef::for_test(pane_id, generation, None),
         completions,
+        answered: 0,
     }
 }
 
@@ -1075,6 +1076,7 @@ fn summary_edges_report_transitions_rather_than_standing_states() {
         task: None,
         screen_title: None,
         completions,
+        answered: 0,
         changed_at: 0,
     };
     let edges = |previous: Option<(AgentState, u64)>, current: (AgentState, u64)| {

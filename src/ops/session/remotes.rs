@@ -1018,6 +1018,7 @@ mod tests {
                     task: None,
                     screen_title: None,
                     completions: 0,
+                    answered: 0,
                     changed_at: 0,
                 }],
             );
@@ -1719,6 +1720,7 @@ mod tests {
                     task: None,
                     screen_title: None,
                     completions: 1,
+                    answered: 0,
                     changed_at: 0,
                 };
                 {
@@ -1771,6 +1773,7 @@ mod tests {
                         pane.agents.push(AgentRecord {
                             reference: reference.clone(),
                             completions: 1,
+                            answered: 0,
                         });
                         state
                             .agent_attention

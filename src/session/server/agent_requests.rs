@@ -982,6 +982,9 @@ impl SessionServer {
             .slots
             .remove(target)
             .expect("listed slot");
+        if let Some(pane) = self.panes.get_mut(&target.pane.pane_id) {
+            pane.agent.end_request_run(target);
+        }
         if !self.request_active(&slot.request) {
             return;
         }
@@ -1148,6 +1151,9 @@ impl SessionServer {
         if let Err(response) = self.session_write_input(to.pane.pane_id, bytes) {
             self.agent_requests.slots.remove(&to);
             return Err(error_text(response));
+        }
+        if let Some(pane) = self.panes.get_mut(&to.pane.pane_id) {
+            pane.agent.begin_request_run(&to);
         }
         let info = self.agent_requests.info_mut(id).expect("queued request");
         settle(info, AgentRequestState::Active, None);

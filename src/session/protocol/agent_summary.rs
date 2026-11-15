@@ -47,6 +47,10 @@ pub struct AgentSummary {
     /// Runs this agent has finished. See [`super::AgentRecord::completions`].
     #[serde(default, skip_serializing_if = "is_zero")]
     pub completions: u64,
+    /// Of `completions`, the runs that answered another agent's request. See
+    /// [`super::AgentRecord::answered`].
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub answered: u64,
     /// Unix milliseconds when this pane's semantic agent state last changed.
     pub changed_at: u64,
 }
@@ -62,6 +66,11 @@ impl AgentSummary {
 
     pub fn row(&self) -> Option<&super::RowKey> {
         self.reference.slot.as_ref()
+    }
+
+    /// The finished runs worth the user's attention. See [`super::AgentRecord::noticed_runs`].
+    pub fn noticed_runs(&self) -> u64 {
+        self.completions.saturating_sub(self.answered)
     }
 
     /// Whether two summaries describe the same agent, so a client can tell a state *change* from a
@@ -101,6 +110,7 @@ mod tests {
             task: None,
             screen_title: None,
             completions: 0,
+            answered: 0,
             changed_at: 0,
         };
         use super::super::AgentState::{Idle, Working};

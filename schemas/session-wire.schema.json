@@ -115,6 +115,12 @@
     "AgentRecord": {
       "description": "What the session server tracks about one agent reference beyond the reference itself.\n\n`completions` counts the runs this incarnation has finished: each time it was working and then\nidle or done, with any wait for approval in between. The server counts every transition it\nmakes, so a client comparing two values learns that a run ended even when it never saw the agent\nworking - a monitor polling between the two, or a client that was detached at the time. A new\nincarnation starts again from zero, which is why the count is only meaningful beside the\nreference it belongs to.",
       "properties": {
+        "answered": {
+          "description": "Of `completions`, the runs that answered another agent's request: a run a request typed\ninto the agent started. Its answer went to the agent that asked, so a client does not ask\nthe user to look at it; see [`Self::noticed_runs`].",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "completions": {
           "format": "uint64",
           "minimum": 0,
@@ -343,6 +349,12 @@
         "agent": {
           "description": "Agent id: the detected or reported definition (`claude`, `codex`), or for an agent publisher\nin a pane with neither, the row's own id.",
           "type": "string"
+        },
+        "answered": {
+          "description": "Of `completions`, the runs that answered another agent's request. See\n[`super::AgentRecord::answered`].",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "changed_at": {
           "description": "Unix milliseconds when this pane's semantic agent state last changed.",

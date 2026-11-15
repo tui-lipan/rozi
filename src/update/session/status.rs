@@ -46,7 +46,7 @@ pub(crate) fn summary_edges(
     AgentEdges {
         became_blocked: current.state == AgentState::Blocked
             && previous.is_none_or(|previous| previous.state != AgentState::Blocked),
-        finished: previous.is_some_and(|previous| current.completions > previous.completions),
+        finished: previous.is_some_and(|previous| current.noticed_runs() > previous.noticed_runs()),
         failed: current.state == AgentState::Error
             && previous.is_none_or(|previous| previous.state != AgentState::Error),
     }
@@ -111,7 +111,8 @@ pub(crate) fn update_agent_status_edge(
 /// Which of a pane's agents finished a run between two sets of its records: the pane's own agent
 /// (`None`) and each published row by key, as `current` lists it. Read from the server's
 /// completion counts, so a finish is a finish whether or not this client saw the agent working
-/// first, and whether or not the agent moved to another row in the same update.
+/// first, and whether or not the agent moved to another row in the same update. A run that
+/// answered another agent's request is not one: its answer went to that agent.
 pub(crate) fn finished_records(
     previous: &[crate::session::protocol::AgentRecord],
     current: &[crate::session::protocol::AgentRecord],
@@ -121,7 +122,7 @@ pub(crate) fn finished_records(
         .filter(|record| {
             previous.iter().any(|earlier| {
                 earlier.reference.instance() == record.reference.instance()
-                    && record.completions > earlier.completions
+                    && record.noticed_runs() > earlier.noticed_runs()
             })
         })
         .map(|record| record.reference.slot.clone())
@@ -648,6 +649,20 @@ mod tests {
     use super::*;
     use crate::session::protocol::{AgentIdentity, DetectedAgent, DetectedAgentState};
 
+    /// A run that answered another agent's request is not a finish to show the user: no Done
+    /// mark, sound, or notification. The agent's own run after it is.
+    #[test]
+    fn a_run_that_answered_a_request_is_not_a_finish() {
+        use crate::session::protocol::{AgentRecord, AgentRef};
+        let record = |completions, answered| AgentRecord {
+            reference: AgentRef::for_test(3, 1, None),
+            completions,
+            answered,
+        };
+        assert!(finished_records(&[record(3, 0)], &[record(4, 1)]).is_empty());
+        assert_eq!(finished_records(&[record(4, 1)], &[record(5, 1)]), [None]);
+    }
+
     /// An agent can finish a run in the same update that lists it under another row. That is one
     /// finish, of the row it is listed under now; an agent that only moved finished nothing.
     #[test]
@@ -656,6 +671,7 @@ mod tests {
         let record = |id: &str, completions| AgentRecord {
             reference: AgentRef::for_test(3, 1, Some(RowKey::new("1/s", id))),
             completions,
+            answered: 0,
         };
         let moved = Some(RowKey::new("1/s", "b"));
         assert_eq!(

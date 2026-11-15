@@ -302,6 +302,7 @@ mod tests {
         crate::session::protocol::AgentRecord {
             reference: crate::session::protocol::AgentRef::for_test(1, 7, None),
             completions,
+            answered: 0,
         }
     }
 

@@ -855,8 +855,20 @@ mod tests {
             let held = checkout_line(&mut backend);
             assert!(held.contains("new pane") && held.contains('✕'), "{held}");
 
+            // Crossing rows leaves one before entering the next, and Ctrl is reported only when it
+            // changes, so the moment between them must not forget it.
+            let primary = |hovered| Msg::SidebarRowHover {
+                panel: 0,
+                index: 1,
+                hovered,
+            };
+            for message in [hover(false), primary(true), primary(false), hover(true)] {
+                backend.dispatch(message).unwrap();
+            }
+            let crossed = checkout_line(&mut backend);
+            assert!(crossed.contains("new pane"), "{crossed}");
+
             backend.dispatch(hover(false)).unwrap();
-            assert!(!backend.state().sidebar.ctrl_held);
             assert!(!backend.modifier_key_reporting_enabled());
         });
     }

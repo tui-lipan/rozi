@@ -474,8 +474,10 @@ pub struct SidebarState {
     /// by moving the cursor, so the confirmation never outlives the moment. An armed row keeps its
     /// ✕ visible even unhovered — an invisible armed state is worse than a lingering glyph.
     pub pending_row_close: Option<SidebarClose>,
-    /// Ctrl is held while a Worktrees row is aimed at, so its rows name what Ctrl+click opens.
-    /// Only a terminal that reports lone modifier keys can say so.
+    /// Ctrl is held, as last reported while modifier keys are reported. While a Worktrees row is
+    /// aimed at, its rows name what Ctrl+click opens instead. Kept apart from aiming because the
+    /// pointer crossing rows leaves one before entering the next, and the framework reports Ctrl
+    /// only when it changes.
     pub ctrl_held: bool,
     /// The Worktrees tab: the focused pane's repository and its checkouts.
     pub worktrees: SidebarWorktrees,

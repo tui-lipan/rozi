@@ -366,6 +366,12 @@ fn join_budget_for(config: &RemoteConfig, interactive: bool) -> Duration {
 
 /// How much longer the preamble wait lasts than ssh's `ConnectTimeout`, so a host that never
 /// answers is reported by ssh, in ssh's words, rather than cut off by the preamble deadline.
+///
+/// Only ssh's report marks a host offline after a failed attach. With `connection_timeout_secs = 0`
+/// ssh has no `ConnectTimeout` and never reports one: the preamble deadline ends the attempt, and
+/// it fails as a plain attach failure, because a host that is silent and one that is slow look the
+/// same from here. The same holds for the last moments of a reconnect window, where ssh's
+/// one-second floor can outlast the preamble wait.
 const SSH_REPORT_GRACE: Duration = Duration::from_secs(2);
 
 /// Default wait for the proxy's first bytes when `[remote] connection_timeout_secs` is `0`.

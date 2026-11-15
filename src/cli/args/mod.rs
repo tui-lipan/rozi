@@ -298,6 +298,8 @@ pub(crate) enum ParsedCli {
     },
     /// Hidden remote-side worktree runner: one JSON call in, one JSON reply out.
     RemoteWorktrees,
+    /// Hidden remote-side file reader: one JSON request in, one JSON reply out.
+    RemoteReadFile,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -663,6 +665,10 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             "--remote-worktrees" => {
                 reject_trailing_control_args(&mut iter, "--remote-worktrees")?;
                 return Ok(ParsedCli::RemoteWorktrees);
+            }
+            "--remote-read-file" => {
+                reject_trailing_control_args(&mut iter, "--remote-read-file")?;
+                return Ok(ParsedCli::RemoteReadFile);
             }
             "--remote-serve-existing" => {
                 let name =

@@ -360,6 +360,7 @@ pub fn run() -> Result<()> {
             return cli::run_remote_control_cli(&name);
         }
         cli::ParsedCli::RemoteWorktrees => return cli::run_remote_worktrees_cli(),
+        cli::ParsedCli::RemoteReadFile => return cli::run_remote_read_file_cli(),
         cli::ParsedCli::Worktrees(command) => {
             apply_config_path(command.config_path.clone());
             match cli::run_worktrees_cli(command) {

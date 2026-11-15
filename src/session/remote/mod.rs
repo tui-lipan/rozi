@@ -9,6 +9,7 @@ pub(crate) mod binary;
 mod bootstrap;
 mod connect;
 pub mod control;
+pub mod files;
 pub mod forward;
 pub(crate) mod json_transport;
 pub(crate) mod monitor;

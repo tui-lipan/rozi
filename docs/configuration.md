@@ -974,7 +974,8 @@ See [Agent definitions](agents.md).
 Choose what happens when you `Ctrl`-click a link or select a hint with an uppercase final
 label character. The first handler matching the URI scheme wins. Unmatched URLs keep the
 system opener, which supports `http`, `https`, and `mailto`; other schemes require a handler.
-A `file` handler also opens file paths shown in plain text, by `Ctrl`-click or hint. A path is a
+A `file` handler also opens file paths shown in plain text, by `Ctrl`-click or hint; files no
+handler matches open in the [default application](terminal.md#open-links). A path is a
 link only when it exists; on a [remote session](remote.md) rozi cannot check, so every path that
 names a directory, such as `src/main.rs`, is one.
 A path in a pane whose shell runs on another host, such as over `ssh`, is not a link. Installed
@@ -1038,8 +1039,8 @@ Custom hint actions can also reference commands, for example
 
 `run` and `popup` execute on the session host in the source pane's working directory.
 `exec` executes on the client; it inherits the source directory only for a local session and
-receives `ROZI_PANE` identifying the source pane. A plain path opens only through a handler that
-runs on the machine the file is on, since rozi does not fetch or translate remote paths: on a
+receives `ROZI_PANE` identifying the source pane. A handler opens a plain path only when it
+runs on the machine the file is on: on a
 remote session that is `run`, `popup`, or a command placed on the session host, and in the
 [scratchpad](layouts-and-panes.md#popups-and-scratch-panes), `run` or `exec`.
 A filename ending in `:123` is read as a position; use a file URI to keep that suffix as part of the

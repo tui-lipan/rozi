@@ -10,6 +10,9 @@ use tui_lipan::utils::hints::PathPosition;
 use crate::AppRoot;
 use crate::config::{LinkAction, LinkHandler, UserCommandAction};
 use crate::pane::id::PaneId;
+use crate::platform::paths::absolute_shown_path as local_path;
+use crate::session::remote::RemoteTarget;
+use crate::session::remote::files::Request as FileRequest;
 use crate::state::State;
 
 /// The first handler that opens a `scheme` link, and for a `file` link, the file at `path`.
@@ -26,6 +29,14 @@ pub(crate) fn handler<'a>(
 
 pub(crate) fn open(ctx: &mut Context<AppRoot>, source: PaneId, text: &str) -> Update {
     if let Ok(url) = url::Url::parse(text) {
+        if url.scheme() == "file"
+            && let Some(opener) = PathLinks::for_pane(&ctx.state, source).remote_url(&url)
+        {
+            return match opener {
+                Ok(opener) => open_with(ctx, source, text, opener, None, None),
+                Err(error) => failed(ctx, error),
+            };
+        }
         let file = if url.scheme() == "file" {
             match url
                 .to_file_path()
@@ -48,7 +59,11 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>, source: PaneId, text: &str) -> Up
         .cloned()
         {
             Some(action) => crate::state::OpenDestination::Handler(action),
-            None => crate::state::OpenDestination::System,
+            None => match &file {
+                // A file no handler takes opens as a path does.
+                Some(path) => return open_file(ctx, source, text, path, None, None),
+                None => crate::state::OpenDestination::System,
+            },
         };
         if let Some(request) =
             super::ports::forward_request_for_link(&ctx.state, source, &url, &destination)
@@ -109,17 +124,123 @@ pub(crate) fn activate(
 
 pub(crate) fn open_path(ctx: &mut Context<AppRoot>, source: PaneId, text: &str) -> Update {
     let position = PathPosition::parse(text);
-    let opener = match PathLinks::for_pane(&ctx.state, source).open(position.path) {
-        Ok(opener) => opener,
-        Err(error) => return failed(ctx, error),
+    open_file(
+        ctx,
+        source,
+        text,
+        position.path,
+        position.line,
+        position.column,
+    )
+}
+
+/// Open the file at `path`, which the pane `source` showed as `text`.
+fn open_file(
+    ctx: &mut Context<AppRoot>,
+    source: PaneId,
+    text: &str,
+    path: &str,
+    line: Option<u32>,
+    column: Option<u32>,
+) -> Update {
+    match PathLinks::for_pane(&ctx.state, source).open(path) {
+        Ok(opener) => open_with(ctx, source, text, opener, line, column),
+        Err(error) => failed(ctx, error),
+    }
+}
+
+fn open_with(
+    ctx: &mut Context<AppRoot>,
+    source: PaneId,
+    text: &str,
+    opener: PathOpener,
+    line: Option<u32>,
+    column: Option<u32>,
+) -> Update {
+    match opener {
+        PathOpener::Handler { action, file } => {
+            let target = LinkTarget {
+                file: &file,
+                line,
+                column,
+                ..LinkTarget::default()
+            };
+            execute(ctx, source, &action, text, target)
+        }
+        PathOpener::System(path) => open_with_system(ctx, &path),
+        PathOpener::Fetch { target, request } => fetch_and_open(ctx, target, request),
+    }
+}
+
+fn open_with_system(ctx: &mut Context<AppRoot>, path: &Path) -> Update {
+    match crate::platform::open_file(path) {
+        Ok(()) => Update::none(),
+        Err(error) => failed(ctx, error.to_string()),
+    }
+}
+
+/// Copy a file from the session host, off the UI thread, and open the copy here.
+fn fetch_and_open(
+    ctx: &mut Context<AppRoot>,
+    target: RemoteTarget,
+    request: FileRequest,
+) -> Update {
+    let Some(link) = ctx.state.command_link.clone() else {
+        return failed(ctx, "rozi is still starting");
     };
-    let target = LinkTarget {
-        file: &opener.file,
-        line: position.line,
-        column: position.column,
-        ..LinkTarget::default()
+    let config = ctx.state.config.remote.clone();
+    let message = format!("Opening {} from {}", request.path, target.display_label());
+    let fetch = move || {
+        let result =
+            crate::session::remote::files::fetch(&target, &request, &config).and_then(|file| {
+                if crate::platform::runs_when_opened(Path::new(&file.name)) {
+                    return Err(is_a_program(&request.path));
+                }
+                let env = crate::platform::paths::PlatformEnv::from_process();
+                crate::platform::paths::write_remote_file_copy(&env, &file.name, &file.bytes)
+                    .map_err(|error| format!("could not keep a copy of {}: {error}", request.path))
+            });
+        link.send(crate::Msg::RemoteFileFetched(result));
     };
-    execute(ctx, source, &opener.action, text, target)
+    if !crate::jobs::try_spawn(fetch) {
+        return failed(ctx, "Too many background jobs are running");
+    }
+    crate::pane::pty_events::notify_info(
+        ctx,
+        crate::pane::pty_events::ToastBody::verbatim(message),
+    );
+    Update::full()
+}
+
+pub(crate) fn remote_file_fetched(
+    ctx: &mut Context<AppRoot>,
+    result: std::result::Result<PathBuf, String>,
+) -> Update {
+    match result {
+        Ok(path) => open_with_system(ctx, &path),
+        Err(error) => failed(ctx, error),
+    }
+}
+
+/// `text` with its `%XX` escapes read, as the last segment of a URL's path spells a file name.
+fn percent_decoded(text: &str) -> String {
+    let mut bytes = Vec::with_capacity(text.len());
+    let mut rest = text.as_bytes();
+    while let [first, tail @ ..] = rest {
+        let escaped = match (first, tail) {
+            (b'%', [high, low, ..]) => std::str::from_utf8(&[*high, *low])
+                .ok()
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok()),
+            _ => None,
+        };
+        bytes.push(escaped.unwrap_or(*first));
+        rest = &tail[if escaped.is_some() { 2 } else { 0 }..];
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn is_a_program(path: &str) -> String {
+    format!("{path} is a program, which only a link handler runs")
 }
 
 /// Which machine a process runs on, or a pane's files are on.
@@ -233,25 +354,49 @@ impl PathPlace {
     }
 }
 
-/// The `file` handlers that can open a pane's paths, with the machine each one runs on.
+/// What opens a pane's paths: the `file` handlers, with the machine each one runs on, and for a
+/// path none of them takes, the default application on this machine.
 #[derive(Clone, Debug)]
 pub(crate) struct PathLinks {
     place: PathPlace,
     handlers: Vec<(LinkHandler, Machine)>,
     session_host: Option<String>,
+    /// Where a session host's files are fetched from, and the pane's directory there.
+    fetch: Option<(RemoteTarget, Option<String>)>,
 }
 
-/// A path ready for its handler.
-pub(crate) struct PathOpener {
-    pub action: LinkAction,
-    /// The `ROZI_FILE` the handler receives.
-    pub file: String,
+/// A path ready to open.
+#[derive(Debug, PartialEq)]
+pub(crate) enum PathOpener {
+    Handler {
+        action: LinkAction,
+        /// The `ROZI_FILE` the handler receives.
+        file: String,
+    },
+    /// No handler takes it: the default application opens it.
+    System(PathBuf),
+    /// No handler takes it and it is on the session host: the default application opens a copy.
+    Fetch {
+        target: RemoteTarget,
+        request: FileRequest,
+    },
 }
 
 impl PathLinks {
     pub(crate) fn for_pane(state: &State, source: PaneId) -> Self {
+        let place = PathPlace::for_pane(state, source);
+        let fetch = match place {
+            PathPlace::SessionHost => state.current().remote_target.clone().map(|target| {
+                let cwd = crate::pane::lifecycle::find_pane(state, source)
+                    .and_then(|pane| pane.server_cwd_ref())
+                    .map(str::to_string);
+                (target, cwd)
+            }),
+            _ => None,
+        };
         Self {
-            place: PathPlace::for_pane(state, source),
+            place,
+            fetch,
             handlers: state
                 .config
                 .link_handlers
@@ -263,12 +408,11 @@ impl PathLinks {
         }
     }
 
-    /// The handler for `path`, without its position suffix, and the `ROZI_FILE` it receives, or
-    /// why it cannot be opened.
+    /// What opens `path`, without its position suffix, or why it cannot be opened.
     pub(crate) fn open(&self, path: &str) -> std::result::Result<PathOpener, String> {
-        let (action, runs_on) = self
-            .handler(path)
-            .ok_or_else(|| format!("No link handler opens {path}"))?;
+        let Some((action, runs_on)) = self.handler(path) else {
+            return self.open_by_default(path);
+        };
         let file = match &self.place {
             PathPlace::Elsewhere(host) => return Err(format!("{path} is on {host}")),
             PathPlace::SessionHost => path.to_string(),
@@ -289,21 +433,102 @@ impl PathLinks {
                 "{path} is on {files}, but its link handler runs on {handler}"
             ));
         }
-        Ok(PathOpener {
+        Ok(PathOpener::Handler {
             action: action.clone(),
             file,
         })
     }
 
-    /// Whether `text`, a path as a pane shows it, is a link: a handler on the machine the path is
-    /// on opens files of its name, and the file exists, or cannot be checked from here.
+    /// What opens a `file:` URL from a pane whose files are on the session host, when no handler
+    /// takes a file of its name; `None` for any other pane, and for a URL a handler takes.
+    ///
+    /// The URL goes to the host as it is. Its path is spelled by the host's rules, which this
+    /// machine cannot apply when the two run different systems.
+    pub(crate) fn remote_url(
+        &self,
+        url: &url::Url,
+    ) -> Option<std::result::Result<PathOpener, String>> {
+        let (target, _) = self.fetch.as_ref()?;
+        let name = url
+            .path_segments()
+            .and_then(|mut segments| segments.next_back())?;
+        let name = percent_decoded(name);
+        if self.handler(&name).is_some() {
+            return None;
+        }
+        if crate::platform::runs_when_opened(Path::new(&name)) {
+            return Some(Err(is_a_program(&name)));
+        }
+        Some(Ok(PathOpener::Fetch {
+            target: target.clone(),
+            request: FileRequest {
+                path: url.to_string(),
+                cwd: None,
+                url: true,
+            },
+        }))
+    }
+
+    /// What opens a `path` no handler takes: the default application of the machine showing it,
+    /// which never gets a program to run.
+    fn open_by_default(&self, path: &str) -> std::result::Result<PathOpener, String> {
+        match &self.place {
+            PathPlace::Elsewhere(host) => Err(format!("{path} is on {host}")),
+            PathPlace::SessionHost => {
+                let (target, cwd) = self
+                    .fetch
+                    .as_ref()
+                    .ok_or_else(|| format!("No link handler opens {path}"))?;
+                if crate::platform::runs_when_opened(Path::new(path)) {
+                    return Err(is_a_program(path));
+                }
+                Ok(PathOpener::Fetch {
+                    target: target.clone(),
+                    request: FileRequest {
+                        path: path.to_string(),
+                        cwd: cwd.clone(),
+                        url: false,
+                    },
+                })
+            }
+            PathPlace::Local { cwd, home } => {
+                let resolved = local_path(path, cwd.as_deref(), home.as_deref())
+                    .filter(|resolved| !crate::platform::reaches_network(resolved))
+                    .filter(|resolved| resolved.exists())
+                    .ok_or_else(|| format!("No such file or directory: {path}"))?;
+                if crate::platform::runs_when_opened(&resolved) {
+                    return Err(is_a_program(path));
+                }
+                Ok(PathOpener::System(resolved))
+            }
+        }
+    }
+
+    /// Whether `text`, a path as a pane shows it, is a link: the file exists, or cannot be
+    /// checked from here, and either a handler on the machine the path is on opens files of its
+    /// name, or no handler does and the default application can.
     ///
     /// The terminal asks on every pointer movement over a path, so the last answer is reused
     /// for a moment instead of touching the file system again.
     pub(crate) fn accepts(&self, text: &str, cache: &PathLinkCache) -> bool {
         let path = PathPosition::parse(text).path;
         let Some((_, runs_on)) = self.handler(path) else {
-            return false;
+            return match &self.place {
+                PathPlace::Elsewhere(_) => false,
+                PathPlace::SessionHost => {
+                    self.fetch.is_some()
+                        && path.contains(['/', '\\'])
+                        && !crate::platform::runs_when_opened(Path::new(path))
+                }
+                PathPlace::Local { cwd, home } => local_path(path, cwd.as_deref(), home.as_deref())
+                    .is_some_and(|resolved| {
+                        cache.holds(resolved, |path| {
+                            !crate::platform::reaches_network(path)
+                                && path.exists()
+                                && !crate::platform::runs_when_opened(path)
+                        })
+                    }),
+            };
         };
         if self.place.machine() != Some(runs_on) {
             return false;
@@ -313,13 +538,8 @@ impl PathLinks {
             PathPlace::SessionHost => path.contains(['/', '\\']),
             PathPlace::Elsewhere(_) => false,
             PathPlace::Local { cwd, home } => local_path(path, cwd.as_deref(), home.as_deref())
-                .is_some_and(|resolved| cache.exists(resolved)),
+                .is_some_and(|resolved| cache.holds(resolved, |path| path.exists())),
         }
-    }
-
-    /// Whether any handler opens files at all, which makes the pane look for paths.
-    pub(crate) fn any(&self) -> bool {
-        !self.handlers.is_empty()
     }
 
     fn handler(&self, path: &str) -> Option<(&LinkAction, Machine)> {
@@ -328,29 +548,6 @@ impl PathLinks {
             .find(|(handler, _)| handler.opens("file", Some(path)))
             .map(|(handler, machine)| (&handler.action, *machine))
     }
-}
-
-/// `path` as an absolute path on this machine, or `None` when it is relative to nothing known.
-fn local_path(path: &str, cwd: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
-    let home_relative = path
-        .strip_prefix('~')
-        .filter(|rest| rest.is_empty() || rest.starts_with(['/', std::path::MAIN_SEPARATOR]));
-    if let Some(rest) = home_relative {
-        let rest = rest.trim_start_matches(['/', std::path::MAIN_SEPARATOR]);
-        return Some(home?.join(rest));
-    }
-    let path = Path::new(path);
-    if path.is_absolute() {
-        return Some(path.to_path_buf());
-    }
-    // Drop the `.` of `./src/main.rs` so the handler gets the path a user would write. `..` stays:
-    // removing it without asking the file system would be wrong across a symbolic link.
-    Some(
-        cwd?.join(path)
-            .components()
-            .filter(|part| *part != std::path::Component::CurDir)
-            .collect(),
-    )
 }
 
 /// The last file-system answer given for a hovered path.
@@ -362,17 +559,18 @@ impl PathLinkCache {
     /// that a file created or deleted since reads correctly when the pointer comes back.
     const FRESH: Duration = Duration::from_secs(1);
 
-    fn exists(&self, path: PathBuf) -> bool {
+    /// Whether `check` holds for `path`, asked again only once the last answer is stale.
+    fn holds(&self, path: PathBuf, check: impl FnOnce(&Path) -> bool) -> bool {
         let now = Instant::now();
-        if let Some((cached, exists, at)) = self.0.borrow().as_ref()
+        if let Some((cached, held, at)) = self.0.borrow().as_ref()
             && *cached == path
             && now.duration_since(*at) < Self::FRESH
         {
-            return *exists;
+            return *held;
         }
-        let exists = path.exists();
-        *self.0.borrow_mut() = Some((path, exists, now));
-        exists
+        let held = check(&path);
+        *self.0.borrow_mut() = Some((path, held, now));
+        held
     }
 }
 
@@ -520,53 +718,109 @@ mod policy_tests {
     }
 
     #[test]
-    fn paths_open_only_with_a_handler_on_their_machine() {
+    fn paths_open_with_a_handler_on_their_machine_or_the_default_application() {
         let scratch = tempfile::tempdir().unwrap();
         std::fs::write(scratch.path().join("notes.md"), "").unwrap();
         std::fs::create_dir(scratch.path().join("project")).unwrap();
         let cache = PathLinkCache::default();
-        let links = |place, files: &[&str], machine| PathLinks {
+        let buildbox = RemoteTarget::Alias("buildbox".into());
+        let links = |place: PathPlace, handler: Option<(&[&str], Machine)>| PathLinks {
+            fetch: matches!(place, PathPlace::SessionHost)
+                .then(|| (buildbox.clone(), Some("/work".to_string()))),
             place,
-            handlers: vec![(file_handler(files, UserCommandAction::run("open")), machine)],
+            handlers: handler
+                .into_iter()
+                .map(|(files, machine)| {
+                    (file_handler(files, UserCommandAction::run("open")), machine)
+                })
+                .collect(),
             session_host: Some("buildbox".into()),
         };
         let local = || PathPlace::Local {
             cwd: Some(scratch.path().join("project")),
             home: Some(scratch.path().to_path_buf()),
         };
+        let handler_file = |opened| match opened {
+            Ok(PathOpener::Handler { file, .. }) => Some(file),
+            _ => None,
+        };
 
-        let here = links(local(), &[], Machine::Client);
-        let notes = scratch.path().join("notes.md").display().to_string();
+        let here = links(local(), Some((&[], Machine::Client)));
+        let notes = scratch.path().join("notes.md");
         assert_eq!(
-            here.open("~/notes.md").map(|opener| opener.file),
-            Ok(notes.clone())
+            handler_file(here.open("~/notes.md")),
+            Some(notes.display().to_string())
         );
         assert!(here.accepts("../notes.md:4:2", &cache));
         assert!(here.open("./missing.md").is_err());
         assert!(!here.accepts("./missing.md", &cache));
-        // Routing by name decides too: no handler takes a Markdown file here.
-        assert!(!links(local(), &["*.png"], Machine::Client).accepts("../notes.md", &cache));
 
-        assert!(
-            !links(PathPlace::Elsewhere("prod".into()), &[], Machine::Client)
-                .accepts(&notes, &cache)
-        );
+        let ssh = || PathPlace::Elsewhere("prod".into());
+        assert!(!links(ssh(), Some((&[], Machine::Client))).accepts("/etc/hosts", &cache));
         // A remote path opens, unchecked, on its host; a bare name there is too often not a file.
-        let remote = links(PathPlace::SessionHost, &[], Machine::SessionHost);
+        let remote = links(PathPlace::SessionHost, Some((&[], Machine::SessionHost)));
         assert_eq!(
-            remote.open("src/a.rs").map(|opener| opener.file),
-            Ok("src/a.rs".into())
+            handler_file(remote.open("src/a.rs")),
+            Some("src/a.rs".into())
         );
         assert!(remote.accepts("src/a.rs:3", &cache));
         assert!(!remote.accepts("a.rs", &cache));
         // A handler on the other machine would open some other file, or none.
-        assert!(!links(PathPlace::SessionHost, &[], Machine::Client).accepts("src/a.rs", &cache));
-        assert!(
-            links(PathPlace::SessionHost, &[], Machine::Client)
-                .open("src/a.rs")
-                .is_err()
+        let across = links(PathPlace::SessionHost, Some((&[], Machine::Client)));
+        assert!(!across.accepts("src/a.rs", &cache));
+        assert!(across.open("src/a.rs").is_err());
+        assert!(!links(local(), Some((&[], Machine::SessionHost))).accepts("../notes.md", &cache));
+
+        // A file no handler takes goes to the default application: where it is when that is
+        // here, as a copy when it is on the session host, and never when it would run.
+        let images_only = links(local(), Some((&["*.png"], Machine::Client)));
+        assert_eq!(
+            images_only.open("~/notes.md"),
+            Ok(PathOpener::System(notes))
         );
-        assert!(!links(local(), &[], Machine::SessionHost).accepts("../notes.md", &cache));
+        assert!(images_only.accepts("../notes.md", &cache));
+        assert!(!links(local(), None).accepts("./missing.md", &cache));
+        let program = if cfg!(windows) {
+            "setup.exe"
+        } else if cfg!(target_os = "macos") {
+            "setup.command"
+        } else {
+            "setup.desktop"
+        };
+        std::fs::write(scratch.path().join(program), "").unwrap();
+        assert!(!links(local(), None).accepts(&format!("../{program}"), &cache));
+        assert!(links(local(), None).open(&format!("../{program}")).is_err());
+        let remote = links(PathPlace::SessionHost, None);
+        assert_eq!(
+            remote.open("out/plot.png"),
+            Ok(PathOpener::Fetch {
+                target: buildbox.clone(),
+                request: FileRequest {
+                    path: "out/plot.png".into(),
+                    cwd: Some("/work".into()),
+                    url: false,
+                },
+            })
+        );
+        // A `file:` URL from the host goes back to it unread: only the host knows its paths.
+        let windows = url::Url::parse("file:///C:/Users/me/My%20report.pdf").unwrap();
+        assert_eq!(
+            remote.remote_url(&windows),
+            Some(Ok(PathOpener::Fetch {
+                target: buildbox.clone(),
+                request: FileRequest {
+                    path: windows.to_string(),
+                    cwd: None,
+                    url: true,
+                },
+            }))
+        );
+        let installer = url::Url::parse("file:///C:/Users/me/setup%2Eexe.").unwrap();
+        assert!(matches!(remote.remote_url(&installer), Some(Err(_))));
+        assert_eq!(links(local(), None).remote_url(&windows), None);
+        assert!(remote.accepts("out/plot.png", &cache));
+        assert!(!remote.accepts(&format!("out/{program}"), &cache));
+        assert!(!links(ssh(), None).accepts("/etc/hosts", &cache));
     }
 
     #[test]

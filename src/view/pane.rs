@@ -1397,13 +1397,10 @@ pub(crate) fn pane_element(
                     ctx.link().callback(move |event| Msg::PaneMouse(id, event)),
                 );
             let links = crate::ops::links::PathLinks::for_pane(&ctx.state, id);
-            if links.any() {
-                let cache = ctx.state.path_links.clone();
-                terminal_widget =
-                    terminal_widget.link_paths(TerminalPathFilter::new(move |path| {
-                        links.accepts(path, &cache)
-                    }));
-            }
+            let cache = ctx.state.path_links.clone();
+            terminal_widget = terminal_widget.link_paths(TerminalPathFilter::new(move |path| {
+                links.accepts(path, &cache)
+            }));
         }
     }
     if copy_cursor.is_some() {

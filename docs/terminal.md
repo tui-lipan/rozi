@@ -223,9 +223,8 @@ The `u` command key starts hint mode. It labels visible URLs, links that program
 (OSC 8 hyperlinks), paths with optional line numbers, Git commit ids, and your `[[hints]]` patterns,
 including ones that wrap across lines. Type a lowercase label to copy the target, or end the label
 with an uppercase character to open it when it can be opened. After each key, labels show only the
-keys left to press. URL hints use the same handlers as clicked links. A configured `file` handler
-enables path hints; custom patterns can define `on_open` commands. See
-[Link handlers](configuration.md#links-handlers).
+keys left to press. URL and path hints open the way [clicked links](#open-links) do; custom
+patterns can define `on_open` commands.
 
 What counts as a target:
 
@@ -258,8 +257,13 @@ This and the prompt jumps in copy mode need shell integration; see
 Hold `Ctrl` and click a visible URL to open it with a [configured link handler](configuration.md#links-handlers),
 or the system handler when none matches. Links that programs mark
 explicitly (OSC 8 hyperlinks) also work, and take precedence over URLs detected in plain text.
-File URLs and other schemes need a configured handler. rozi shows an error for unsupported destinations.
-With a `file` handler, file paths such as `src/main.rs:12:3` are links too, when the file exists.
+Other schemes need a configured handler. rozi shows an error for unsupported destinations.
+
+File paths such as `out/plot.png` or `src/main.rs:12:3` are links too, when the file exists. Without
+a `file` handler, a file or directory opens in your system's default application, which does not
+receive the line number. rozi does not open programs this way. A file on a
+[remote session](remote.md) host is copied to your machine first, as a read-only copy of at most
+64 MB.
 In a remote session pane, `http` and `https` links to `localhost`, `127.0.0.1`, `0.0.0.0`, or `::` are
 forwarded automatically over SSH when opened on your client and rewritten to the local forwarded
 port; see [Port forwarding](remote.md#port-forwarding).

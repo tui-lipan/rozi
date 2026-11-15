@@ -43,7 +43,8 @@
 //!   Windows virtual-terminal switch a legacy console needs before it can.
 //! - [`notifications`] - desktop notifications (Phase 10).
 //! - [`sound`] - best-effort alert cue playback.
-//! - [`open_file`] - launch a local file with the platform's default application.
+//! - [`open_file`] - launch a local file with the platform's default application, and
+//!   [`runs_when_opened`], which says when that would run the file instead.
 //! - [`install`] - thin rozi path/policy adapter over the `relswap` signed-release engine.
 //! - [`install_source`] - which distribution channel produced the running binary, so an install
 //!   `relswap` does not own can still be told how to update itself, and where each channel puts
@@ -82,10 +83,8 @@ pub mod shell_integration;
 pub mod sleep_inhibit;
 pub mod sound;
 
-/// Open a local file with the platform's default application.
-pub fn open_file(path: &std::path::Path) -> std::io::Result<()> {
-    open::that_detached(path)
-}
+mod opener;
+pub use opener::{open_file, reaches_network, runs_when_opened};
 
 #[doc(hidden)]
 pub mod media_fixture;

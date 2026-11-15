@@ -625,6 +625,8 @@ pub enum Msg {
         path: std::path::PathBuf,
     },
     OpenScreenshot(std::path::PathBuf),
+    /// A file a link named on the session host was copied here to open, off the UI thread.
+    RemoteFileFetched(std::result::Result<std::path::PathBuf, String>),
     ScreenshotFailed {
         error: String,
     },

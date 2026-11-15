@@ -296,10 +296,17 @@ interrupting it, and its answer is the agent's own reply text:
 rozi agents ask --ref '<JSON>' --wait --timeout 30m --format text -- 'Review the parser changes in src/parse.rs'
 ```
 
+- `ask`, `reply`, and `await` go to the session of the pane you run them in. From outside Rozi,
+  pass `--session <NAME>`; the request then has no asker. Take the target's `ref` from
+  `rozi agents list --format json`.
 - Run `ask --wait` as a **background command** when your harness has them. Your turn can end, the
   command exits with the answer as its output, and you are notified then. Ask several agents at
   once with one background command each. Keep `--format text`: without it, captured output is JSON.
 - If the wait fails, the error names the request id: `rozi agents await` it, do not ask again.
+  For long work, await again after a timeout rather than giving `--timeout` a huge value.
+- The other agent replies by running `rozi agents reply`, so start it where it can reach Rozi.
+  A sandbox that blocks that, such as Codex's `workspace-write`, leaves you with a
+  `source: "terminal"` answer: its screen at the end of the turn, not its reply.
 - Rozi types the request into the target only once it is stopped, shows no dialog, and nobody has
   typed into its pane for two seconds; until then it is `queued`, with a `reason`.
 - Without `--wait`, `ask` returns the request and its `id` at once; `rozi agents await <ID>

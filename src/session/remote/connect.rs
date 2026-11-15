@@ -208,13 +208,15 @@ fn read_remote_preamble(
             if invalidate_binary_cache_after_preamble_failure(budget) {
                 super::binary::invalidate(target, config);
             }
-            // Kill the proxy, but never wait for its stderr collector here. An askpass helper can
-            // outlive the killed ssh process while it waits for the UI and keep the inherited
-            // stderr pipe open; joining it would let that helper outrun the reconnect deadline.
+            // Kill the proxy, then give its stderr collector a moment, never longer. ssh's own
+            // report is what tells a host that is down from anything else, and the collector
+            // may not have read it yet. An askpass helper can outlive the killed ssh process while
+            // it waits for the UI and keep the inherited stderr pipe open, so joining outright
+            // would let that helper outrun the reconnect deadline.
             let _ = connection.shutdown(std::net::Shutdown::Both);
             drop(connection);
             let detail = stderr_tail
-                .and_then(finished_stderr_tail)
+                .and_then(|handle| stderr_tail_within(handle, STDERR_REPORT_GRACE))
                 .filter(|s| !s.trim().is_empty())
                 .map(|s| format!(" ({})", s.trim()))
                 .unwrap_or_default();
@@ -362,6 +364,16 @@ fn join_budget_for(config: &RemoteConfig, interactive: bool) -> Duration {
         + ATTACH_HANDSHAKE_ALLOWANCE
 }
 
+/// How much longer the preamble wait lasts than ssh's `ConnectTimeout`, so a host that never
+/// answers is reported by ssh, in ssh's words, rather than cut off by the preamble deadline.
+///
+/// Only ssh's report marks a host offline after a failed attach. With `connection_timeout_secs = 0`
+/// ssh has no `ConnectTimeout` and never reports one: the preamble deadline ends the attempt, and
+/// it fails as a plain attach failure, because a host that is silent and one that is slow look the
+/// same from here. The same holds for the last moments of a reconnect window, where ssh's
+/// one-second floor can outlast the preamble wait.
+const SSH_REPORT_GRACE: Duration = Duration::from_secs(2);
+
 /// Default wait for the proxy's first bytes when `[remote] connection_timeout_secs` is `0`.
 const DEFAULT_PREAMBLE_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -380,6 +392,7 @@ fn preamble_timeout_for(config: &RemoteConfig, interactive: bool) -> Duration {
     } else {
         DEFAULT_PREAMBLE_TIMEOUT
     };
+    let base = base + SSH_REPORT_GRACE;
     if interactive {
         base + INTERACTIVE_AUTH_ALLOWANCE
     } else {
@@ -388,7 +401,8 @@ fn preamble_timeout_for(config: &RemoteConfig, interactive: bool) -> Duration {
 }
 
 fn capped_connect_timeout_secs(config: &RemoteConfig, remaining: Duration) -> u64 {
-    let remaining_secs = remaining.as_secs().max(1);
+    // The preamble wait is capped by the same remaining time; leave room for ssh to report first.
+    let remaining_secs = remaining.saturating_sub(SSH_REPORT_GRACE).as_secs().max(1);
     if config.connection_timeout_secs > 0 {
         config.connection_timeout_secs.min(remaining_secs)
     } else {
@@ -524,8 +538,18 @@ pub(super) fn spawn_stderr_collector(mut stderr: ChildStderr) -> thread::JoinHan
     })
 }
 
-fn finished_stderr_tail(handle: thread::JoinHandle<String>) -> Option<String> {
-    handle.is_finished().then(|| handle.join().ok()).flatten()
+/// How long a failed proxy waits for ssh's stderr after ssh has gone.
+const STDERR_REPORT_GRACE: Duration = Duration::from_millis(300);
+
+fn stderr_tail_within(handle: thread::JoinHandle<String>, grace: Duration) -> Option<String> {
+    let deadline = Instant::now() + grace;
+    while !handle.is_finished() {
+        if Instant::now() >= deadline {
+            return None;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    handle.join().ok()
 }
 
 #[cfg(test)]
@@ -625,11 +649,13 @@ mod tests {
         );
         assert_eq!(
             capped_connect_timeout_secs(&config, Duration::from_secs(5)),
-            5
+            3,
+            "ssh gives up before the preamble wait does, so ssh says why"
         );
         assert_eq!(
             capped_preamble_timeout(&config, Duration::from_secs(120)),
-            Duration::from_secs(15)
+            Duration::from_secs(17),
+            "ssh gives up before the preamble wait does, so ssh says why"
         );
         assert_eq!(
             capped_preamble_timeout(&config, Duration::from_secs(5)),
@@ -644,7 +670,7 @@ mod tests {
         let remaining = Duration::from_secs(120);
         assert_eq!(
             preamble_timeout_for(&interactive, true),
-            Duration::from_secs(15) + INTERACTIVE_AUTH_ALLOWANCE
+            Duration::from_secs(17) + INTERACTIVE_AUTH_ALLOWANCE
         );
         let requested = preamble_timeout_for(&interactive, true);
         assert_eq!(
@@ -706,8 +732,20 @@ mod tests {
             "late stderr".to_string()
         });
 
-        assert_eq!(finished_stderr_tail(handle), None);
+        let started = Instant::now();
+        assert_eq!(stderr_tail_within(handle, Duration::from_millis(50)), None);
+        assert!(started.elapsed() < Duration::from_secs(1));
         release_tx.send(()).unwrap();
+
+        // ssh's report arriving just after its stdout closed is still read.
+        let late = thread::spawn(|| {
+            thread::sleep(Duration::from_millis(30));
+            "ssh: connect to host workbox port 22: Connection timed out".to_string()
+        });
+        assert!(
+            stderr_tail_within(late, Duration::from_secs(2))
+                .is_some_and(|tail| tail.contains("ssh: connect to host"))
+        );
     }
 
     /// A relaunch asks each server to hold its place this long, so it has to cover a password typed

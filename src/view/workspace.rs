@@ -1057,8 +1057,9 @@ pub(crate) fn workspace_pages(
     } = workspace_page_boxes(&ctx.state, viewport);
     let top_offset = ctx.state.content_top_offset();
     // A relaunched client bringing its background sessions back keeps them covered, so each does
-    // not flash by on its way into the background.
-    if crate::ops::relaunch::covering_activity(&ctx.state).is_some() {
+    // not flash by on its way into the background. A remote session still connecting has no
+    // screens to show yet.
+    if super::workspace_is_covered(&ctx.state) {
         return canvas
             .child_at(
                 canvas_rect_to_root(super::empty_workspace_rect(bounds), top_offset).to_rect(),

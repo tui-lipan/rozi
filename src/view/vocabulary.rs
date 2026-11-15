@@ -378,7 +378,7 @@ impl HostStatusStyles {
             HostStatus::Reachable => self.reachable,
             HostStatus::Connecting | HostStatus::Installing => self.connecting,
             HostStatus::Unreachable => self.unreachable,
-            HostStatus::Disconnected => self.disconnected,
+            HostStatus::Disconnected | HostStatus::Offline => self.disconnected,
         }
     }
 }
@@ -415,6 +415,7 @@ pub(crate) fn host_status_label(status: HostStatus) -> &'static str {
         HostStatus::Connecting => "Connecting…",
         HostStatus::Installing => "Installing…",
         HostStatus::Unreachable => "Unreachable",
+        HostStatus::Offline => "Offline",
         HostStatus::Disconnected => "Disconnected",
     }
 }
@@ -426,7 +427,9 @@ pub(crate) fn host_status_gutter(status: HostStatus, styles: HostStatusStyles) -
         HostStatus::Connecting | HostStatus::Installing => picker_circle_spinner_gutter(style),
         HostStatus::Connected | HostStatus::Reachable => picker_marker_gutter(MARKER_LIVE, style),
         HostStatus::Unreachable => picker_marker_gutter(MARKER_FAILED, style),
-        HostStatus::Disconnected => picker_marker_gutter(MARKER_ABSENT, style),
+        HostStatus::Disconnected | HostStatus::Offline => {
+            picker_marker_gutter(MARKER_ABSENT, style)
+        }
     }
 }
 
@@ -446,7 +449,7 @@ pub(crate) fn host_status_badge(status: HostStatus, styles: HostStatusStyles) ->
             .style(style)
             .height(Length::Px(1))
             .into(),
-        HostStatus::Disconnected => Text::new(MARKER_ABSENT)
+        HostStatus::Disconnected | HostStatus::Offline => Text::new(MARKER_ABSENT)
             .style(style)
             .height(Length::Px(1))
             .into(),
@@ -764,6 +767,7 @@ mod tests {
             HostStatus::Connecting,
             HostStatus::Installing,
             HostStatus::Unreachable,
+            HostStatus::Offline,
             HostStatus::Disconnected,
         ]
         .map(host_status_label);

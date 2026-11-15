@@ -779,7 +779,7 @@ mod tests {
         assert_eq!(remote.rows[0].content.label, "WORKBOX");
         assert_eq!(
             remote.rows[0].content.description.as_deref(),
-            Some("Unreachable")
+            Some("Offline")
         );
         assert_eq!(remote.rows[0].target, RowTarget::Inert);
 
@@ -824,7 +824,7 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(
             items[0].line().unwrap().row.content.description.as_deref(),
-            Some("Unreachable")
+            Some("Offline")
         );
     }
 

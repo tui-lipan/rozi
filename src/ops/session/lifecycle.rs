@@ -438,6 +438,47 @@ pub(crate) fn session_picker_creation_target(
     }
 }
 
+/// Whether the Sessions picker may create a session where it would put one. Not on a host the last
+/// attempt found down, where it would only wait out the SSH timeout again, and not on one still
+/// connecting. A host never contacted is fine: creating there is the attempt.
+pub(crate) fn session_picker_can_create(state: &State) -> bool {
+    // Without the picker, creation is local: the sidebar's own row.
+    if state.session_picker.is_none() || !state.show_session_picker {
+        return true;
+    }
+    session_picker_creation_target(state).is_none_or(|target| {
+        !matches!(
+            crate::view::vocabulary::host_connection_status(state, &target, false),
+            crate::state::HostStatus::Unreachable
+                | crate::state::HostStatus::Offline
+                | crate::state::HostStatus::Connecting
+                | crate::state::HostStatus::Installing
+        )
+    })
+}
+
+/// The host of the Sessions picker's tab when the last attempt to reach it failed. `Enter` on that
+/// tab connects it, the way the host's sidebar row does.
+pub(crate) fn session_picker_unreached_host(
+    state: &State,
+) -> Option<crate::session::remote::RemoteTarget> {
+    let target = state.session_picker.as_ref()?.tab.remote_target()?;
+    matches!(
+        crate::view::vocabulary::host_connection_status(state, target, false),
+        crate::state::HostStatus::Unreachable | crate::state::HostStatus::Offline
+    )
+    .then(|| target.clone())
+}
+
+/// Connect the host of the Sessions picker's tab. The picker stays open, and the tab fills in once
+/// the host answers.
+pub(crate) fn connect_session_picker_host(ctx: &mut Context<AppRoot>) -> Update {
+    match session_picker_unreached_host(&ctx.state) {
+        Some(target) => crate::update::sidebar::sessions::connect_host(ctx, target),
+        None => Update::none(),
+    }
+}
+
 /// Go to this client's scratch session on the Sessions picker's active tab: its `Ctrl+T`, and its
 /// `Enter` when both the query and the list are empty.
 ///
@@ -448,6 +489,9 @@ pub(crate) fn session_picker_creation_target(
 /// A host tab fixes the creation destination. All uses the foreground or launcher host;
 /// the footer names that destination.
 pub(crate) fn open_ephemeral_session(ctx: &mut Context<AppRoot>) -> Update {
+    if !session_picker_can_create(&ctx.state) {
+        return Update::none();
+    }
     clear_pending_session_arms(ctx);
     let scope = session_picker_creation_target(&ctx.state);
     // Checked before the launcher case: the session on screen being this host's scratch session
@@ -558,6 +602,9 @@ fn enter_session_rename(ctx: &mut Context<AppRoot>, rename: SessionRenameState) 
 /// `Ctrl+N` from a query that matched nothing means "then make that one", so the name comes along
 /// rather than making the user type it a second time.
 pub(crate) fn open_create_session(ctx: &mut Context<AppRoot>) -> Update {
+    if !session_picker_can_create(&ctx.state) {
+        return Update::none();
+    }
     let picker = ctx
         .state
         .session_picker

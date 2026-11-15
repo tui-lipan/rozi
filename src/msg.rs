@@ -517,6 +517,8 @@ pub enum Msg {
     /// Go to this client's scratch session from the picker (`Ctrl+T`, or `Enter` with nothing to
     /// pick): start it when there is none, switch to it when there already is.
     SessionPickerEphemeral,
+    /// Try the failed host of the picker's tab again (`Enter` on that tab).
+    SessionPickerConnectHost,
     SessionPickerCreateFromQuery,
     SessionPickerKillSelected,
     RemoteSessionKilled {

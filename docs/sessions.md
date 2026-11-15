@@ -126,6 +126,10 @@ count the host last reported:
 │ · dev                              Last seen · 3 panes │
 ```
 
+A host that did not answer is `Offline`, and rozi keeps retrying it. One that needs you to fix
+something, such as a rejected login, is `Unreachable`. On either host's tab, `Enter` connects the host
+instead of creating a session.
+
 On a `Last seen` row:
 
 - `Enter` connects the host and attaches to the session.

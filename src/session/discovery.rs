@@ -1117,6 +1117,23 @@ pub fn probe_failure_reason(error: &str) -> &'static str {
     }
 }
 
+/// Whether a failed probe only found the host down: nothing answered, or nothing accepted SSH.
+/// Another attempt can fix that on its own, unlike a rejected login, a changed host key, or a
+/// missing binary, which need the user.
+pub fn probe_failure_is_offline(error: &str) -> bool {
+    matches!(
+        probe_failure_reason(error),
+        "Host not responding" | "Host unreachable" | "SSH port closed"
+    )
+}
+
+/// Whether ssh itself found the host down while connecting. An attach can also time out or be
+/// refused after ssh connected, by a session server on a healthy host; that says nothing about the
+/// host.
+pub fn ssh_connect_found_host_offline(error: &str) -> bool {
+    error.contains("ssh: connect to host") && probe_failure_is_offline(error)
+}
+
 /// Largest remote `sessions list --format json` output accepted.
 const REMOTE_LIST_LIMIT: usize = 8 * 1024 * 1024;
 
@@ -1485,6 +1502,17 @@ mod tests {
             )),
             "Host not responding"
         );
+        // Only ssh's own connect failure says the host is down; the same words from a session
+        // server on a host that answered do not.
+        assert!(ssh_connect_found_host_offline(&remote(
+            "ssh: connect to host winvm port 22: Connection timed out"
+        )));
+        assert!(!ssh_connect_found_host_offline(
+            "Remote session `dev`: handshake timed out"
+        ));
+        assert!(!ssh_connect_found_host_offline(
+            "Remote session `dev`: Connection refused (os error 111)"
+        ));
         // macOS spells the same timeout differently.
         assert_eq!(
             reason(&remote(

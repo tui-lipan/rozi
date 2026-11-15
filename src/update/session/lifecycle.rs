@@ -109,6 +109,11 @@ pub(crate) fn attach_failed(ctx: &mut Context<AppRoot>, epoch: u64, message: Str
     let was_remote = pending.request.remote.is_some();
     let was_reconnect = pending.request.is_reconnect();
     let parked_epoch = pending.parked_epoch;
+    let unreached = pending
+        .request
+        .remote
+        .clone()
+        .filter(|_| crate::session::discovery::ssh_connect_found_host_offline(&message));
     crate::update::cancel_attach_askpass(ctx, epoch);
     ctx.state.current_mut().pending_session_attach = None;
     crate::ops::session::clear_pending_session_action(ctx, Some(&message));
@@ -133,12 +138,28 @@ pub(crate) fn attach_failed(ctx: &mut Context<AppRoot>, epoch: u64, message: Str
         );
         return update;
     }
-    crate::pane::pty_events::notify_on(
-        ctx,
-        crate::state::ToastChannel::SessionLifecycle,
-        Some("Attach failed".to_string()),
-        message,
-    );
+    if let Some(target) = unreached {
+        // The host is down, not the session: say so in the host's words, and let the sidebar and
+        // the picker's tab know without waiting for their next probe.
+        let label = ctx.state.remote_target_label(&target);
+        let reason = crate::session::discovery::probe_failure_reason(&message);
+        if let Some(host) = ctx.state.remote.hosts.get_mut(&target) {
+            host.probe = crate::state::HostProbe::Failed(message);
+        }
+        crate::pane::pty_events::notify_on(
+            ctx,
+            crate::state::ToastChannel::SessionLifecycle,
+            Some(format!("Could not connect to {label}")),
+            reason,
+        );
+    } else {
+        crate::pane::pty_events::notify_on(
+            ctx,
+            crate::state::ToastChannel::SessionLifecycle,
+            Some("Attach failed".to_string()),
+            message,
+        );
+    }
     if !was_reconnect {
         // Creating/switching parked a live session to move away from it. If the new attach failed,
         // restore that session rather than strand the user on the broken empty attachment — for a

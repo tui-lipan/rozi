@@ -607,7 +607,7 @@ pub(crate) fn apply_host_discovery(
             let reason = crate::session::discovery::probe_failure_reason(&error);
             crate::pane::pty_events::notify_error(
                 ctx,
-                format!("Could not connect to `{label}`"),
+                format!("Could not connect to {label}"),
                 reason,
             );
             Update::full()
@@ -1842,7 +1842,7 @@ mod tests {
                 let status = if with_live_work {
                     "Connected"
                 } else {
-                    "Unreachable"
+                    "Offline"
                 };
                 assert_eq!(
                     sections[0].rows[0].content.description.as_deref(),

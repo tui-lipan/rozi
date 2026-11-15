@@ -97,8 +97,10 @@ pub enum HostStatus {
     Reachable,
     /// Collapsed / not contacted: no attachment, no live probe.
     Disconnected,
-    /// The last probe/connect attempt failed.
+    /// The last probe/connect attempt failed in a way the user has to fix.
     Unreachable,
+    /// The last probe/connect attempt found the host down. Monitors keep retrying it.
+    Offline,
 }
 
 /// The set of known remote hosts: configured aliases alphabetically, recents in MRU order, then
@@ -249,6 +251,11 @@ impl HostRegistry {
         }
         match self.get(target).map(|entry| &entry.probe) {
             Some(HostProbe::InFlight) => HostStatus::Connecting,
+            Some(HostProbe::Failed(error))
+                if crate::session::discovery::probe_failure_is_offline(error) =>
+            {
+                HostStatus::Offline
+            }
             Some(HostProbe::Failed(_)) => HostStatus::Unreachable,
             Some(HostProbe::Reached) => HostStatus::Reachable,
             _ if has_sessions => HostStatus::Reachable,
@@ -360,6 +367,14 @@ mod tests {
             registry.status_for(&target, std::iter::empty(), true),
             HostStatus::Unreachable
         );
+        // A host that is only down is offline, not a failure for the user to fix.
+        registry.get_mut(&target).unwrap().probe =
+            HostProbe::Failed("ssh: connect to host workbox port 22: Connection timed out".into());
+        assert_eq!(
+            registry.status_for(&target, std::iter::empty(), true),
+            HostStatus::Offline
+        );
+        registry.get_mut(&target).unwrap().probe = HostProbe::Failed("was down".to_string());
         // A connecting attachment overrides the failed probe.
         assert_eq!(
             registry.status_for(&target, &[super::super::ConnectionState::Connecting], false),
@@ -462,7 +477,7 @@ mod tests {
         assert_eq!(entry.probe.error(), Some("timed out"));
         assert_eq!(
             registry.status_for(&target, std::iter::empty(), false),
-            HostStatus::Unreachable
+            HostStatus::Offline
         );
     }
 

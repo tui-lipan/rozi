@@ -20,8 +20,10 @@ fn remote_host_description(
     // A failure is the one thing worth more than a session count: the row has to say why the last
     // attempt did not land, or the user is left retrying something they cannot diagnose. The short
     // phrase comes from the shared vocabulary; the raw ssh output stays in the toast.
-    if status == crate::state::HostStatus::Unreachable
-        && let Some(error) = entry.probe.error()
+    if matches!(
+        status,
+        crate::state::HostStatus::Unreachable | crate::state::HostStatus::Offline
+    ) && let Some(error) = entry.probe.error()
     {
         return picker_description(crate::session::discovery::probe_failure_reason(error));
     }
@@ -33,7 +35,8 @@ fn remote_host_description(
             _,
             crate::state::HostStatus::Connecting
             | crate::state::HostStatus::Installing
-            | crate::state::HostStatus::Unreachable,
+            | crate::state::HostStatus::Unreachable
+            | crate::state::HostStatus::Offline,
             _,
         ) => crate::view::vocabulary::host_status_label(status).to_string(),
         (count, _, _) if count > 0 => crate::view::vocabulary::count(count, "session"),

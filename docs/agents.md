@@ -57,7 +57,8 @@ screen = {
 
 Give your entry the same `id` as a built-in to replace that built-in. You can omit `match` to keep
 the built-in's process match while replacing its label or state rules. The override also keeps the
-built-in's [native resume](#declare-native-resume-support) setting unless you set `resume`.
+built-in's [native resume](#declare-native-resume-support) and
+[launch prompt](#recognize-a-launch-prompt) settings unless you set `resume` or `launch_prompt`.
 
 ## Test a definition
 
@@ -97,6 +98,7 @@ session. After updating rozi, restart running sessions to pick up its new built-
 | `states` | no | Screen or title rules. |
 | `resume.argv` | no | Native resume command; see [Declare native resume support](#declare-native-resume-support). |
 | `resume.attach` | no | Command for a conversation that is still running; see the same section. |
+| `launch_prompt` | no | Which launch arguments carry a prompt; see [Recognize a launch prompt](#recognize-a-launch-prompt). |
 
 A new definition needs at least one name or path. Only an override of a built-in may omit `match`.
 A second definition with the same `id` in the same file is ignored.
@@ -168,17 +170,17 @@ Declaration order does not matter. For example, an approval prompt (`blocked`) w
 subagent view that hides the tool's usual status area. rozi keeps the last observed state instead of
 reporting idle. If nothing confirms that state for a while, it eventually returns to idle.
 
-When an agent starts, rozi reports a `working` screen as idle until the agent shows that it is
-ready, so a loading spinner at startup does not look like a run. The agent counts as ready when any
-of these happens:
+When an agent starts, its loading screen shows as working, but it is not a run: no elapsed time
+counts, and the agent becoming ready does not count as finished. The launch ends at the agent's
+first idle after loading, or as soon as the agent gets work:
 
-- It shows a `blocked` screen, such as a trust prompt. rozi reports that immediately.
-- Its loading spinner is gone, and its prompt has stayed up for 2 seconds.
-- You submit a line to the pane by pressing Enter. Pasted text does not count.
-- 8 seconds have passed since it started.
+- You submit a line by pressing Enter. Pasted text, and Enter that answers a dialog, do not count.
+- A [hook](#report-state-from-agent-hooks) reports it working.
+- It was started with a prompt its [launch prompt rule](#recognize-a-launch-prompt) recognizes,
+  such as `codex "fix the tests"`.
 
-If the agent is still working when the 8 seconds end, such as when you pass a prompt on the command
-line, rozi reports it as working from then on. A restarted agent process starts this again.
+Work that starts during the launch without any of these, such as a prompt the rule does not
+recognize, is not counted as a run. A restarted agent process starts a new launch.
 
 ### Common rules
 
@@ -250,6 +252,23 @@ An override of a built-in inherits the built-in's resume command when `resume` i
 `resume = false` on the `[[agents]]` entry to turn native resume off. `resume = true` is not valid.
 
 See [Sessions](sessions.md#reopen-an-agent-conversation) for what restore does.
+
+## Recognize a launch prompt
+
+An agent started with a prompt is working on it from the start. A `launch_prompt` rule lets rozi
+count that work as a run:
+
+```toml
+[agents.launch_prompt]
+subcommands = ["resume", "login"]
+flags = ["--search"]
+options = ["-m", "--model"]
+```
+
+The first argument that is not an option is the prompt, unless it is one of `subcommands`. `flags`
+take no value, and `options` take one, as the next argument or after `=`. Any other option means no
+prompt, because rozi cannot tell whether it takes a value. Set `launch_prompt = false` to turn off a
+built-in's rule.
 
 ## Inspect and wait for agents
 

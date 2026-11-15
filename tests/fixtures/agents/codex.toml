@@ -202,7 +202,7 @@ screen = '''
 
 # Captured from Codex 0.162.1 on 2026-10-12, idle at its initial prompt. The large braille logo's
 # last rows are in the eight non-empty footer lines and used to count as a working spinner once
-# the startup grace expired. Keep the logo and prompt spacing so footer membership stays real.
+# the agent was ready. Keep the logo and prompt spacing so footer membership stays real.
 [[case]]
 name = "idle-with-braille-logo"
 state = "idle"

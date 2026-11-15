@@ -16,7 +16,7 @@ mod spec;
 pub use catalog::AgentCatalog;
 pub use definition::{
     AgentDefinition, AgentDetectionInput, AgentHistory, AgentStateOutcome, AgentStateRule,
-    FOOTER_ROWS, MatchScope, MatchSource, Pattern,
+    FOOTER_ROWS, LaunchPrompt, MatchScope, MatchSource, Pattern,
 };
 pub use spec::{AgentMatchSpec, AgentOrigin, AgentSpec, AgentStateSpec, build_definitions};
 
@@ -81,6 +81,32 @@ pub(crate) fn process_is_agent(
     id: &str,
 ) -> bool {
     process::identify_process(catalog, process).is_some_and(|(definition, _)| definition.id() == id)
+}
+
+/// Whether `process`, the agent `definition` names, was launched with a prompt to work on.
+///
+/// The agent's own arguments follow the first argv element that names it, which skips a runtime
+/// such as `node` in front of a package script. A process that never names the agent, such as the
+/// shell a hint stands in for, carries no prompt.
+pub(crate) fn launch_carries_prompt(
+    catalog: &AgentCatalog,
+    definition: &AgentDefinition,
+    process: &ForegroundProcess,
+) -> bool {
+    let Some(rule) = &definition.launch_prompt else {
+        return false;
+    };
+    let names_agent = |value: &str| {
+        catalog
+            .by_name(value)
+            .or_else(|| catalog.by_path(value))
+            .is_some_and(|candidate| candidate.id() == definition.id())
+    };
+    process
+        .argv
+        .iter()
+        .position(|argument| names_agent(argument))
+        .is_some_and(|program| rule.matches(&process.argv[program + 1..]))
 }
 
 /// What an already-identified agent is doing right now.

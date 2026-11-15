@@ -3363,32 +3363,31 @@ mod tests {
         );
     }
 
-    /// Codex reports `working` over OSC 7501 while it starts, then `idle`. Read literally, every
-    /// launch was a run that finished a second later.
+    /// Codex reports `working` over OSC 7501 while it starts, then `idle`. The agent's own word
+    /// goes through the same launch as its screen: shown as it is, but no run finished.
     #[test]
     fn an_agents_own_working_report_at_launch_is_not_a_run() {
         use protocol::AgentState::{Idle, Working};
         let mut server = SessionServer::new_named("dev");
         pane_with_agent(&mut server, 7);
-        server.panes.get_mut(&7).unwrap().agent.startup =
-            Some(super::super::AgentStartup::new(std::time::Instant::now()));
-        let print = |server: &mut SessionServer, bytes: &[u8]| {
+        server.panes.get_mut(&7).unwrap().agent.launch = Some(Default::default());
+        let print = |server: &mut SessionServer, state: &str| {
             let screen = server.panes.get_mut(&7).unwrap().screen_mut();
             screen.set_program_status_enabled(true);
-            screen.process_bytes(bytes);
+            screen.process_bytes(format!("\x1b]7501;state={state}:app=claude-code\x07").as_bytes());
             server.sync_pane_runtime(None, 7, 1);
             protocol::agent_signature(&server.panes[&7].runtime)[0].2
         };
+        let completions = |server: &SessionServer| server.agent_records(None, 7)[0].completions;
 
-        assert_eq!(
-            print(&mut server, b"\x1b]7501;state=working:app=claude-code\x07"),
-            Idle
-        );
-        server.panes.get_mut(&7).unwrap().agent.startup = None;
-        assert_eq!(
-            print(&mut server, b"\x1b]7501;state=working:app=claude-code\x07"),
-            Working
-        );
+        assert_eq!(print(&mut server, "working"), Working);
+        assert_eq!(server.panes[&7].runtime.work_started_at, None);
+        assert_eq!(print(&mut server, "idle"), Idle);
+        assert_eq!(completions(&server), 0);
+
+        print(&mut server, "working");
+        print(&mut server, "idle");
+        assert_eq!(completions(&server), 1, "after the launch, work is a run");
     }
 
     /// A terminal keeps an agent's `error` after it exits. The next agent launched in the pane has

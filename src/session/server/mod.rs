@@ -529,15 +529,15 @@ pub struct AgentScratch {
     /// The process the sweep named as this pane's agent, so a restart under the same name is still
     /// recognized as a launch.
     pub process: Option<AgentProcess>,
-    /// Set from a launch until the agent is ready: its loading spinner is not a run. See
-    /// [`AGENT_STARTUP_GRACE`](super::runtime::AGENT_STARTUP_GRACE).
-    pub startup: Option<AgentStartup>,
+    /// Set from a launch until the agent is ready: until then, working is not a run. See
+    /// [`AgentLaunch`].
+    pub launch: Option<AgentLaunch>,
     /// Rozi is scrolling this pane to read its history, so the screen shows pages Rozi caused
     /// rather than what the agent is doing. Screen detection keeps its last answer meanwhile;
     /// integration reports still apply.
     pub history_frozen: bool,
     /// The next agent named here was already running: the definitions changed under it, so naming
-    /// it is not a launch and starts no [`Self::startup`].
+    /// it is not a launch and starts no [`Self::launch`].
     pub adopting: bool,
     /// How many agent launches this pane has seen, published as
     /// [`protocol::PaneRuntimeState::agent_launch`]. Survives
@@ -612,27 +612,17 @@ pub struct AgentProcess {
 
 /// A launched agent that has not yet shown it is ready.
 ///
-/// Ends on the first sign of a ready agent - a dialog, a prompt that stays up once its loading
-/// screen has gone, a submitted line - or after
-/// [`AGENT_STARTUP_GRACE`](super::runtime::AGENT_STARTUP_GRACE) for an agent that shows none.
-#[derive(Clone, Copy, Debug)]
-pub struct AgentStartup {
-    pub since: std::time::Instant,
-    /// The launch has drawn working evidence: its loading screen.
+/// Its state is reported as observed, but its work is not a run: an agent loading its config or
+/// connecting its MCP servers shows the same spinner a turn does, and the prompt coming up after
+/// it would read as a finished run. So while a launch lasts, working opens no run and starts no
+/// clock. A run starts on its own evidence instead: a submitted line, a prompt on the command line,
+/// or a hook reporting work. The launch ends with the first of those, or at the first settled idle
+/// after the loading screen.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AgentLaunch {
+    /// The launch has been seen working: its loading screen. A quiet screen before it is a blank or
+    /// splash frame, not the agent ready.
     pub loading_seen: bool,
-    /// When the screen last went quiet after the loading screen, to tell a prompt that has come
-    /// up from a gap in the spinner's redraw.
-    pub quiet_since: Option<std::time::Instant>,
-}
-
-impl AgentStartup {
-    pub fn new(since: std::time::Instant) -> Self {
-        Self {
-            since,
-            loading_seen: false,
-            quiet_since: None,
-        }
-    }
 }
 
 /// One state read: the text it was taken from, and what the rules made of it.

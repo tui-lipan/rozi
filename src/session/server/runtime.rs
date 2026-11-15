@@ -2669,16 +2669,16 @@ pub(super) fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::Publi
         .iter()
         .any(protocol::PublishedRow::is_agent);
     let before = pane.agent.agent_states(&pane.runtime);
-    // The claim speaks for the row as it does in the forward handoff: the agent's own report, or
-    // a hook naming the row's conversation.
+    // The claim speaks for the row only when it names the row's conversation. Even the agent's
+    // own report is bound to the conversation on screen at the last poll, which rows switched
+    // since then have left behind.
     let handed_back = (had_agent_rows && !next.iter().any(protocol::PublishedRow::is_agent))
         .then(|| protocol::active_agent_row(&pane.runtime.rows))
         .flatten()
         .map(|row| {
             let speaks_for_row = pane.runtime.integration.as_deref().is_some_and(|claim| {
-                is_program_report(claim)
-                    || claim.native_session.is_some()
-                        && claim.native_session.as_deref() == protocol::row_reporting_session(row)
+                claim.native_session.is_some()
+                    && claim.native_session.as_deref() == protocol::row_reporting_session(row)
             });
             (row.key(), speaks_for_row)
         });

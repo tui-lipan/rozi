@@ -3580,6 +3580,65 @@ mod tests {
         assert_eq!(finished, 0);
     }
 
+    /// The agent's own report is bound to the conversation on screen at the last poll. Rows that
+    /// switch conversations and are withdrawn before the next one leave it naming the old one,
+    /// which did not run the new one's turn.
+    #[test]
+    fn a_withdrawn_turn_is_not_handed_to_a_report_bound_to_another_conversation() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        let row = |id: &str, status: &str, active| protocol::PublishedRow {
+            publisher: "1/sessions".into(),
+            kind: protocol::PublisherKind::Agent,
+            id: id.into(),
+            title: id.into(),
+            status: status.into(),
+            reason: None,
+            active,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some(format!("conversation-{id}")),
+            live_session: None,
+            reported: false,
+        };
+        let rows = |server: &mut SessionServer, rows| {
+            super::super::runtime::replace_pane_rows(server.panes.get_mut(&7).unwrap(), rows);
+        };
+        rows(
+            &mut server,
+            vec![row("a", "idle", true), row("b", "idle", false)],
+        );
+        let screen = server.panes.get_mut(&7).unwrap().screen_mut();
+        screen.set_program_status_enabled(true);
+        screen.process_bytes(b"\x1b]7501;state=idle:app=claude-code\x07");
+        server.sync_pane_runtime(None, 7, 1);
+        assert_eq!(
+            server.panes[&7]
+                .runtime
+                .integration
+                .as_ref()
+                .and_then(|report| report.native_session.as_deref()),
+            Some("conversation-a")
+        );
+
+        rows(
+            &mut server,
+            vec![row("a", "idle", false), row("b", "working", true)],
+        );
+        rows(
+            &mut server,
+            vec![row("a", "idle", false), row("b", "blocked", true)],
+        );
+        rows(&mut server, Vec::new());
+        let finished: u64 = server
+            .agent_records(None, 7)
+            .iter()
+            .map(|record| record.completions)
+            .sum();
+        assert_eq!(finished, 0);
+    }
+
     /// A terminal keeps an agent's `error` after it exits. The next agent launched in the pane has
     /// not said anything yet, and is a new incarnation, not the one that failed.
     #[test]

@@ -149,6 +149,85 @@ pub(crate) fn session_actions(
     Update::full()
 }
 
+pub(crate) fn agent_requests_changed(
+    ctx: &mut Context<crate::app::AppRoot>,
+    epoch: u64,
+    requests: Vec<crate::control::AgentRequestSummary>,
+    server_now_unix_ms: u64,
+) -> Update {
+    let Some(attachment) = ctx.state.attachment_for_epoch_mut(epoch) else {
+        return Update::none();
+    };
+    attachment.agent_requests_clock = Some((server_now_unix_ms, std::time::Instant::now()));
+    let previous = std::mem::replace(&mut attachment.agent_requests, requests);
+    // Only the session on screen draws marks, so only its handoffs light them.
+    if epoch != ctx.state.runtime_epoch
+        || !(ctx.state.config.animations.enabled && ctx.state.config.animations.agent_handoff)
+    {
+        return Update::full();
+    }
+    use crate::state::HandoffDirection::{Receive, Send};
+    let mut panes = Vec::new();
+    for handoff in
+        crate::view::agent_requests::handoffs(&previous, &ctx.state.attachment.agent_requests)
+    {
+        let pane = |agent| {
+            let pane = crate::view::agent_requests::pane_of(&ctx.state, agent)?;
+            let pty_generation = crate::view::agent_requests::pty_generation(&ctx.state, pane)?;
+            Some(crate::state::HandoffTarget {
+                attachment: epoch,
+                pane,
+                pty_generation,
+            })
+        };
+        // Senders first, so a pane that sends and receives in one change shows the receiving.
+        panes.extend(handoff.sender.and_then(pane).map(|pane| (pane, Send)));
+        panes.extend(pane(handoff.receiver).map(|pane| (pane, Receive)));
+    }
+    panes.sort_by_key(|(_, direction)| *direction == Receive);
+    if panes.is_empty() {
+        return Update::full();
+    }
+    let start_tick = ctx.effect_phase();
+    let ends: Vec<_> = panes
+        .into_iter()
+        .map(|(target, direction)| {
+            (
+                target,
+                ctx.state.agent_handoff.start(target, start_tick, direction),
+            )
+        })
+        .collect();
+    Update::full().merge(Update::with_command(Command::spawn(
+        move |link: CommandLink<crate::Msg>| {
+            for (target, revision) in ends {
+                link.send_after(
+                    AGENT_HANDOFF,
+                    crate::Msg::AgentHandoffEnded { target, revision },
+                );
+            }
+        },
+    )))
+}
+
+/// How long a handoff ripple plays, with a frame to spare: 16 ms effect ticks.
+const AGENT_HANDOFF: std::time::Duration = std::time::Duration::from_millis(
+    crate::view::pane_particles::HANDOFF_RIPPLE_TICKS as u64 * 16 + 50,
+);
+
+/// The ripple has played: drop it, so its pane stops asking for effect ticks.
+pub(crate) fn agent_handoff_ended(
+    ctx: &mut Context<crate::app::AppRoot>,
+    target: crate::state::HandoffTarget,
+    revision: u64,
+) -> Update {
+    if ctx.state.agent_handoff.end(target, revision) {
+        Update::full()
+    } else {
+        Update::none()
+    }
+}
+
 pub(crate) fn session_notifications(
     ctx: &mut Context<crate::app::AppRoot>,
     epoch: u64,

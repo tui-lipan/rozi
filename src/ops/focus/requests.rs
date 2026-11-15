@@ -117,6 +117,20 @@ pub(crate) fn request_remote_picker_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::remote_picker_key());
 }
 
+/// Focus the Agent conversations list, or the chain diagram when one is showing.
+pub(crate) fn request_agent_conversations_focus(ctx: &mut Context<AppRoot>) {
+    let chain = ctx
+        .state
+        .agent_conversations
+        .as_ref()
+        .is_some_and(|view| view.chain.is_some());
+    if chain {
+        focus_key(ctx, view::agent_conversations_chain_key());
+    } else {
+        focus_key(ctx, view::agent_conversations_key());
+    }
+}
+
 pub(crate) fn request_agent_picker_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::agent_picker_key());
 }

@@ -461,6 +461,20 @@ have not ended share a 16 MiB storage budget, including their prompts. A reply t
 remaining budget is refused with `conflict`; the request remains unanswered. Requests do not
 survive a session restart.
 
+### Watch agents talk
+
+A pane's title shows its agent's open requests: `→2` for two it asked and waits on, `←1` for one it
+was asked. When a request is delivered or answered, light runs along the borders of both panes at
+once: outward from the marks of the pane that sent it, and inward into the marks of the pane that
+received it. Turn this off with `animations.agent_handoff`.
+
+**Agent conversations…** in the command palette (`agent-conversations`) lists the session's
+requests, each chain together with the requests asked while answering another nested under it,
+and the ones still waiting first. `Enter` draws a chain as a sequence diagram: a lifeline per
+agent, a bar while an agent owes an answer, and a dashed arrow back when it answers, fails, or is
+cancelled. `Ctrl+G` goes to the agent a request was sent to. Neither shows what was asked or
+answered; read that with `agents request <ID>`.
+
 ### Report state from agent hooks
 
 Agent hooks can report state that screen detection cannot see:

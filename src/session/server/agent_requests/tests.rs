@@ -284,6 +284,10 @@ fn requests_reach_a_target_one_turn_at_a_time() {
     let second = rig.ask(Some(2), 3, "and the lexer");
     assert_eq!(first.state, AgentRequestState::Queued);
     assert_eq!(first.reason.as_deref(), Some("the agent is working"));
+    // Both sides are named as they were when it was asked, so the request keeps naming them after
+    // either agent is gone.
+    assert_eq!(first.from_label.as_deref(), Some("Claude Code"));
+    assert_eq!(first.to_label.as_deref(), Some("Claude Code"));
 
     rig.set_state(3, DetectedAgentState::Idle);
     assert_eq!(rig.request(&first.id).state, AgentRequestState::Active);
@@ -458,6 +462,55 @@ fn a_promised_answer_fails_when_its_agent_changes_conversation() {
     );
 }
 
+/// The request lists queued for `client` and not yet sent, in order.
+fn request_lists(server: &SessionServer, client: ClientId) -> Vec<Vec<String>> {
+    use super::super::tests::{DecodedOutboxFrame, decode_outbox_frames};
+    decode_outbox_frames(server.client(client).expect("attached client"))
+        .into_iter()
+        .filter_map(|frame| match frame {
+            DecodedOutboxFrame::Control(message) => match *message {
+                protocol::ServerMessage::AgentRequestsChanged { requests, .. } => {
+                    Some(requests.into_iter().map(|request| request.id).collect())
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn attached_clients_hear_of_each_change_and_a_new_one_gets_the_list() {
+    let mut rig = Rig::new(&[2, 3]);
+    let (first, _first_stream) = super::super::tests::attach_client(&mut rig.server);
+
+    let asked = rig.ask(Some(2), 3, "review the parser");
+    rig.server.broadcast_agent_request_changes();
+    rig.server.broadcast_agent_request_changes();
+    assert_eq!(
+        request_lists(&rig.server, first),
+        [vec![asked.id.clone()]],
+        "one change is one message"
+    );
+
+    let (second, _second_stream) = super::super::tests::add_client(&mut rig.server);
+    rig.server.handle_message(
+        second,
+        protocol::ClientMessage::Attach {
+            capabilities: Some(protocol::Capabilities::current()),
+            session: rig.server.session_name.clone(),
+            protocol_version: protocol::PROTOCOL_VERSION,
+            min_protocol_version: protocol::PROTOCOL_VERSION,
+            label: "second".into(),
+            read_only: false,
+            shares_filesystem: true,
+            expected_server_nonce: None,
+            handoff_token: None,
+        },
+    );
+    assert_eq!(request_lists(&rig.server, second), [vec![asked.id]]);
+}
+
 #[test]
 fn a_locked_or_replaced_target_is_never_typed_into() {
     let mut rig = Rig::new(&[2, 3]);
@@ -622,6 +675,8 @@ fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
                 from_native_session: None,
                 to: to.clone(),
                 to_native_session: None,
+                from_label: None,
+                to_label: None,
                 prompt: String::new(),
                 state: AgentRequestState::Answered,
                 reason: None,

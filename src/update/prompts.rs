@@ -533,6 +533,8 @@ fn close_or_advance_askpass(ctx: &mut Context<AppRoot>) -> Update {
         crate::ops::focus::request_session_picker_focus(ctx);
     } else if ctx.state.agent_picker.is_some() {
         crate::ops::focus::request_agent_picker_focus(ctx);
+    } else if ctx.state.agent_conversations.is_some() {
+        crate::ops::agent_conversations::request_focus(ctx);
     } else {
         request_current_pane_focus(ctx);
     }

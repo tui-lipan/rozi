@@ -9,9 +9,9 @@ use super::responses::MAX_RESPONSE_BYTES;
 use super::waits::{AgentTurnTracker, WaitKey};
 use super::*;
 use crate::control::{
-    AgentRequestDirection, AgentRequestInfo, AgentRequestList, AgentRequestState, AgentResponse,
-    AgentResponseFidelity, AgentResponsePayload, AgentResponseSource, AgentTarget,
-    ControlErrorCode, ControlResponse,
+    AgentRequestDirection, AgentRequestInfo, AgentRequestList, AgentRequestState,
+    AgentRequestSummary, AgentResponse, AgentResponseFidelity, AgentResponsePayload,
+    AgentResponseSource, AgentTarget, ControlErrorCode, ControlResponse,
 };
 
 const MAX_PROMPT_BYTES: usize = 64 * 1024;
@@ -45,6 +45,11 @@ pub(super) struct AgentRequestStore {
     stopped_since: HashMap<protocol::AgentRef, Instant>,
     pub(super) quiet: Duration,
     undetected_turn: Duration,
+    /// Bumped on every change to `requests`, so attached clients are told only when it moves.
+    revision: u64,
+    /// The revision attached clients were last sent, and what they were sent.
+    sent_revision: u64,
+    sent: Vec<AgentRequestSummary>,
 }
 
 impl Default for AgentRequestStore {
@@ -57,6 +62,9 @@ impl Default for AgentRequestStore {
             stopped_since: HashMap::new(),
             quiet: QUIET_WINDOW,
             undetected_turn: UNDETECTED_TURN,
+            revision: 0,
+            sent_revision: 0,
+            sent: Vec::new(),
         }
     }
 }
@@ -106,6 +114,7 @@ impl AgentRequestStore {
     /// so a later conversation in that row cannot answer it.
     pub(super) fn handoff(&mut self, handoff: &super::responses::AgentHandoff) {
         let (old, new) = (&handoff.old, &handoff.new);
+        self.revision += 1;
         for stored in &mut self.requests {
             if stored.info.to == *old {
                 stored.info.to = new.clone();
@@ -152,6 +161,7 @@ impl AgentRequestStore {
     }
 
     fn info_mut(&mut self, id: &str) -> Option<&mut AgentRequestInfo> {
+        self.revision += 1;
         self.requests
             .iter_mut()
             .find(|stored| stored.info.id == id)
@@ -392,8 +402,35 @@ impl AgentRequestStore {
                 break;
             };
             resolved_bytes -= request_bytes(&self.requests.remove(index).info);
+            self.revision += 1;
             resolved_count -= 1;
         }
+    }
+}
+
+/// How many settled requests attached clients are shown besides every live one.
+const SHOWN_SETTLED: usize = 32;
+
+impl AgentRequestStore {
+    /// What attached clients are shown: every live request and the most recently settled ones,
+    /// oldest first, without prompts or answers.
+    fn summaries(&self) -> Vec<AgentRequestSummary> {
+        let mut settled: Vec<&AgentRequestInfo> = self
+            .requests
+            .iter()
+            .map(|stored| &stored.info)
+            .filter(|info| info.state.is_resolved())
+            .collect();
+        settled.sort_by_key(|info| std::cmp::Reverse(info.updated_at_unix_ms));
+        settled.truncate(SHOWN_SETTLED);
+        self.requests
+            .iter()
+            .map(|stored| &stored.info)
+            .filter(|info| {
+                !info.state.is_resolved() || settled.iter().any(|shown| shown.id == info.id)
+            })
+            .map(AgentRequestSummary::from)
+            .collect()
     }
 }
 
@@ -472,10 +509,19 @@ impl SessionServer {
             Some((parent, root, depth)) => (Some(parent), root, depth),
             None => (None, id.clone(), 1),
         };
+        let label = |agent: &protocol::AgentRef| {
+            self.current_agent_runtime(agent)
+                .ok()
+                .map(|runtime| runtime.label)
+        };
+        let from_label = from.as_ref().and_then(label);
+        let to_label = label(&to);
         let info = AgentRequestInfo {
             id: id.clone(),
             root,
             parent,
+            from_label,
+            to_label,
             from_native_session: from
                 .as_ref()
                 .and_then(|from| self.response_native_session(from)),
@@ -489,6 +535,7 @@ impl SessionServer {
             created_at_unix_ms: now,
             updated_at_unix_ms: now,
         };
+        self.agent_requests.revision += 1;
         self.agent_requests.requests.push(StoredRequest {
             info,
             depth,
@@ -542,6 +589,32 @@ impl SessionServer {
         ControlResponse::ok(answered)
     }
 
+    /// The requests attached clients are shown, for a client that has just attached.
+    pub(super) fn agent_requests_message(&self) -> protocol::ServerMessage {
+        protocol::ServerMessage::AgentRequestsChanged {
+            requests: self.agent_requests.sent.clone(),
+            server_now_unix_ms: crate::runtime_metrics::unix_time_millis(),
+        }
+    }
+
+    /// Tell attached clients about requests that changed since they were last told.
+    pub(super) fn broadcast_agent_request_changes(&mut self) {
+        let store = &mut self.agent_requests;
+        if store.revision == store.sent_revision {
+            return;
+        }
+        store.sent_revision = store.revision;
+        let requests = store.summaries();
+        if requests == store.sent {
+            return;
+        }
+        store.sent = requests.clone();
+        self.broadcast_control(&protocol::ServerMessage::AgentRequestsChanged {
+            requests,
+            server_now_unix_ms: crate::runtime_metrics::unix_time_millis(),
+        });
+    }
+
     /// Keep request `id` open for its agent to reply after the turn it was delivered in: that
     /// turn's end no longer answers it from the terminal, and the agent can take the next request.
     pub(super) fn reply_later(
@@ -576,6 +649,7 @@ impl SessionServer {
                 .fence()
                 .and_then(|fence| fence.native_session.clone());
         }
+        self.agent_requests.revision += 1;
         let stored = self
             .agent_requests
             .requests

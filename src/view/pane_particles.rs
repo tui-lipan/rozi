@@ -1,14 +1,17 @@
 //! Pane-specific ballistic fragments. The framework owns timing, prepared effects and compositing;
 //! this module supplies the art direction and the particle trajectories.
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::layout::anim::PanePaintMotion;
+use tui_lipan::CellMask;
 use tui_lipan::prelude::*;
 
 const PAD_X: i16 = 22;
 const PAD_Y: i16 = 18;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn particle_pane(
     child: Element,
     rect: FloatRect,
@@ -17,6 +20,7 @@ pub(crate) fn particle_pane(
     seed: u64,
     key: Key,
     theme: &Theme,
+    handoff: Option<(u64, crate::state::HandoffDirection)>,
 ) -> (FloatRect, Element) {
     // Keep this wrapper mounted at rest as well: changing terminal ancestry on the final frame
     // would lose focus and force a terminal remount. Only the effect itself comes and goes.
@@ -49,6 +53,14 @@ pub(crate) fn particle_pane(
             theme.border_active,
         ));
     }
+    if let Some((start_tick, direction)) = handoff {
+        scope = scope.effect(handoff_ripple(
+            inner,
+            start_tick,
+            direction,
+            theme.border_active,
+        ));
+    }
     let outer = FloatRect {
         x: f32::from(left),
         y: f32::from(top),
@@ -56,6 +68,67 @@ pub(crate) fn particle_pane(
         h: f32::from(inner.y) + f32::from(pane.h) + f32::from(pad_y),
     };
     (outer, Element::from(scope).key(key))
+}
+
+/// How long a handoff ripple runs, in effect ticks of 16 ms.
+pub(crate) const HANDOFF_RIPPLE_TICKS: u32 = 54;
+
+/// Light running along `pane`'s border, anchored at the request marks in its top right. A pane
+/// that sent a request or an answer lets it run outward from the marks; the pane that received it
+/// gathers it inward into them, at full strength, so the receiver leads and a pair started on the
+/// same tick reads as one exchange.
+fn handoff_ripple(
+    pane: Rect,
+    start_tick: u64,
+    direction: crate::state::HandoffDirection,
+    color: Color,
+) -> VisualEffect {
+    use crate::state::HandoffDirection;
+    let (w, h) = (f32::from(pane.w), f32::from(pane.h));
+    let reach = w.hypot(h) + 2.0;
+    let (radius, strength) = match direction {
+        HandoffDirection::Receive => (
+            RippleRadius::collapse(reach, HANDOFF_RIPPLE_TICKS, start_tick),
+            1.0,
+        ),
+        HandoffDirection::Send => (
+            RippleRadius::once(reach * 0.75, HANDOFF_RIPPLE_TICKS, start_tick),
+            0.7,
+        ),
+    };
+    let ripple = VisualEffect::Ripple {
+        origin: EffectOrigin::cell(f32::from(pane.x) + (w - 4.0).max(0.0), f32::from(pane.y)),
+        radius,
+        // A wide ring crosses the one-cell border as a streak of light rather than a dot.
+        ring_width: 8.0,
+        tint: color,
+        strength,
+    };
+    VisualEffect::Clipped {
+        bounds: Some(pane),
+        mask: Some(Arc::new(border_mask(pane))),
+        inner: Box::new(ripple),
+    }
+}
+
+/// The cells of `pane`'s border, in the scope's coordinates.
+fn border_mask(pane: Rect) -> CellMask {
+    let (w, h) = (usize::from(pane.w), usize::from(pane.h));
+    let mut bits = vec![0u64; (w * h).div_ceil(64)];
+    for y in 0..h {
+        for x in 0..w {
+            if y == 0 || y + 1 == h || x == 0 || x + 1 == w {
+                let index = y * w + x;
+                bits[index / 64] |= 1 << (index % 64);
+            }
+        }
+    }
+    CellMask {
+        origin: (pane.x.max(0) as u16, pane.y.max(0) as u16),
+        w: pane.w,
+        h: pane.h,
+        bits: bits.into(),
+    }
 }
 
 #[derive(Debug)]
@@ -583,6 +656,7 @@ mod tests {
                 4,
                 "particles".into(),
                 &ctx.theme(),
+                None,
             );
             Canvas::new().child_at(rect.to_rect(), element).into()
         }
@@ -616,6 +690,7 @@ mod tests {
                     4,
                     "particles".into(),
                     &theme,
+                    None,
                 );
                 let (outer, pane) = (outer.to_rect(), rect.to_rect());
                 assert_eq!(

@@ -947,6 +947,8 @@ pub struct WindowAnimationConfig {
     pub toast: ToastAnimationStyle,
     pub cursor_trail: CursorTrailConfig,
     pub focus_chrome: bool,
+    /// Ripples along the borders of panes whose agents send or receive a request or an answer.
+    pub agent_handoff: bool,
     pub pane_open_style: PaneAnimationStyle,
     pub pane_close_style: PaneAnimationStyle,
     pub pane_overrides: PaneAnimationOverrides,
@@ -974,6 +976,7 @@ impl Default for WindowAnimationConfig {
             toast: ToastAnimationStyle::default(),
             cursor_trail: CursorTrailConfig::default(),
             focus_chrome: true,
+            agent_handoff: true,
             pane_open_style: PaneAnimationStyle::Scale,
             pane_close_style: PaneAnimationStyle::Scale,
             pane_overrides: PaneAnimationOverrides::default(),

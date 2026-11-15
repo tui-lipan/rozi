@@ -221,6 +221,7 @@ pub(crate) fn placement(ctx: &Context<AppRoot>) -> Option<(FloatRect, Element)> 
         u64::from(pane.id),
         "rozi-popup-presentation".into(),
         &ctx.state.theme,
+        None,
     ))
 }
 

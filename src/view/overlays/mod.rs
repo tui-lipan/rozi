@@ -26,6 +26,7 @@ pub(in crate::view::overlays) use super::{
     rozi_chrome, rozi_fg, search_entries_with_groups, shared_search_palette, styled_modal,
 };
 
+mod agent_conversations;
 mod agents;
 mod commands;
 mod common;
@@ -48,6 +49,7 @@ mod settings;
 mod welcome;
 mod worktrees;
 
+pub(crate) use agent_conversations::agent_conversations_overlay;
 pub(crate) use agents::agent_picker_overlay;
 pub(crate) use commands::palette_overlay;
 pub(crate) use confirm::{DIALOG_AFFIRM, DIALOG_REFUSE};

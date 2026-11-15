@@ -1974,9 +1974,23 @@ mod tests {
         // No session attached, or nothing required: nothing to disable.
         assert_eq!(capability_disabled_reason(required, None), None);
         assert_eq!(capability_disabled_reason(None, Some(&without)), None);
-        // Every built-in action is baseline of this wire generation.
+        // Every built-in action is baseline of this wire generation, except the one that lists
+        // the requests only a newer session sends.
         for command in crate::commands::BUILTIN_COMMANDS {
-            assert_eq!(command.action.required_capability(), None);
+            let expected = match command.action {
+                crate::input::Action::OpenAgentConversations => {
+                    Some(Capability::AgentRequestUpdates)
+                }
+                _ => None,
+            };
+            assert_eq!(command.action.required_capability(), expected);
         }
+        let older = Capabilities::current().without(Capability::AgentRequestUpdates);
+        assert_eq!(
+            crate::input::Action::OpenAgentConversations
+                .disabled_reason_for_capabilities(Some(&older))
+                .as_deref(),
+            Some("needs this session on rozi ≥ 0.0.48")
+        );
     }
 }

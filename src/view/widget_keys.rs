@@ -66,6 +66,14 @@ pub fn port_form_input_key() -> &'static str {
     "rozi-port-form-input"
 }
 
+pub fn agent_conversations_key() -> &'static str {
+    "rozi-agent-conversations"
+}
+
+pub fn agent_conversations_chain_key() -> &'static str {
+    "rozi-agent-conversations-chain"
+}
+
 pub fn agent_picker_key() -> &'static str {
     "rozi-agent-picker"
 }

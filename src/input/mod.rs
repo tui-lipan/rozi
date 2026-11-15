@@ -65,6 +65,8 @@ pub enum Action {
     /// The global Agents view: every agent this client knows about, here and on every connected
     /// host, with `Enter` landing on the one under the cursor.
     OpenAgentPicker,
+    /// The requests between the session's agents, and each chain of them as a sequence diagram.
+    OpenAgentConversations,
     OpenCollaborators,
     RenameSession,
     NewTemporarySession,
@@ -216,6 +218,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::OpenSessionPicker,
     Action::OpenPorts,
     Action::OpenAgentPicker,
+    Action::OpenAgentConversations,
     Action::OpenCollaborators,
     Action::RenameSession,
     Action::NewTemporarySession,
@@ -352,6 +355,7 @@ impl Action {
             Action::OpenSessionPicker => "sessions",
             Action::OpenPorts => "ports",
             Action::OpenAgentPicker => "agents",
+            Action::OpenAgentConversations => "agent-conversations",
             Action::OpenCollaborators => "collaborators",
             Action::RenameSession => "rename-session",
             Action::NewTemporarySession => "new-temporary-session",
@@ -453,6 +457,10 @@ impl Action {
     /// negotiated [`crate::session::protocol::Capability`].
     pub const fn required_capability(self) -> Option<crate::session::protocol::Capability> {
         match self {
+            // Listed from the requests the session sends, which an older server never does.
+            Action::OpenAgentConversations => {
+                Some(crate::session::protocol::Capability::AgentRequestUpdates)
+            }
             Action::Spawn
             | Action::SpawnFloat
             | Action::RespawnPane

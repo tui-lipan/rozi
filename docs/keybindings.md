@@ -135,6 +135,7 @@ These actions are available in the command palette, and you can bind them under 
 - `focus-next-blocked-pane`
 - `focus-next-agent-needing-attention`, which goes to the next agent waiting for you, failed, or
   finished unseen, in any session or on any connected host; see [Agents](sidebar.md#agents)
+- `agent-conversations`; see [Watch agents talk](agents.md#watch-agents-talk)
 - `smart-focus-left`, `smart-focus-down`, `smart-focus-up`, `smart-focus-right`
 - `settings`
 - `extensions`

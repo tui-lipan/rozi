@@ -50,6 +50,19 @@ pub(crate) const SEPARATOR: &str = " · ";
 /// session family and the idle agent glyph already use.
 pub(crate) const BACKGROUND_RUN: &str = "⧉";
 
+/// Marks requests between agents: one this agent asked and waits on, and one it was asked and owes
+/// an answer to. Followed by a count wherever they stand.
+pub(crate) const ASKING: &str = "→";
+pub(crate) const ANSWERING: &str = "←";
+
+/// A request between agents: queued until it is typed into its agent, then waiting on its answer.
+pub(crate) const REQUEST_QUEUED: &str = "Queued";
+pub(crate) const REQUEST_ACTIVE: &str = "Asked";
+pub(crate) const REQUEST_LATER: &str = "Answering later";
+pub(crate) const REQUEST_ANSWERED: &str = "Answered";
+pub(crate) const REQUEST_FAILED: &str = "Failed";
+pub(crate) const REQUEST_CANCELLED: &str = "Cancelled";
+
 /// The one you are in: the session on screen in Sessions, the agent on screen in Agents.
 pub(crate) const CURRENT: &str = "Current";
 

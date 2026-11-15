@@ -606,14 +606,21 @@ pub fn write_scrollback_dump(env: &PlatformEnv, pane_id: u64, text: &str) -> io:
         .unwrap_or(0);
     let path = dir.join(format!("pane-{pane_id}-{stamp}.txt"));
     fs_security::write_private_file(&path, text.as_bytes())?;
-    prune_scrollback_dumps(&dir, SCROLLBACK_DUMP_CAP)?;
+    prune_oldest(&dir, SCROLLBACK_DUMP_CAP, |path| {
+        path.extension().is_some_and(|ext| ext == "txt")
+    })?;
     Ok(path)
 }
 
-fn prune_scrollback_dumps(dir: &std::path::Path, cap: usize) -> io::Result<()> {
+/// Delete the oldest files `counts` accepts until at most `cap` of them are left in `dir`.
+fn prune_oldest(
+    dir: &std::path::Path,
+    cap: usize,
+    counts: impl Fn(&std::path::Path) -> bool,
+) -> io::Result<()> {
     let mut entries: Vec<_> = fs::read_dir(dir)?
         .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "txt"))
+        .filter(|entry| counts(&entry.path()))
         .collect();
     if entries.len() <= cap {
         return Ok(());
@@ -621,9 +628,84 @@ fn prune_scrollback_dumps(dir: &std::path::Path, cap: usize) -> io::Result<()> {
     entries.sort_by_key(|entry| entry.metadata().and_then(|meta| meta.modified()).ok());
     let remove_count = entries.len().saturating_sub(cap);
     for entry in entries.into_iter().take(remove_count) {
-        let _ = fs::remove_file(entry.path());
+        let path = entry.path();
+        // Windows refuses to delete a read-only file.
+        #[cfg(windows)]
+        if let Ok(metadata) = entry.metadata() {
+            let mut permissions = metadata.permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            let _ = fs::set_permissions(&path, permissions);
+        }
+        let _ = fs::remove_file(path);
     }
     Ok(())
+}
+
+const REMOTE_FILE_COPY_CAP: usize = 20;
+
+/// Write a private, read-only copy of a file fetched from a remote host, to open on this machine.
+///
+/// The copy keeps the file's name, which is how the system picks an application for it, and is
+/// read-only because saving into it would change nothing on the host. Older copies are pruned so
+/// the directory stays near [`REMOTE_FILE_COPY_CAP`] files.
+pub fn write_remote_file_copy(env: &PlatformEnv, name: &str, bytes: &[u8]) -> io::Result<PathBuf> {
+    let dir = cache_dir(env).join("remote-files");
+    fs_security::ensure_private_dir(&dir)?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let name: String = name
+        .chars()
+        .rev()
+        .take(120)
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '.' | '-' | '_' | ' ') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let path = dir.join(format!("{stamp}-{name}"));
+    fs_security::write_private_file(&path, bytes)?;
+    let mut permissions = fs::metadata(&path)?.permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&path, permissions)?;
+    prune_oldest(&dir, REMOTE_FILE_COPY_CAP, |_| true)?;
+    Ok(path)
+}
+
+/// `path`, as a pane shows it, as an absolute path on this machine: `~` is `home` and a relative
+/// path starts at `cwd`. `None` when it is relative to something unknown.
+pub fn absolute_shown_path(
+    path: &str,
+    cwd: Option<&std::path::Path>,
+    home: Option<&std::path::Path>,
+) -> Option<PathBuf> {
+    let home_relative = path
+        .strip_prefix('~')
+        .filter(|rest| rest.is_empty() || rest.starts_with(['/', std::path::MAIN_SEPARATOR]));
+    if let Some(rest) = home_relative {
+        let rest = rest.trim_start_matches(['/', std::path::MAIN_SEPARATOR]);
+        return Some(home?.join(rest));
+    }
+    let path = std::path::Path::new(path);
+    if path.is_absolute() {
+        return Some(path.to_path_buf());
+    }
+    // Drop the `.` of `./src/main.rs` so the result is the path a user would write. `..` stays:
+    // removing it without asking the file system would be wrong across a symbolic link.
+    Some(
+        cwd?.join(path)
+            .components()
+            .filter(|part| *part != std::path::Component::CurDir)
+            .collect(),
+    )
 }
 
 /// Normalize a working directory reported by a shell (`OSC 7` / `OSC 9;9`) into the platform's
@@ -1300,6 +1382,18 @@ mod tests {
     #[test]
     fn state_is_unavailable_rather_than_relative_to_the_working_directory() {
         assert_eq!(state_dir_if_available(&PlatformEnv::default()), None);
+    }
+
+    #[test]
+    fn a_remote_file_copy_keeps_its_extension_and_cannot_be_written() {
+        let home = tempfile::tempdir().unwrap();
+        let env = env_with_home(&home.path().display().to_string());
+        let copy = write_remote_file_copy(&env, "../build log.PNG", b"png").unwrap();
+        let name = copy.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.ends_with("-.._build log.PNG"), "{name}");
+        assert!(copy.starts_with(cache_dir(&env).join("remote-files")));
+        assert_eq!(fs::read(&copy).unwrap(), b"png");
+        assert!(fs::metadata(&copy).unwrap().permissions().readonly());
     }
 
     #[test]

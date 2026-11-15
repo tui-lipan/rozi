@@ -77,6 +77,26 @@ pub(crate) fn run_remote_worktrees_cli() -> Result<()> {
     }
 }
 
+/// `--remote-read-file`: send one file from this host to the client that asked for it.
+///
+/// A file that cannot be sent is still an answer, printed like a success. A non-zero exit means
+/// the request could not be read at all.
+pub(crate) fn run_remote_read_file_cli() -> Result<()> {
+    match session::remote::files::run_remote_read_file() {
+        Ok(reply) => {
+            println!(
+                "{}",
+                serde_json::to_string(&reply).map_err(std::io::Error::other)?
+            );
+            Ok(())
+        }
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+    }
+}
+
 pub(super) fn format_sessions_text(
     rows: &[session::discovery::DiscoveredSession],
     styles: OutputStyles,

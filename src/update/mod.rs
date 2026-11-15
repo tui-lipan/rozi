@@ -120,6 +120,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             crate::ops::screenshot::screenshot_saved(ctx, target, path)
         }
         Msg::OpenScreenshot(path) => crate::ops::screenshot::open_screenshot(ctx, path),
+        Msg::RemoteFileFetched(result) => crate::ops::links::remote_file_fetched(ctx, result),
         Msg::ScreenshotFailed { error } => crate::ops::screenshot::screenshot_failed(ctx, error),
         Msg::CloseRecordingMark => crate::ops::recording::close_mark_prompt(ctx),
         Msg::RecordingMarkChanged(event) => crate::ops::recording::mark_prompt_changed(ctx, event),

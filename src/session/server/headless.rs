@@ -1456,8 +1456,17 @@ impl SessionServer {
                     "agent incarnation was replaced",
                 )
             })?;
-        validate_agent_result_state(runtime.state, request.result)?;
-        validate_agent_prompt_state(runtime.state, request.allow_working)?;
+        // A launching agent's working is its loading, and a prompt is the work it is waiting for.
+        let loading = runtime.state == protocol::AgentState::Working
+            && reference.slot.is_none()
+            && pane.agent.launch.is_some();
+        let state = if loading {
+            protocol::AgentState::Idle
+        } else {
+            runtime.state
+        };
+        validate_agent_result_state(state, request.result)?;
+        validate_agent_prompt_state(state, request.allow_working)?;
         Ok(reference)
     }
 
@@ -3388,6 +3397,76 @@ mod tests {
         print(&mut server, "working");
         print(&mut server, "idle");
         assert_eq!(completions(&server), 1, "after the launch, work is a run");
+    }
+
+    /// A launching agent's loading reads as working, and a prompt is the work it is waiting for:
+    /// neither a plain prompt nor one asking for its result is refused for it.
+    #[test]
+    fn a_prompt_to_a_launching_agent_is_not_refused_as_working() {
+        for (launching, result, refused) in [
+            (true, false, false),
+            (true, true, false),
+            (false, true, true),
+        ] {
+            let mut server = SessionServer::new_named("dev");
+            pane_with_agent(&mut server, 7);
+            let pane = server.panes.get_mut(&7).unwrap();
+            pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+                agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+                state: protocol::DetectedAgentState::Working,
+            });
+            pane.agent.launch = launching.then(Default::default);
+            let response = server
+                .register_agent_prompt(
+                    1,
+                    SessionAgentPrompt {
+                        result,
+                        target: AgentTarget::Pane(7),
+                        prompt: "fix the tests",
+                        wait: result.then_some(crate::control::AgentWaitCondition::Turn),
+                        timeout_ms: Some(1000),
+                        capture: None,
+                        allow_working: false,
+                    },
+                    ReplyTo::Headless {
+                        capabilities: protocol::Capabilities::default(),
+                        effective_protocol: PROTOCOL_VERSION,
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                response.code == Some(ControlErrorCode::Conflict),
+                refused,
+                "launching {launching}, result {result}: {response:?}"
+            );
+        }
+    }
+
+    /// A hook report refused for naming another agent says nothing about the launch, whose loading
+    /// still finishes no run.
+    #[test]
+    fn a_refused_working_report_does_not_end_a_launch() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        server.panes.get_mut(&7).unwrap().agent.launch = Some(Default::default());
+        let refused = server.apply_agent_integration(
+            None,
+            7,
+            1,
+            super::super::runtime::AgentIntegrationUpdate {
+                response: None,
+                agent: Some("codex".into()),
+                integration: "hook-a".into(),
+                state: Some(protocol::AgentState::Working),
+                reason: None,
+                native_session: None,
+                unless_quiet: None,
+                ended: false,
+                seq: 1,
+            },
+        );
+        assert!(refused.is_err());
+        assert!(server.panes[&7].agent.launch.is_some());
     }
 
     /// A terminal keeps an agent's `error` after it exits. The next agent launched in the pane has

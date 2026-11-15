@@ -432,9 +432,7 @@ impl SessionServer {
             && let Some(pty) = &pane.pty
         {
             let _ = pty.write(bytes);
-            if super::runtime::input_starts_run(&pane.runtime, bytes) {
-                pane.agent.start_run();
-            }
+            pane.agent.note_input(&pane.runtime, bytes);
         }
     }
 

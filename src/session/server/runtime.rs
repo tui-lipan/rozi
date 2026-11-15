@@ -231,7 +231,11 @@ impl AgentScratch {
                 continue;
             };
             match entry.state {
-                protocol::AgentState::Working => tracked.run_open |= counting,
+                // A launch is only ambiguous for what the pane's own screen or report says. A
+                // published conversation's state is the publisher's word about a real turn.
+                protocol::AgentState::Working => {
+                    tracked.run_open |= counting || entry.slot.is_some();
+                }
                 protocol::AgentState::Blocked => {}
                 state => {
                     if tracked.run_open && state.is_quiescent() {
@@ -260,6 +264,37 @@ impl AgentScratch {
     /// work that was already on screen as the launch's loading.
     pub(super) fn start_run(&mut self) {
         self.launch = None;
+    }
+
+    /// Note input written to the pane: a submitted line gives a launching agent work, so its run
+    /// starts. A line typed into a dialog answers it instead - the loading after a trust prompt is
+    /// still loading.
+    ///
+    /// The dialog is the one the latest reading shows, not the settled state, which keeps a dialog
+    /// up for a moment after it closes. And a reading's dialog is answered once: a second line typed
+    /// before anything new is read goes to whatever came after it.
+    pub(super) fn note_input(&mut self, runtime: &PaneRuntimeState, bytes: &[u8]) {
+        if self.launch.is_none() || !input_submits_line(bytes) {
+            return;
+        }
+        let blocked = match runtime.integration.as_deref() {
+            Some(report) => report.state == protocol::AgentState::Blocked,
+            None => self
+                .read
+                .as_ref()
+                .and_then(|read| read.resolved.as_ref())
+                .is_some_and(|detected| detected.state == protocol::DetectedAgentState::Blocked),
+        };
+        let screen = self.read.as_ref().map(|read| read.screen.clone());
+        let answered = matches!(
+            (&screen, &self.answered),
+            (Some(screen), Some(answered)) if std::sync::Arc::ptr_eq(screen, answered)
+        );
+        if blocked && !answered {
+            self.answered = screen;
+        } else {
+            self.start_run();
+        }
     }
 
     fn ensure_reference(
@@ -1406,10 +1441,7 @@ impl SessionServer {
             }
             fold_row_reports(&mut pane.runtime.rows, &pane.agent.row_reports);
         } else if let Some((state, reason, native_session)) = report {
-            // A hook reports work when the agent is given some, which a loading screen is not.
-            if state == protocol::AgentState::Working {
-                pane.agent.start_run();
-            }
+            let starts_run = state == protocol::AgentState::Working;
             pane.runtime.integration = Some(Box::new(build_integration_report(
                 session_instance,
                 pane_id,
@@ -1425,6 +1457,10 @@ impl SessionServer {
                 seq,
                 previous.as_deref(),
             )?));
+            // A hook reports work when the agent is given some, which a loading screen is not.
+            if starts_run {
+                pane.agent.start_run();
+            }
             // Settled now, not at the next poll: a confirmation with no screen to wait for, or a
             // dialog already up, says what the pane reads as straight away.
             let detected = pane.runtime.detected_agent.clone();
@@ -2627,9 +2663,11 @@ pub(super) fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::Publi
     if had_agent_rows || has_agent_rows {
         pane.agent.hold = None;
     }
-    // Live agent rows speak for the pane's conversations again.
+    // Live agent rows speak for the pane's conversations again, and for whatever a launch was
+    // still loading: no screen speaks for the pane while they do.
     if has_agent_rows {
         pane.agent.retained_resume = None;
+        pane.agent.start_run();
     }
     pane.agent.observe(before, &pane.runtime);
     pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
@@ -3134,18 +3172,6 @@ fn advance_launch(
         Some(state) if state.is_quiescent() && phase.loading_seen => *launch = None,
         _ => {}
     }
-}
-
-/// Whether input written to a pane gives its agent work: a submitted line, unless the agent is
-/// blocked, when the line answers its dialog instead - the loading after a launch's trust prompt
-/// is still loading.
-pub(super) fn input_starts_run(runtime: &PaneRuntimeState, bytes: &[u8]) -> bool {
-    let answering = protocol::effective_semantic_agent_state(
-        runtime.integration.as_deref(),
-        runtime.status.as_ref(),
-        runtime.detected_agent.as_ref(),
-    ) == Some(protocol::AgentState::Blocked);
-    !answering && input_submits_line(bytes)
 }
 
 /// Whether input written to a pane submits a line: Enter as a plain carriage return, or as the
@@ -5480,20 +5506,78 @@ mod tests {
     }
 
     /// Answering a launch's trust prompt with Enter submits a line, but gives the agent no work.
+    /// The next line goes to the composer, even while the settled state still shows the dialog.
     #[test]
     fn a_line_starts_a_run_unless_it_answers_a_dialog() {
-        use crate::session::protocol::DetectedAgentState::{Blocked, Working};
+        use crate::session::protocol::DetectedAgentState::{Blocked, Idle};
 
-        let runtime = |state| PaneRuntimeState {
+        let mut agent = AgentScratch {
+            launch: Some(Default::default()),
+            ..AgentScratch::default()
+        };
+        let settled = PaneRuntimeState {
             detected_agent: Some(DetectedAgent {
                 agent: crate::session::protocol::AgentIdentity::new("pi", "Pi").into(),
-                state,
+                state: Blocked,
             }),
             ..PaneRuntimeState::default()
         };
-        assert!(input_starts_run(&runtime(Working), b"fix the tests\r"));
-        assert!(!input_starts_run(&runtime(Working), b"fix the tests"));
-        assert!(!input_starts_run(&runtime(Blocked), b"\r"));
+        let read = |agent: &mut AgentScratch, screen: &str, state| {
+            agent.read = Some(super::super::AgentRead {
+                screen: screen.into(),
+                title: None,
+                resolved: Some(DetectedAgent {
+                    agent: crate::session::protocol::AgentIdentity::new("pi", "Pi").into(),
+                    state,
+                }),
+            });
+        };
+
+        read(&mut agent, "trust this folder?", Blocked);
+        agent.note_input(&settled, b"typing");
+        agent.note_input(&settled, b"\r");
+        assert!(agent.launch.is_some(), "the line answered the dialog");
+        agent.note_input(&settled, b"fix the tests\r");
+        assert!(agent.launch.is_none(), "the next line is a prompt");
+
+        agent.launch = Some(Default::default());
+        read(&mut agent, "> ", Idle);
+        agent.note_input(&settled, b"fix the tests\r");
+        assert!(
+            agent.launch.is_none(),
+            "a dialog only the settle grace still holds"
+        );
+    }
+
+    /// A conversation a publisher lists is its word about a real turn, whatever the pane's own
+    /// launch is still loading.
+    #[test]
+    fn a_published_conversation_finishes_its_runs_during_a_launch() {
+        let mut rig = LaunchRig::new();
+        let row = |status: &str| crate::session::protocol::PublishedRow {
+            id: "conversation".into(),
+            title: String::new(),
+            status: status.into(),
+            reason: None,
+            active: true,
+            publisher: "1/sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+            live_session: None,
+            reported: false,
+        };
+        replace_pane_rows(&mut rig.pane, vec![row("idle")]);
+        replace_pane_rows(&mut rig.pane, vec![row("working")]);
+        replace_pane_rows(&mut rig.pane, vec![row("idle")]);
+        let finished: u64 = records(&rig.pane)
+            .iter()
+            .filter(|record| record.reference.slot.is_some())
+            .map(|record| record.completions)
+            .sum();
+        assert_eq!(finished, 1);
     }
 
     /// `codex "fix the tests"` goes from loading straight into the turn it was given.

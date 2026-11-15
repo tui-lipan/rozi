@@ -3518,6 +3518,68 @@ mod tests {
         assert_eq!(finished, 1);
     }
 
+    /// The hook owns one conversation while the publisher shows another of the same agent. That
+    /// other conversation's turn, withdrawn mid-turn, is not the hook's to finish.
+    #[test]
+    fn a_withdrawn_turn_is_not_handed_to_another_conversations_hook() {
+        use protocol::AgentState::Idle;
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        let row = |id: &str, status: &str, active| protocol::PublishedRow {
+            publisher: "1/sessions".into(),
+            kind: protocol::PublisherKind::Agent,
+            id: id.into(),
+            title: id.into(),
+            status: status.into(),
+            reason: None,
+            active,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some(format!("conversation-{id}")),
+            live_session: None,
+            reported: false,
+        };
+        let rows = |server: &mut SessionServer, rows| {
+            super::super::runtime::replace_pane_rows(server.panes.get_mut(&7).unwrap(), rows);
+        };
+        let report = |server: &mut SessionServer, seq| {
+            let update = super::super::runtime::AgentIntegrationUpdate {
+                response: None,
+                agent: Some("claude".into()),
+                integration: "hook-a".into(),
+                state: Some(Idle),
+                reason: None,
+                native_session: Some("conversation-a".into()),
+                unless_quiet: None,
+                ended: false,
+                seq,
+            };
+            server.apply_agent_integration(None, 7, 1, update).unwrap();
+        };
+        rows(
+            &mut server,
+            vec![row("a", "idle", false), row("b", "idle", true)],
+        );
+        report(&mut server, 1);
+        rows(
+            &mut server,
+            vec![row("a", "idle", false), row("b", "working", true)],
+        );
+        rows(
+            &mut server,
+            vec![row("a", "idle", false), row("b", "blocked", true)],
+        );
+        rows(&mut server, Vec::new());
+        report(&mut server, 2);
+        let finished: u64 = server
+            .agent_records(None, 7)
+            .iter()
+            .map(|record| record.completions)
+            .sum();
+        assert_eq!(finished, 0);
+    }
+
     /// A terminal keeps an agent's `error` after it exits. The next agent launched in the pane has
     /// not said anything yet, and is a new incarnation, not the one that failed.
     #[test]

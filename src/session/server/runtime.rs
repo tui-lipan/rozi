@@ -179,8 +179,9 @@ impl AgentScratch {
     ///
     /// A claim on the pane can already hold a reference of its own beside the rows, while the
     /// row's turn ran under the row's. The claim keeps its reference, which clients know it by,
-    /// and takes over the row's open run when it is the same agent.
-    fn hand_back_row(&mut self, slot: protocol::RowKey) {
+    /// and takes over the row's open run only when it `speaks_for_row`: another conversation of
+    /// the same agent did not run that turn.
+    fn hand_back_row(&mut self, slot: protocol::RowKey, speaks_for_row: bool) {
         let Some(row) = self.references.remove(&Some(slot)) else {
             return;
         };
@@ -188,7 +189,9 @@ impl AgentScratch {
             None => {
                 self.references.insert(None, row);
             }
-            Some(claim) if claim.identity == row.identity => claim.run_open |= row.run_open,
+            Some(claim) if speaks_for_row && claim.identity == row.identity => {
+                claim.run_open |= row.run_open;
+            }
             Some(_) => {}
         }
     }
@@ -2666,12 +2669,22 @@ pub(super) fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::Publi
         .iter()
         .any(protocol::PublishedRow::is_agent);
     let before = pane.agent.agent_states(&pane.runtime);
+    // The claim speaks for the row as it does in the forward handoff: the agent's own report, or
+    // a hook naming the row's conversation.
     let handed_back = (had_agent_rows && !next.iter().any(protocol::PublishedRow::is_agent))
-        .then(|| protocol::active_agent_row(&pane.runtime.rows).map(protocol::PublishedRow::key))
-        .flatten();
+        .then(|| protocol::active_agent_row(&pane.runtime.rows))
+        .flatten()
+        .map(|row| {
+            let speaks_for_row = pane.runtime.integration.as_deref().is_some_and(|claim| {
+                is_program_report(claim)
+                    || claim.native_session.is_some()
+                        && claim.native_session.as_deref() == protocol::row_reporting_session(row)
+            });
+            (row.key(), speaks_for_row)
+        });
     pane.runtime.rows = next;
-    if let Some(slot) = handed_back {
-        pane.agent.hand_back_row(slot);
+    if let Some((slot, speaks_for_row)) = handed_back {
+        pane.agent.hand_back_row(slot, speaks_for_row);
     }
     pane.agent.response_sequences.retain(|reference, _| {
         reference

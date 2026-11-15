@@ -1,0 +1,14 @@
+{
+  "notifications": [
+    {
+      "id": "example",
+      "level": "info",
+      "message": "example",
+      "seq": 1,
+      "title": "example"
+    }
+  ],
+  "session": "example",
+  "session_instance": "example",
+  "type": "session-notifications"
+}

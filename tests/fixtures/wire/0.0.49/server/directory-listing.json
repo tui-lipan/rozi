@@ -1,0 +1,16 @@
+{
+  "entries": [
+    {
+      "git_staged": "added",
+      "git_unstaged": "added",
+      "ignored": false,
+      "is_dir": false,
+      "is_symlink": false,
+      "name": "example",
+      "symlink_target": "example"
+    }
+  ],
+  "error": "example",
+  "path": "example",
+  "type": "directory-listing"
+}

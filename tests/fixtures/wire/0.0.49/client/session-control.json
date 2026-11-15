@@ -1,0 +1,12 @@
+{
+  "capabilities": [
+    "example"
+  ],
+  "min_protocol_version": 1,
+  "protocol_version": 1,
+  "request": {
+    "cmd": "context"
+  },
+  "session": "example",
+  "type": "session-control"
+}

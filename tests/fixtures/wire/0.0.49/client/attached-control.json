@@ -1,0 +1,7 @@
+{
+  "request": {
+    "cmd": "context"
+  },
+  "request_id": 1,
+  "type": "attached-control"
+}

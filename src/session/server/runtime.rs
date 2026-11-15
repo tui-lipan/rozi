@@ -89,6 +89,8 @@ pub(super) fn integration_error_code(code: &str) -> crate::control::ControlError
 
 impl AgentScratch {
     pub(super) fn sync_references(&mut self, runtime: &PaneRuntimeState) {
+        // Only the row change that made a carry hands it on; see `replace_pane_rows`.
+        self.carried.clear();
         let relaunched = self.reference_launch != runtime.agent_launch;
         if relaunched {
             // A confirmed screen launch renews only the pane-level detected occupant. Claims and
@@ -180,9 +182,18 @@ impl AgentScratch {
             return;
         };
         let to = to.clone();
-        if let Some(tracked) = self.references.remove(&from) {
-            self.references.insert(to, tracked);
-        }
+        let Some(tracked) = self.references.remove(&from) else {
+            return;
+        };
+        // The sessions are settled by `replace_pane_rows`, which still knows the row that left.
+        self.carried.push(RowHandoff {
+            incarnation: tracked.incarnation,
+            from,
+            to: to.clone(),
+            old_session: None,
+            new_session: None,
+        });
+        self.references.insert(to, tracked);
     }
 
     /// The conversation a publisher marks on screen can take over the detected process's identity,
@@ -225,14 +236,15 @@ impl AgentScratch {
         tracked.from_detected = true;
         let handoff = RowHandoff {
             incarnation: tracked.incarnation,
-            slot: row.key(),
+            from: None,
+            to: Some(row.key()),
             old_session: runtime
                 .integration
                 .as_ref()
                 .and_then(|integration| integration.native_session.clone()),
             new_session: row.native_session.clone(),
         };
-        self.references.insert(Some(handoff.slot.clone()), tracked);
+        self.references.insert(handoff.to.clone(), tracked);
         Some(handoff)
     }
 
@@ -446,9 +458,12 @@ fn integration_has_strong_replacement_evidence(
 
 /// The detected agent's reference moving to the published row `slot`, and the ids its conversation
 /// goes by before and after.
+#[derive(Debug)]
 pub(super) struct RowHandoff {
     incarnation: u64,
-    slot: protocol::RowKey,
+    /// Where the reference was, and where it goes: `None` is the pane's detected agent.
+    from: Option<protocol::RowKey>,
+    to: Option<protocol::RowKey>,
     old_session: Option<String>,
     new_session: Option<String>,
 }
@@ -1238,34 +1253,17 @@ impl SessionServer {
             .is_none()
             .then(|| events::PaneRuntimeBaseline::capture(&session_instance, pane_id, pane));
         let resume_before = super::resurrect::resume_target(pane);
-        let handoff = pane.agent.handoff_detected_row(&pane.runtime, &next);
-        replace_pane_rows(pane, next);
+        let mut handoffs: Vec<_> = pane
+            .agent
+            .handoff_detected_row(&pane.runtime, &next)
+            .into_iter()
+            .collect();
+        handoffs.extend(replace_pane_rows(pane, next));
         retire_orphaned_row_reports(pane);
         let resume_changed = super::resurrect::resume_target(pane) != resume_before;
         let state = pane.runtime.clone();
-        if let Some(handoff) = handoff {
-            let old = protocol::AgentRef {
-                pane: protocol::PaneRef {
-                    session_instance,
-                    pane_id,
-                    generation,
-                },
-                slot: None,
-                incarnation: handoff.incarnation,
-            };
-            let handoff = super::responses::AgentHandoff {
-                new: protocol::AgentRef {
-                    slot: Some(handoff.slot),
-                    ..old.clone()
-                },
-                old,
-                old_session: handoff.old_session,
-                new_session: handoff.new_session,
-            };
-            self.agent_requests.handoff(&handoff);
-            self.handoff_agent_waits(&handoff);
-            self.handoff_agent_history(&handoff);
-            self.agent_responses.handoff(&handoff);
+        for handoff in handoffs {
+            self.hand_off_agent(pane_id, generation, handoff);
         }
         let message = self.finish_pane_runtime_change(owner, pane_id, generation, state, baseline);
         // The snapshot names the conversation a restore reopens. A publisher switching it is a
@@ -1282,6 +1280,33 @@ impl SessionServer {
         Ok(Some(message))
     }
 
+    /// Move everything aimed at an agent - requests, waits, history reads, and responses - to the
+    /// reference it goes by after `handoff`.
+    fn hand_off_agent(&mut self, pane_id: PaneId, generation: u64, handoff: RowHandoff) {
+        let old = protocol::AgentRef {
+            pane: protocol::PaneRef {
+                session_instance: self.instance_id.clone(),
+                pane_id,
+                generation,
+            },
+            slot: handoff.from,
+            incarnation: handoff.incarnation,
+        };
+        let handoff = super::responses::AgentHandoff {
+            new: protocol::AgentRef {
+                slot: handoff.to,
+                ..old.clone()
+            },
+            old,
+            old_session: handoff.old_session,
+            new_session: handoff.new_session,
+        };
+        self.agent_requests.handoff(&handoff);
+        self.handoff_agent_waits(&handoff);
+        self.handoff_agent_history(&handoff);
+        self.agent_responses.handoff(&handoff);
+    }
+
     /// Withdraw every row a departing client published into a shared pane, and say so to the
     /// clients that remain.
     ///
@@ -1291,6 +1316,7 @@ impl SessionServer {
     pub(super) fn withdraw_client_rows(&mut self, client: ClientId) -> Vec<ServerMessage> {
         let session_instance = self.instance_id.clone();
         let mut changed_panes = Vec::new();
+        let mut handoffs = Vec::new();
         let mut resume_changed = false;
         let now = unix_now_secs();
         let mut pane_ids: Vec<PaneId> = self.panes.keys().copied().collect();
@@ -1344,7 +1370,12 @@ impl SessionServer {
             let target_before = super::resurrect::resume_target(pane);
             let before = super::resurrect::live_agent_resume(pane);
             let others_speak = next.iter().any(protocol::PublishedRow::is_agent);
-            replace_pane_rows(pane, next);
+            let pane_handoffs = replace_pane_rows(pane, next);
+            handoffs.extend(
+                pane_handoffs
+                    .into_iter()
+                    .map(|handoff| (pane_id, pane.generation, handoff)),
+            );
             retire_orphaned_row_reports(pane);
             if let Some(before) = before
                 && !others_speak
@@ -1360,6 +1391,9 @@ impl SessionServer {
                 baseline,
                 promoted_publishers,
             ));
+        }
+        for (pane_id, generation, handoff) in handoffs {
+            self.hand_off_agent(pane_id, generation, handoff);
         }
         let mut messages = Vec::with_capacity(changed_panes.len());
         for (pane_id, generation, state, baseline, promoted_publishers) in changed_panes {
@@ -2638,14 +2672,19 @@ fn publisher_id_is_valid(id: &str) -> bool {
 ///
 /// The agent summary's change time moves only when the pane's agents changed: an activity
 /// publisher updating its own rows says nothing new about the agent beside it.
-pub(super) fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::PublishedRow>) {
+/// Replace `pane`'s rows, and return where the pane's detected agent moved between them, for
+/// [`SessionServer::hand_off_agent`] to take its requests, waits, and responses along.
+pub(super) fn replace_pane_rows(
+    pane: &mut ServerPane,
+    next: Vec<protocol::PublishedRow>,
+) -> Vec<RowHandoff> {
     let had_agent_rows = pane
         .runtime
         .rows
         .iter()
         .any(protocol::PublishedRow::is_agent);
     let before = pane.agent.agent_states(&pane.runtime);
-    pane.runtime.rows = next;
+    let previous = std::mem::replace(&mut pane.runtime.rows, next);
     pane.agent.response_sequences.retain(|reference, _| {
         reference
             .slot
@@ -2669,6 +2708,25 @@ pub(super) fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::Publi
     }
     pane.agent.observe(before, &pane.runtime);
     pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
+    let row_session = |rows: &[protocol::PublishedRow], key: &Option<protocol::RowKey>| {
+        key.as_ref().and_then(|key| {
+            rows.iter()
+                .find(|row| row.has_key(key))
+                .and_then(|row| row.native_session.clone())
+        })
+    };
+    let mut carried = std::mem::take(&mut pane.agent.carried);
+    for handoff in &mut carried {
+        handoff.new_session = row_session(&pane.runtime.rows, &handoff.to);
+        // Another copy's row may show another conversation, so a request keeps the one it was
+        // asked in and only one that knew none learns this one. With no row left, nothing says
+        // which conversation the agent shows: a request on the departed row's stops insisting.
+        handoff.old_session = match handoff.to {
+            Some(_) => handoff.new_session.clone(),
+            None => row_session(&previous, &handoff.from),
+        };
+    }
+    carried
 }
 
 /// `current` with `publisher`'s rows replaced by `rows`.

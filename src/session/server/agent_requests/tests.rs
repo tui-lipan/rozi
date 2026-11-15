@@ -267,7 +267,8 @@ fn a_request_follows_a_detected_agent_into_its_published_row() {
 
 /// A reference read while the agent was only screen-detected keeps naming it as rows speak for
 /// it: one window's publisher takes it over, another window's copy takes over when the first
-/// leaves, and the rows go away while the agent runs on. A new launch is another agent.
+/// leaves, and the rows go away while the agent runs on. A request it is answering moves with it
+/// and can still be answered. A new launch is another agent.
 #[test]
 fn a_detected_agents_reference_outlives_the_rows_that_speak_for_it() {
     let mut rig = Rig::new(&[3]);
@@ -308,15 +309,39 @@ fn a_detected_agents_reference_outlives_the_rows_that_speak_for_it() {
     assert!(published.slot.is_some());
     assert_eq!(resolve(&rig, &detected), Some(published.clone()));
 
+    let request = rig.ask(None, 3, "What is 2+3?");
+    assert_eq!(request.state, AgentRequestState::Active);
+    assert_eq!(request.to, published);
+    let working = protocol::PublishedRow {
+        status: "working".into(),
+        ..row
+    };
+    rig.server
+        .report_pane_rows(first, 3, 1, false, publisher(), vec![working.clone()])
+        .unwrap();
+    rig.set_state(3, DetectedAgentState::Working);
+    let still_answering = |rig: &mut Rig, to: &protocol::AgentRef| {
+        rig.server.pump_agent_requests();
+        let request = rig.request(&request.id);
+        assert_eq!(
+            request.state,
+            AgentRequestState::Active,
+            "{:?}",
+            request.reason
+        );
+        assert_eq!(request.to, *to);
+    };
+
     // The second window's copy waits while the first speaks, and takes over when it leaves.
     rig.server
-        .report_pane_rows(second, 3, 1, false, publisher(), vec![row])
+        .report_pane_rows(second, 3, 1, false, publisher(), vec![working])
         .unwrap();
     rig.server.withdraw_client_rows(first);
     let promoted = rig.agent(3);
     assert!(promoted.slot.is_some() && promoted.slot != published.slot);
     assert_eq!(resolve(&rig, &detected), Some(promoted.clone()));
     assert_eq!(resolve(&rig, &published), Some(promoted.clone()));
+    still_answering(&mut rig, &promoted);
 
     // Its rows withdrawn, the detected agent speaks for the pane again.
     rig.server
@@ -325,6 +350,9 @@ fn a_detected_agents_reference_outlives_the_rows_that_speak_for_it() {
     let again = rig.agent(3);
     assert_eq!(again, detected);
     assert_eq!(resolve(&rig, &promoted), Some(detected.clone()));
+    still_answering(&mut rig, &detected);
+    assert!(rig.reply(3, &request.id, "5").ok);
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Answered);
 
     let pane = rig.server.panes.get_mut(&3).unwrap();
     pane.runtime.agent_launch += 1;

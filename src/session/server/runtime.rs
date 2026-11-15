@@ -171,6 +171,20 @@ impl AgentScratch {
         Some(handoff)
     }
 
+    /// The reverse of [`Self::handoff_detected_row`]: the last agent rows are gone, and the pane
+    /// speaks for the conversation that was on screen again. It is the same agent, so it keeps the
+    /// row's reference - a turn in flight stays one run, even one that ends from blocked without
+    /// being seen working again. Placed before the references are synced, which keeps it only
+    /// while the pane's agent is still the one the row named.
+    fn hand_back_row(&mut self, slot: protocol::RowKey) {
+        if self.references.contains_key(&None) {
+            return;
+        }
+        if let Some(tracked) = self.references.remove(&Some(slot)) {
+            self.references.insert(None, tracked);
+        }
+    }
+
     /// Track the pane-level reference an integration claim is bound to. The claim names its own
     /// incarnation, so re-binding the same one keeps the runs it has already finished.
     fn bind_claim(&mut self, integration: &protocol::AgentIntegrationReport) {
@@ -2644,7 +2658,13 @@ pub(super) fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::Publi
         .iter()
         .any(protocol::PublishedRow::is_agent);
     let before = pane.agent.agent_states(&pane.runtime);
+    let handed_back = (had_agent_rows && !next.iter().any(protocol::PublishedRow::is_agent))
+        .then(|| protocol::active_agent_row(&pane.runtime.rows).map(protocol::PublishedRow::key))
+        .flatten();
     pane.runtime.rows = next;
+    if let Some(slot) = handed_back {
+        pane.agent.hand_back_row(slot);
+    }
     pane.agent.response_sequences.retain(|reference, _| {
         reference
             .slot
@@ -5635,6 +5655,36 @@ mod tests {
         assert_eq!(finished(&rig, false), 0);
     }
 
+    /// Approved, a tool can finish inside the settle grace, so a turn can end from blocked without
+    /// being seen working again. Withdrawn there, the row's turn is still the pane's to finish.
+    #[test]
+    fn a_turn_handed_back_from_blocked_still_finishes() {
+        let mut rig = LaunchRig::new();
+        rig.pane.agent.launch = None;
+        let row = |status: &str| crate::session::protocol::PublishedRow {
+            id: "conversation".into(),
+            title: String::new(),
+            status: status.into(),
+            reason: None,
+            active: true,
+            publisher: "1/sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+            live_session: None,
+            reported: false,
+        };
+        replace_pane_rows(&mut rig.pane, vec![row("idle")]);
+        replace_pane_rows(&mut rig.pane, vec![row("working")]);
+        replace_pane_rows(&mut rig.pane, vec![row("blocked")]);
+        rig.screen(DIALOG);
+        replace_pane_rows(&mut rig.pane, Vec::new());
+        rig.screen(PROMPT);
+        assert_eq!(records(&rig.pane)[0].completions, 1);
+    }
+
     /// The publisher goes away mid-turn of the conversation on screen. The pane carries on with
     /// that turn, which is a real run, not the launch's loading come back.
     #[test]
@@ -5656,7 +5706,7 @@ mod tests {
             reported: false,
         };
         rig.screen(LOADING);
-        replace_pane_rows(&mut rig.pane, vec![row("1/a", "working", false)]);
+        replace_pane_rows(&mut rig.pane, vec![row("3/c", "working", false)]);
         assert!(
             rig.pane.agent.launch.is_some(),
             "a background turn says nothing about the launch"

@@ -808,6 +808,7 @@ fn finished_record(
     crate::session::protocol::AgentRecord {
         reference: crate::session::protocol::AgentRef::for_test(pane_id, generation, None),
         completions,
+        answered: 0,
     }
 }
 
@@ -1075,6 +1076,7 @@ fn summary_edges_report_transitions_rather_than_standing_states() {
         task: None,
         screen_title: None,
         completions,
+        answered: 0,
         changed_at: 0,
     };
     let edges = |previous: Option<(AgentState, u64)>, current: (AgentState, u64)| {
@@ -1147,7 +1149,17 @@ fn status_since_stamps_transitions_and_survives_unchanged_polls() {
 fn finishing_a_run_banks_its_length_and_freezes_it() {
     let run = std::time::Duration::from_secs(12 * 60);
     let mut pane = agent_pane("idle");
-    update_agent_status_edge(&mut pane, Some("working"), Some(run), false, false);
+    update_agent_status_edge(&mut pane, Some("working"), Some(run), false, true);
+    assert_eq!(pane.last_run, Some(run));
+
+    // A quiet answer must leave the older user run's displayed duration alone.
+    update_agent_status_edge(
+        &mut pane,
+        Some("working"),
+        Some(std::time::Duration::from_secs(5)),
+        false,
+        false,
+    );
     assert_eq!(pane.last_run, Some(run));
 
     // Repeated idle polls afterwards leave the banked run alone.
@@ -1174,6 +1186,12 @@ fn finishing_a_run_banks_its_length_and_freezes_it() {
         false,
     );
     assert_eq!(pane.last_run, Some(run));
+
+    // Failures still bank their own duration even though they count no completion.
+    pane.reported_status.as_mut().unwrap().value = "error".into();
+    let failed_run = std::time::Duration::from_secs(7);
+    update_agent_status_edge(&mut pane, Some("working"), Some(failed_run), false, false);
+    assert_eq!(pane.last_run, Some(failed_run));
 }
 
 #[test]

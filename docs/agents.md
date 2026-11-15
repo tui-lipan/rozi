@@ -468,7 +468,8 @@ survive a session restart.
 A pane's title shows its agent's open requests: `→2` for two it asked and waits on, `←1` for one it
 was asked. When a request is delivered or answered, light runs along the borders of both panes at
 once: outward from the marks of the pane that sent it, and inward into the marks of the pane that
-received it. Turn this off with `animations.agent_handoff`.
+received it. Turn this off with `animations.agent_handoff`. A run that answered a request leaves no
+Done mark, sound, or notification, since its answer went to the agent that asked.
 
 **Agent conversations…** in the command palette (`agent-conversations`) lists the session's
 requests, each chain together with the requests asked while answering another nested under it,

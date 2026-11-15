@@ -9,7 +9,9 @@
 //! starts or stops listing it does not make its finished runs news again.
 //!
 //! An agent whose latest finished run has not been seen is "done, not yet looked at": the filled
-//! dot in the sidebar, the finished pane border, and the workspace marker. Generic activities
+//! dot in the sidebar, the finished pane border, and the workspace marker. Every count here is of
+//! [`AgentRecord::noticed_runs`]: a run that answered another agent's request went to that agent,
+//! so it never asks for the user's attention. Generic activities
 //! (`rozi status`, activity rows) have no agent identity and keep their own per-pane flags.
 
 use std::collections::HashMap;
@@ -49,13 +51,13 @@ impl AgentAttention {
 
     pub fn observe_records(&mut self, records: &[AgentRecord], sighting: FirstSighting) {
         for record in records {
-            self.observe(&record.reference, record.completions, sighting);
+            self.observe(&record.reference, record.noticed_runs(), sighting);
         }
     }
 
     pub fn observe_summaries(&mut self, summaries: &[AgentSummary], sighting: FirstSighting) {
         for summary in summaries {
-            self.observe(&summary.reference, summary.completions, sighting);
+            self.observe(&summary.reference, summary.noticed_runs(), sighting);
         }
     }
 
@@ -75,11 +77,11 @@ impl AgentAttention {
     }
 
     pub fn runtime_finished_unseen(&self, runtime: &AgentRuntime) -> bool {
-        self.finished_unseen(&runtime.reference, runtime.completions, runtime.state)
+        self.finished_unseen(&runtime.reference, runtime.noticed_runs(), runtime.state)
     }
 
     pub fn summary_finished_unseen(&self, summary: &AgentSummary) -> bool {
-        self.finished_unseen(&summary.reference, summary.completions, summary.state)
+        self.finished_unseen(&summary.reference, summary.noticed_runs(), summary.state)
     }
 
     /// The user looked at this agent: every run it has finished so far is seen. Returns whether
@@ -210,6 +212,7 @@ mod tests {
             task: None,
             screen_title: None,
             completions: 1,
+            answered: 0,
             changed_at: 0,
         };
         {
@@ -221,6 +224,7 @@ mod tests {
             pane.agents = vec![AgentRecord {
                 reference: reference.clone(),
                 completions: 1,
+                answered: 0,
             }];
         }
         state

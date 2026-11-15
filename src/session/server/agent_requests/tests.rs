@@ -47,8 +47,25 @@ impl Rig {
 
     fn set_state(&mut self, pane: PaneId, state: DetectedAgentState) {
         let pane = self.server.panes.get_mut(&pane).unwrap();
+        let before = pane.agent.agent_states(&pane.runtime);
         pane.runtime.detected_agent.as_mut().unwrap().state = state;
+        pane.agent.observe(before, &pane.runtime);
         self.server.resolve_agent_waits();
+    }
+
+    /// Run pane `pane`'s agent through one turn: working, then idle.
+    fn run_turn(&mut self, pane: PaneId) {
+        self.set_state(pane, DetectedAgentState::Working);
+        self.set_state(pane, DetectedAgentState::Idle);
+        self.server.pump_agent_requests();
+    }
+
+    fn runs(&self, pane: PaneId) -> (u64, u64) {
+        let agent = self
+            .server
+            .current_agent_runtime(&self.agent(pane))
+            .unwrap();
+        (agent.completions, agent.answered)
     }
 
     fn ask(&mut self, from: Option<PaneId>, to: PaneId, text: &str) -> AgentRequestInfo {
@@ -361,6 +378,31 @@ fn a_detected_agents_reference_outlives_the_rows_that_speak_for_it() {
     assert_eq!(resolve(&rig, &detected), None);
 }
 
+/// A run a request started answers another agent, which gets the answer; the user's own runs
+/// are the ones a client asks them to look at. A request whose turn ends without the agent ever
+/// working started no run, so the agent's next run is the user's.
+#[test]
+fn a_run_that_answers_a_request_counts_apart() {
+    let mut rig = Rig::new(&[3]);
+    let asked = rig.ask(None, 3, "What is 2+3?");
+    assert_eq!(asked.state, AgentRequestState::Active);
+    rig.run_turn(3);
+    assert_eq!(rig.runs(3), (1, 1));
+
+    rig.run_turn(3);
+    assert_eq!(rig.runs(3), (2, 1));
+
+    let early = rig.ask(None, 3, "Still there?");
+    assert_eq!(early.state, AgentRequestState::Active);
+    assert!(rig.reply(3, &early.id, "yes").ok);
+    // The agent never left its prompt, so the turn ends once the server stops waiting for it.
+    rig.server.agent_requests.undetected_turn = Duration::ZERO;
+    rig.server.pump_agent_requests();
+    assert!(rig.server.agent_requests.slots.is_empty());
+    rig.run_turn(3);
+    assert_eq!(rig.runs(3), (3, 1));
+}
+
 #[test]
 fn requests_reach_a_target_one_turn_at_a_time() {
     let mut rig = Rig::new(&[2, 3, 4]);
@@ -475,6 +517,11 @@ fn a_request_answered_later_outlives_its_turn_until_the_reply() {
         .screen_mut()
         .process_bytes(b"started the suite in the background");
     rig.set_state(3, DetectedAgentState::Idle);
+    assert_eq!(
+        rig.runs(3),
+        (1, 1),
+        "the deferred request's run stays quiet"
+    );
     let waiting = rig.request(&first.id);
     assert_eq!(waiting.state, AgentRequestState::Active);
     assert!(waiting.response.is_none());
@@ -503,6 +550,10 @@ fn an_agent_owing_several_requests_names_the_one_it_asks_for() {
     let second = rig.ask(Some(4), 3, "run the fuzzer");
     assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", second.id)));
     info(rig.server.reply_later(Some(rig.agent(3)), &second.id));
+
+    // Neither delivery was observed working. Deferring must not hide the next user run.
+    rig.run_turn(3);
+    assert_eq!(rig.runs(3), (1, 0));
 
     // Either promise could be the one asking, so the ask must say which.
     let from = rig.agent(3);

@@ -421,12 +421,6 @@ fn activity_is_terminal(value: &str, agent: bool) -> bool {
     }
 }
 
-fn status_is_blocked(value: &str) -> bool {
-    value
-        .trim()
-        .eq_ignore_ascii_case(crate::session::protocol::pane_status::BLOCKED)
-}
-
 /// Elapsed wall-clock time since a server-stamped run start, saturating at zero so clock skew
 /// against another host can only shorten the answer, never invent one.
 fn row_run_age(started_at: Option<u64>) -> Option<std::time::Duration> {
@@ -1086,10 +1080,9 @@ impl TerminalPane {
         })
     }
 
-    /// How long this pane's active agent run has lasted, for the sidebar's duration column.
-    ///
     /// Replace the pane's published rows, recording each activity row's finish edge and what each
-    /// row's last run cost.
+    /// row's last attention-worthy run cost. `finished_agents` names the agent rows whose
+    /// noticed completion counts rose in this update; quiet answers leave their durations alone.
     ///
     /// Returns the keys of activity rows that just finished a run; agent rows report theirs through
     /// the server's completion counts instead. Their alerts are raised per row rather than per
@@ -1101,6 +1094,7 @@ impl TerminalPane {
         &mut self,
         rows: Vec<crate::session::protocol::PublishedRow>,
         integration: Option<Box<crate::session::protocol::AgentIntegrationReport>>,
+        finished_agents: &[crate::session::protocol::RowKey],
     ) -> Vec<crate::session::protocol::RowKey> {
         let previous = self.effective_rows();
         self.agent_integration = integration;
@@ -1125,13 +1119,11 @@ impl TerminalPane {
             let entry = self.published_row_ui.entry(key.clone()).or_default();
             if row.is_agent() {
                 // An agent row's finish is the server's count, and whether it was seen is
-                // `AgentAttention`'s; only what the run cost is kept here.
+                // `AgentAttention`'s; only what an attention-worthy run cost is kept here.
                 if was_working
-                    && !status_is_blocked(&row.status)
-                    && !row
-                        .status
-                        .trim()
-                        .eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING)
+                    && state.is_terminal()
+                    && (finished_agents.contains(&key)
+                        || state == crate::session::protocol::ActivityState::Error)
                 {
                     entry.last_run = row_run_age(previous_started(&previous, &key));
                 }

@@ -464,6 +464,7 @@ mod tests {
                 task: None,
                 screen_title: None,
                 completions: 0,
+                answered: 0,
                 changed_at: 0,
             }],
         );
@@ -734,6 +735,7 @@ mod tests {
                     task: None,
                     screen_title: None,
                     completions: 0,
+                    answered: 0,
                     changed_at: 0,
                 }],
             );
@@ -770,6 +772,7 @@ mod tests {
                         task: None,
                         screen_title: None,
                         completions: 0,
+                        answered: 0,
                         changed_at: 0,
                     }],
                 });
@@ -801,6 +804,7 @@ mod tests {
             task: None,
             screen_title: None,
             completions: 0,
+            answered: 0,
             changed_at: 0,
         };
         backend.state_mut().local_agent_snapshot =
@@ -1101,6 +1105,7 @@ mod tests {
                 task: None,
                 screen_title: None,
                 completions: 0,
+                answered: 0,
                 changed_at: 0,
             };
             backend.state_mut().local_agent_snapshot =
@@ -1164,6 +1169,7 @@ mod tests {
                     task: None,
                     screen_title: None,
                     completions: 0,
+                    answered: 0,
                     changed_at: 0,
                 },
             )
@@ -1452,6 +1458,7 @@ mod tests {
                         task: None,
                         screen_title: None,
                         completions: 0,
+                        answered: 0,
                         changed_at: 0,
                     }],
                 });

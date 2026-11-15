@@ -2579,6 +2579,7 @@ fn monitored_agent(
         task: None,
         screen_title: None,
         completions: 0,
+        answered: 0,
         changed_at: 0,
     }
 }

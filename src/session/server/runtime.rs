@@ -132,6 +132,8 @@ impl AgentScratch {
                     incarnation: self.next_incarnation,
                     completions: 0,
                     run_open: false,
+                    answered: 0,
+                    request_run: false,
                     from_detected: false,
                 },
             );
@@ -254,12 +256,17 @@ impl AgentScratch {
         let incarnation = integration.reference.incarnation;
         let identity = integration.identity.id.clone();
         self.next_incarnation = self.next_incarnation.max(incarnation);
-        let (completions, run_open) = self
+        let (completions, run_open, answered, request_run) = self
             .references
             .get(&None)
             .filter(|tracked| tracked.incarnation == incarnation && tracked.identity == identity)
-            .map_or((0, false), |tracked| {
-                (tracked.completions, tracked.run_open)
+            .map_or((0, false, 0, false), |tracked| {
+                (
+                    tracked.completions,
+                    tracked.run_open,
+                    tracked.answered,
+                    tracked.request_run,
+                )
             });
         self.references.insert(
             None,
@@ -268,6 +275,8 @@ impl AgentScratch {
                 incarnation,
                 completions,
                 run_open,
+                answered,
+                request_run,
                 from_detected: false,
             },
         );
@@ -284,6 +293,45 @@ impl AgentScratch {
                 state,
             })
             .collect()
+    }
+
+    /// A request was typed into the agent `reference` names: the run it starts answers another
+    /// agent, which [`protocol::AgentRecord::answered`] counts.
+    pub(super) fn begin_request_run(&mut self, reference: &protocol::AgentRef) {
+        if let Some(tracked) = self.tracked_mut(reference) {
+            tracked.request_run = true;
+        }
+    }
+
+    /// The request's turn is over. A run it started has been counted by now; if it started none,
+    /// the agent's next run is not an answer.
+    pub(super) fn end_request_run(&mut self, reference: &protocol::AgentRef) {
+        if let Some(tracked) = self.tracked_mut(reference)
+            && !tracked.run_open
+        {
+            tracked.request_run = false;
+        }
+    }
+
+    /// The tracker of the agent `reference` names: under its own slot, else wherever the agent's
+    /// incarnation went.
+    fn tracked_mut(
+        &mut self,
+        reference: &protocol::AgentRef,
+    ) -> Option<&mut TrackedAgentReference> {
+        let slot = if self
+            .references
+            .get(&reference.slot)
+            .is_some_and(|tracked| tracked.incarnation == reference.incarnation)
+        {
+            reference.slot.clone()
+        } else {
+            self.references
+                .iter()
+                .find(|(_, tracked)| tracked.incarnation == reference.incarnation)
+                .map(|(slot, _)| slot.clone())?
+        };
+        self.references.get_mut(&slot)
     }
 
     /// Adopt `runtime`'s agents after a change: renew references, count each run that ended, and
@@ -313,6 +361,12 @@ impl AgentScratch {
                 state => {
                     if tracked.run_open && state.is_quiescent() {
                         tracked.completions = tracked.completions.saturating_add(1);
+                        if tracked.request_run {
+                            tracked.answered = tracked.answered.saturating_add(1);
+                        }
+                    }
+                    if tracked.run_open {
+                        tracked.request_run = false;
                     }
                     tracked.run_open = false;
                 }
@@ -352,6 +406,8 @@ impl AgentScratch {
                     incarnation: self.next_incarnation,
                     completions: 0,
                     run_open: false,
+                    answered: 0,
+                    request_run: false,
                     from_detected: false,
                 },
             );
@@ -420,6 +476,7 @@ impl AgentScratch {
                     incarnation: tracked.incarnation,
                 },
                 completions: tracked.completions,
+                answered: tracked.answered,
             })
             .collect::<Vec<_>>();
         records.sort_by(|left, right| left.reference.slot.cmp(&right.reference.slot));

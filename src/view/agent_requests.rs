@@ -156,7 +156,7 @@ pub(crate) fn agent_name(
         panes(state).find_map(|pane| {
             pane.agent_runtimes()
                 .into_iter()
-                .find(|runtime| runtime.reference == *agent)
+                .find(|runtime| runtime.reference.instance() == agent.instance())
                 .map(|runtime| runtime.label)
         })
     });

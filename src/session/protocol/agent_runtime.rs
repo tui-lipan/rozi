@@ -173,14 +173,6 @@ fn is_zero(value: &u64) -> bool {
     *value == 0
 }
 
-/// Whether `candidate` is the agent `reference` names, under the reference it goes by now. An
-/// agent keeps its incarnation when a published row starts speaking for it, moves to another
-/// copy of the publisher, or goes away while the same process runs, so a reference read before
-/// any of that still names it. Another agent in the pane always gets a new incarnation.
-pub fn names_agent(reference: &AgentRef, candidate: &AgentRef) -> bool {
-    candidate.pane == reference.pane && candidate.incarnation == reference.incarnation
-}
-
 /// One automation-facing agent in a pane: an occupant of [`pane_occupants`] that is an agent,
 /// paired with the reference that names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -730,7 +730,7 @@ fn wait_condition_name(condition: AgentWaitCondition) -> &'static str {
 }
 
 /// The runtime of the agent `reference` names: the exact reference, else the one the agent goes by
-/// now. See [`protocol::names_agent`].
+/// now. See [`protocol::AgentInstance`].
 pub(super) fn find_agent<'a>(
     runtimes: &'a [protocol::AgentRuntime],
     reference: &protocol::AgentRef,
@@ -741,7 +741,7 @@ pub(super) fn find_agent<'a>(
         .or_else(|| {
             runtimes
                 .iter()
-                .find(|runtime| protocol::names_agent(reference, &runtime.reference))
+                .find(|runtime| runtime.reference.instance() == reference.instance())
         })
 }
 

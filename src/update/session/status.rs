@@ -109,8 +109,9 @@ pub(crate) fn update_agent_status_edge(
 }
 
 /// Which of a pane's agents finished a run between two sets of its records: the pane's own agent
-/// (`None`) and each published row by key. Read from the server's completion counts, so a finish
-/// is a finish whether or not this client saw the agent working first.
+/// (`None`) and each published row by key, as `current` lists it. Read from the server's
+/// completion counts, so a finish is a finish whether or not this client saw the agent working
+/// first, and whether or not the agent moved to another row in the same update.
 pub(crate) fn finished_records(
     previous: &[crate::session::protocol::AgentRecord],
     current: &[crate::session::protocol::AgentRecord],
@@ -119,7 +120,8 @@ pub(crate) fn finished_records(
         .iter()
         .filter(|record| {
             previous.iter().any(|earlier| {
-                earlier.reference == record.reference && record.completions > earlier.completions
+                earlier.reference.instance() == record.reference.instance()
+                    && record.completions > earlier.completions
             })
         })
         .map(|record| record.reference.slot.clone())
@@ -645,6 +647,23 @@ fn apply_program_status(
 mod tests {
     use super::*;
     use crate::session::protocol::{AgentIdentity, DetectedAgent, DetectedAgentState};
+
+    /// An agent can finish a run in the same update that lists it under another row. That is one
+    /// finish, of the row it is listed under now; an agent that only moved finished nothing.
+    #[test]
+    fn a_finish_counts_once_when_the_agent_moves_rows_in_the_same_update() {
+        use crate::session::protocol::{AgentRecord, AgentRef, RowKey};
+        let record = |id: &str, completions| AgentRecord {
+            reference: AgentRef::for_test(3, 1, Some(RowKey::new("1/s", id))),
+            completions,
+        };
+        let moved = Some(RowKey::new("1/s", "b"));
+        assert_eq!(
+            finished_records(&[record("a", 3)], &[record("b", 4)]),
+            [moved]
+        );
+        assert!(finished_records(&[record("a", 3)], &[record("b", 3)]).is_empty());
+    }
 
     #[test]
     fn suppressed_osc_alerts_leave_cooldown_available_for_unattended_error() {

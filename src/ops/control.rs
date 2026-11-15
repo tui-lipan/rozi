@@ -1335,15 +1335,15 @@ fn resolve_agent(
                     "agent reference belongs to a different session server instance",
                 ));
             }
-            // The exact reference, else the one the agent goes by now; see `names_agent`.
+            // The exact reference, else the one the agent goes by now; see `AgentInstance`.
             let exact = agents
                 .iter()
                 .position(|agent| agent.reference == *reference);
             exact
                 .or_else(|| {
-                    agents.iter().position(|agent| {
-                        crate::session::protocol::names_agent(reference, &agent.reference)
-                    })
+                    agents
+                        .iter()
+                        .position(|agent| agent.reference.instance() == reference.instance())
                 })
                 .map(|index| agents.swap_remove(index))
                 .ok_or_else(|| {

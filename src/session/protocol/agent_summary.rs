@@ -69,7 +69,7 @@ impl AgentSummary {
     /// that varies with state is, which is what makes this usable as a diff key across polls.
     pub fn same_agent(&self, other: &Self) -> bool {
         self.session == other.session
-            && self.reference == other.reference
+            && self.reference.instance() == other.reference.instance()
             && self.agent == other.agent
     }
 }

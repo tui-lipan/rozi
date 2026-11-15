@@ -261,7 +261,7 @@ Other schemes need a configured handler. rozi shows an error for unsupported des
 
 File paths such as `out/plot.png` or `src/main.rs:12:3` are links too, when the file exists. Without
 a `file` handler, a file or directory opens in your system's default application, which does not
-receive the line number; a program is never run this way. A file on a
+receive the line number. rozi does not open programs this way. A file on a
 [remote session](remote.md) host is copied to your machine first, as a read-only copy of at most
 64 MB.
 In a remote session pane, `http` and `https` links to `localhost`, `127.0.0.1`, `0.0.0.0`, or `::` are

@@ -22,10 +22,14 @@ const MAX_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Request {
-    /// The path as the pane showed it.
+    /// The path as the pane showed it, or the `file:` URL a program there linked to. Only the
+    /// host can turn its own URL into a path: a Windows path and a Unix path are spelled apart.
     pub path: String,
     /// The pane's working directory on the host, which a relative path starts at.
     pub cwd: Option<String>,
+    /// Whether `path` is a `file:` URL.
+    #[serde(default)]
+    pub url: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,12 +112,19 @@ pub fn run_remote_read_file() -> Result<Reply, String> {
 /// The name and bytes of the regular file `request` names, when it is at most `max` bytes.
 fn read(request: &Request, home: Option<&Path>, max: u64) -> Result<(String, Vec<u8>), String> {
     let shown = &request.path;
-    let path = crate::platform::paths::absolute_shown_path(
-        shown,
-        request.cwd.as_deref().map(Path::new),
-        home,
-    )
-    .ok_or_else(|| format!("{shown} is relative, and the pane's directory is unknown"))?;
+    let path = if request.url {
+        url::Url::parse(shown)
+            .ok()
+            .and_then(|url| url.to_file_path().ok())
+            .ok_or_else(|| format!("{shown} does not name a file on this host"))?
+    } else {
+        crate::platform::paths::absolute_shown_path(
+            shown,
+            request.cwd.as_deref().map(Path::new),
+            home,
+        )
+        .ok_or_else(|| format!("{shown} is relative, and the pane's directory is unknown"))?
+    };
     let metadata =
         std::fs::metadata(&path).map_err(|_| format!("No such file or directory: {shown}"))?;
     if metadata.is_dir() {
@@ -153,6 +164,7 @@ mod tests {
             let request = Request {
                 path: path.into(),
                 cwd: cwd.then(|| scratch.path().display().to_string()),
+                url: path.starts_with("file:"),
             };
             read(&request, None, max)
         };
@@ -164,5 +176,11 @@ mod tests {
         assert!(read_shown("out/plot.png", true, 4).is_err());
         assert!(read_shown("out/plot.png", false, 5).is_err());
         assert!(read_shown("out", true, 5).is_err());
+        // A `file:` URL is turned into a path here, by this host's rules.
+        let url = url::Url::from_file_path(scratch.path().join("out/plot.png")).unwrap();
+        assert_eq!(
+            read_shown(url.as_str(), false, 5).map(|(name, _)| name),
+            Ok("plot.png".into())
+        );
     }
 }

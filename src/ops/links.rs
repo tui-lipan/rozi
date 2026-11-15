@@ -29,6 +29,14 @@ pub(crate) fn handler<'a>(
 
 pub(crate) fn open(ctx: &mut Context<AppRoot>, source: PaneId, text: &str) -> Update {
     if let Ok(url) = url::Url::parse(text) {
+        if url.scheme() == "file"
+            && let Some(opener) = PathLinks::for_pane(&ctx.state, source).remote_url(&url)
+        {
+            return match opener {
+                Ok(opener) => open_with(ctx, source, text, opener, None, None),
+                Err(error) => failed(ctx, error),
+            };
+        }
         let file = if url.scheme() == "file" {
             match url
                 .to_file_path()
@@ -136,7 +144,21 @@ fn open_file(
     column: Option<u32>,
 ) -> Update {
     match PathLinks::for_pane(&ctx.state, source).open(path) {
-        Ok(PathOpener::Handler { action, file }) => {
+        Ok(opener) => open_with(ctx, source, text, opener, line, column),
+        Err(error) => failed(ctx, error),
+    }
+}
+
+fn open_with(
+    ctx: &mut Context<AppRoot>,
+    source: PaneId,
+    text: &str,
+    opener: PathOpener,
+    line: Option<u32>,
+    column: Option<u32>,
+) -> Update {
+    match opener {
+        PathOpener::Handler { action, file } => {
             let target = LinkTarget {
                 file: &file,
                 line,
@@ -145,9 +167,8 @@ fn open_file(
             };
             execute(ctx, source, &action, text, target)
         }
-        Ok(PathOpener::System(path)) => open_with_system(ctx, &path),
-        Ok(PathOpener::Fetch { target, request }) => fetch_and_open(ctx, target, request),
-        Err(error) => failed(ctx, error),
+        PathOpener::System(path) => open_with_system(ctx, &path),
+        PathOpener::Fetch { target, request } => fetch_and_open(ctx, target, request),
     }
 }
 
@@ -199,6 +220,23 @@ pub(crate) fn remote_file_fetched(
         Ok(path) => open_with_system(ctx, &path),
         Err(error) => failed(ctx, error),
     }
+}
+
+/// `text` with its `%XX` escapes read, as the last segment of a URL's path spells a file name.
+fn percent_decoded(text: &str) -> String {
+    let mut bytes = Vec::with_capacity(text.len());
+    let mut rest = text.as_bytes();
+    while let [first, tail @ ..] = rest {
+        let escaped = match (first, tail) {
+            (b'%', [high, low, ..]) => std::str::from_utf8(&[*high, *low])
+                .ok()
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok()),
+            _ => None,
+        };
+        bytes.push(escaped.unwrap_or(*first));
+        rest = &tail[if escaped.is_some() { 2 } else { 0 }..];
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 fn is_a_program(path: &str) -> String {
@@ -401,6 +439,36 @@ impl PathLinks {
         })
     }
 
+    /// What opens a `file:` URL from a pane whose files are on the session host, when no handler
+    /// takes a file of its name; `None` for any other pane, and for a URL a handler takes.
+    ///
+    /// The URL goes to the host as it is. Its path is spelled by the host's rules, which this
+    /// machine cannot apply when the two run different systems.
+    pub(crate) fn remote_url(
+        &self,
+        url: &url::Url,
+    ) -> Option<std::result::Result<PathOpener, String>> {
+        let (target, _) = self.fetch.as_ref()?;
+        let name = url
+            .path_segments()
+            .and_then(|mut segments| segments.next_back())?;
+        let name = percent_decoded(name);
+        if self.handler(&name).is_some() {
+            return None;
+        }
+        if crate::platform::runs_when_opened(Path::new(&name)) {
+            return Some(Err(is_a_program(&name)));
+        }
+        Some(Ok(PathOpener::Fetch {
+            target: target.clone(),
+            request: FileRequest {
+                path: url.to_string(),
+                cwd: None,
+                url: true,
+            },
+        }))
+    }
+
     /// What opens a `path` no handler takes: the default application of the machine showing it,
     /// which never gets a program to run.
     fn open_by_default(&self, path: &str) -> std::result::Result<PathOpener, String> {
@@ -419,11 +487,13 @@ impl PathLinks {
                     request: FileRequest {
                         path: path.to_string(),
                         cwd: cwd.clone(),
+                        url: false,
                     },
                 })
             }
             PathPlace::Local { cwd, home } => {
                 let resolved = local_path(path, cwd.as_deref(), home.as_deref())
+                    .filter(|resolved| !crate::platform::reaches_network(resolved))
                     .filter(|resolved| resolved.exists())
                     .ok_or_else(|| format!("No such file or directory: {path}"))?;
                 if crate::platform::runs_when_opened(&resolved) {
@@ -453,7 +523,9 @@ impl PathLinks {
                 PathPlace::Local { cwd, home } => local_path(path, cwd.as_deref(), home.as_deref())
                     .is_some_and(|resolved| {
                         cache.holds(resolved, |path| {
-                            path.exists() && !crate::platform::runs_when_opened(path)
+                            !crate::platform::reaches_network(path)
+                                && path.exists()
+                                && !crate::platform::runs_when_opened(path)
                         })
                     }),
             };
@@ -726,9 +798,26 @@ mod policy_tests {
                 request: FileRequest {
                     path: "out/plot.png".into(),
                     cwd: Some("/work".into()),
+                    url: false,
                 },
             })
         );
+        // A `file:` URL from the host goes back to it unread: only the host knows its paths.
+        let windows = url::Url::parse("file:///C:/Users/me/My%20report.pdf").unwrap();
+        assert_eq!(
+            remote.remote_url(&windows),
+            Some(Ok(PathOpener::Fetch {
+                target: buildbox.clone(),
+                request: FileRequest {
+                    path: windows.to_string(),
+                    cwd: None,
+                    url: true,
+                },
+            }))
+        );
+        let installer = url::Url::parse("file:///C:/Users/me/setup%2Eexe.").unwrap();
+        assert!(matches!(remote.remote_url(&installer), Some(Err(_))));
+        assert_eq!(links(local(), None).remote_url(&windows), None);
         assert!(remote.accepts("out/plot.png", &cache));
         assert!(!remote.accepts(&format!("out/{program}"), &cache));
         assert!(!links(ssh(), None).accepts("/etc/hosts", &cache));

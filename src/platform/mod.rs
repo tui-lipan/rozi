@@ -84,7 +84,7 @@ pub mod sleep_inhibit;
 pub mod sound;
 
 mod opener;
-pub use opener::{open_file, runs_when_opened};
+pub use opener::{open_file, reaches_network, runs_when_opened};
 
 #[doc(hidden)]
 pub mod media_fixture;

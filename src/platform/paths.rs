@@ -656,7 +656,9 @@ pub fn write_remote_file_copy(env: &PlatformEnv, name: &str, bytes: &[u8]) -> io
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
+    // Windows would drop trailing periods and spaces itself, and so change the name's extension.
     let name: String = name
+        .trim_end_matches(['.', ' '])
         .chars()
         .rev()
         .take(120)
@@ -1388,7 +1390,7 @@ mod tests {
     fn a_remote_file_copy_keeps_its_extension_and_cannot_be_written() {
         let home = tempfile::tempdir().unwrap();
         let env = env_with_home(&home.path().display().to_string());
-        let copy = write_remote_file_copy(&env, "../build log.PNG", b"png").unwrap();
+        let copy = write_remote_file_copy(&env, "../build log.PNG. ", b"png").unwrap();
         let name = copy.file_name().unwrap().to_string_lossy().into_owned();
         assert!(name.ends_with("-.._build log.PNG"), "{name}");
         assert!(copy.starts_with(cache_dir(&env).join("remote-files")));

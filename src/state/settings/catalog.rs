@@ -1340,10 +1340,10 @@ pub static SETTINGS: &[SettingSpec] = {
         row(
             CycleResurrectForeground,
             G::Sessions,
-            "Restored running commands",
-            &["rerun", "foreground"],
+            "Commands after restart",
+            &["rerun", "foreground", "restore", "resurrect"],
             Choice(&EnumChoice::new(
-                "Restored running commands",
+                "Commands after restart",
                 Choices::Fixed(RestoreMode::all),
                 config_field!(session.resurrect_foreground),
                 RestoreMode::label,
@@ -1356,10 +1356,10 @@ pub static SETTINGS: &[SettingSpec] = {
         row(
             CycleResurrectAgents,
             G::Sessions,
-            "Restored agents",
-            &["resume", "reopen", "conversation"],
+            "Agents after restart",
+            &["resume", "reopen", "conversation", "restore", "resurrect"],
             Choice(&EnumChoice::new(
-                "Restored agents",
+                "Agents after restart",
                 Choices::Fixed(RestoreMode::all),
                 config_field!(session.resurrect_agents),
                 RestoreMode::agent_label,

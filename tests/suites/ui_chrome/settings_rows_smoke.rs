@@ -295,7 +295,7 @@ fn settings_all_keeps_every_control_available() {
             "Startup mode",
             "Layout autosave",
             "Resurrect named sessions",
-            "Restored running commands",
+            "Commands after restart",
         ] {
             setting_row(&frame, label);
         }

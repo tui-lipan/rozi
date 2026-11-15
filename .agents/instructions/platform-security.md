@@ -31,6 +31,22 @@ implemented and what remains unavailable on an OS.
 - Keep local config, state, cache, runtime endpoints, logs, and unsanitized captures out of the
   repository. The agent-screen workflow may add scrubbed captures as test fixtures.
 
+## Checks over untrusted input
+
+Pane output, link targets, and names or paths that arrive from another machine are untrusted. When
+a change adds a check over them, or turns opt-in behavior into a default, do this before opening
+the pull request:
+
+- Judge the input as the OS reads it, not as the string looks: Windows drops trailing periods and
+  spaces from file names, Unix runs by permission and content rather than by extension, and a path
+  or `file:` URL means something only on the machine it names.
+- Write the bypass attempts as test cases, not only the case the check was written for.
+- When removing a gate or making something default, list what the gate prevented, such as a
+  file-system or network probe on the UI thread.
+- Walk every client and host OS pairing when a path or file name crosses machines.
+- Review the diff for security separately from writing it, and state any assumption you could not
+  verify under Verification rather than settling it silently.
+
 ## Windows checks
 
 This workspace cannot execute Windows code. Type-check it before pushing platform changes:

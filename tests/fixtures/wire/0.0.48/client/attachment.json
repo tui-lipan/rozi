@@ -1,0 +1,12 @@
+{
+  "operation": {
+    "generation": 1,
+    "local": false,
+    "name": "example",
+    "pane_id": 1,
+    "size": 1,
+    "step": "begin"
+  },
+  "transfer_id": 1,
+  "type": "attachment"
+}

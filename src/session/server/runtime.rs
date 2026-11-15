@@ -176,12 +176,20 @@ impl AgentScratch {
     /// row's reference - a turn in flight stays one run, even one that ends from blocked without
     /// being seen working again. Placed before the references are synced, which keeps it only
     /// while the pane's agent is still the one the row named.
+    ///
+    /// A claim on the pane can already hold a reference of its own beside the rows, while the
+    /// row's turn ran under the row's. The claim keeps its reference, which clients know it by,
+    /// and takes over the row's open run when it is the same agent.
     fn hand_back_row(&mut self, slot: protocol::RowKey) {
-        if self.references.contains_key(&None) {
+        let Some(row) = self.references.remove(&Some(slot)) else {
             return;
-        }
-        if let Some(tracked) = self.references.remove(&Some(slot)) {
-            self.references.insert(None, tracked);
+        };
+        match self.references.get_mut(&None) {
+            None => {
+                self.references.insert(None, row);
+            }
+            Some(claim) if claim.identity == row.identity => claim.run_open |= row.run_open,
+            Some(_) => {}
         }
     }
 

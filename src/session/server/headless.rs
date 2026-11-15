@@ -3469,6 +3469,55 @@ mod tests {
         assert!(server.panes[&7].agent.launch.is_some());
     }
 
+    /// A hook that owns the pane drives the conversation on screen through a turn, and the rows go
+    /// while it is blocked. The hook's report finishing the turn still finishes that run.
+    #[test]
+    fn a_hooked_turn_withdrawn_while_blocked_still_finishes() {
+        use protocol::AgentState::{Blocked, Idle, Working};
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        let row = protocol::PublishedRow {
+            publisher: "1/sessions".into(),
+            kind: protocol::PublisherKind::Agent,
+            id: "a".into(),
+            title: "a".into(),
+            status: "idle".into(),
+            reason: None,
+            active: true,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some("conversation-a".into()),
+            live_session: None,
+            reported: false,
+        };
+        super::super::runtime::replace_pane_rows(server.panes.get_mut(&7).unwrap(), vec![row]);
+        let report = |server: &mut SessionServer, state, seq| {
+            let update = super::super::runtime::AgentIntegrationUpdate {
+                response: None,
+                agent: Some("claude".into()),
+                integration: "hook-a".into(),
+                state: Some(state),
+                reason: None,
+                native_session: Some("conversation-a".into()),
+                unless_quiet: None,
+                ended: false,
+                seq,
+            };
+            server.apply_agent_integration(None, 7, 1, update).unwrap();
+        };
+        report(&mut server, Working, 1);
+        report(&mut server, Blocked, 2);
+        super::super::runtime::replace_pane_rows(server.panes.get_mut(&7).unwrap(), Vec::new());
+        report(&mut server, Idle, 3);
+        let finished: u64 = server
+            .agent_records(None, 7)
+            .iter()
+            .map(|record| record.completions)
+            .sum();
+        assert_eq!(finished, 1);
+    }
+
     /// A terminal keeps an agent's `error` after it exits. The next agent launched in the pane has
     /// not said anything yet, and is a new incarnation, not the one that failed.
     #[test]

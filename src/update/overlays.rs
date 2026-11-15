@@ -1747,7 +1747,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 backend.state().config.session.resurrect_foreground,
-                crate::config::ForegroundRestore::Auto
+                crate::config::RestoreMode::Auto
             );
             backend
                 .dispatch(Msg::SettingsCycleChoice(
@@ -1756,7 +1756,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 backend.state().config.session.resurrect_foreground,
-                crate::config::ForegroundRestore::Never
+                crate::config::RestoreMode::Never
             );
             assert_eq!(
                 backend.state().settings_selected,
@@ -1772,7 +1772,7 @@ mod tests {
             backend.dispatch(Msg::SettingsChoicePick(2)).unwrap();
             assert_eq!(
                 backend.state().config.session.resurrect_foreground,
-                crate::config::ForegroundRestore::Auto
+                crate::config::RestoreMode::Auto
             );
         });
     }

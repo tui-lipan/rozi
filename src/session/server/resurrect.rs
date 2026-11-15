@@ -40,6 +40,8 @@ pub(super) struct PendingForeground {
     /// different pane, and typing a command from the old one into it would be a surprise.
     generation: u64,
     command: String,
+    /// Whether the line is submitted once typed, or left at the prompt for the user.
+    submit: bool,
     waiting_since: Instant,
 }
 
@@ -305,7 +307,7 @@ struct SnapshotPane {
     /// `launch` is `None` must fall back to its shell rather than behave like a pane that was
     /// created to run one command. Absent when the pane sat at a prompt, when it was already
     /// running its own launch command, or when
-    /// [`ForegroundRestore::Never`](crate::config::ForegroundRestore::Never) declined to record it.
+    /// [`RestoreMode::Never`](crate::config::RestoreMode::Never) declined to record it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     foreground: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -413,9 +415,12 @@ pub(super) fn live_agent_resume(pane: &ServerPane) -> Option<RetainedResume> {
 enum RestoreAction {
     /// Exec the agent's resume command as this pane's first process.
     ResumeAgent(AgentResumeLaunch),
-    /// Type a line at the restored shell's prompt: a foreground command the pane was observed
-    /// running, or a resume command `hold` declined to run unasked.
+    /// Type a line at the restored shell's prompt and leave it there: a foreground command or a
+    /// resume command that `hold` declined to run unasked.
     Type(String),
+    /// Type a foreground command the pane was observed running at the restored shell's prompt,
+    /// and submit it.
+    Run(String),
     /// Nothing to add.
     Nothing,
 }
@@ -633,11 +638,10 @@ impl SessionServer {
         let mut captured = Vec::new();
         let (mut exported, mut reused, mut exported_bytes) = (0_u32, 0_u32, 0_u64);
         let record_foreground =
-            self.settings.resurrect_foreground != crate::config::ForegroundRestore::Never;
-        // `never` is an instruction not to keep what a pane was doing, and a reported conversation
-        // reference is exactly that - so it also keeps opaque agent session ids out of the state
-        // directory, which is the privacy half of the setting.
-        let record_agents = self.settings.resurrect_agents && record_foreground;
+            self.settings.resurrect_foreground != crate::config::RestoreMode::Never;
+        // `never` is an instruction not to keep what a pane was doing, so it also keeps opaque
+        // agent session ids out of the state directory, which is the privacy half of the setting.
+        let record_agents = self.settings.resurrect_agents != crate::config::RestoreMode::Never;
         for (&pane_id, pane) in &mut self.panes {
             // The popup slot is a transient client-local overlay; resurrecting it would
             // revive an invisible orphan pane no client adopts.
@@ -842,7 +846,8 @@ impl SessionServer {
             damaged |= missing;
             let (agent_resume, typed) = match self.restore_action(&saved, &mut resumed) {
                 RestoreAction::ResumeAgent(resume) => (Some(resume), None),
-                RestoreAction::Type(line) => (None, Some(line)),
+                RestoreAction::Type(line) => (None, Some((line, false))),
+                RestoreAction::Run(line) => (None, Some((line, true))),
                 RestoreAction::Nothing => (None, None),
             };
             // A typed line needs a shell to read it. A pane launched as the agent itself is the one
@@ -881,8 +886,8 @@ impl SessionServer {
             );
             if matches!(result, ServerMessage::SpawnResult { ok: true, .. }) {
                 restored += 1;
-                if let Some(line) = typed.as_deref() {
-                    self.replay_foreground_command(saved.pane_id, generation, line);
+                if let Some((line, submit)) = typed {
+                    self.replay_foreground_command(saved.pane_id, generation, line, submit);
                 }
             }
             update_restored_layout_generation(&mut layout, saved.pane_id, generation);
@@ -916,7 +921,7 @@ impl SessionServer {
         if let Some(resume) = self.resolve_agent_resume(saved.agent_resume.as_ref(), resumed) {
             // `hold` means nothing runs that the user did not ask for, and reopening a conversation
             // is no exception: the command is left at the prompt for them to run or delete.
-            return if self.settings.resurrect_foreground == crate::config::ForegroundRestore::Hold {
+            return if self.settings.resurrect_agents == crate::config::RestoreMode::Hold {
                 // Rendered for the shell this session actually restores panes with, not for a
                 // POSIX one: `auto` execs direct argv and never involves a shell, so `hold` is the
                 // only path where quoting exists at all - and the only one that can be wrong.
@@ -945,9 +950,12 @@ impl SessionServer {
                 RestoreAction::ResumeAgent(resume)
             };
         }
-        match saved.foreground.clone() {
-            Some(command) => RestoreAction::Type(command),
-            None => RestoreAction::Nothing,
+        // Read as the setting stands *now*: a snapshot taken under a different setting is still
+        // honored the way the user asks today, and `never` defuses one taken while it was on.
+        match (saved.foreground.clone(), self.settings.resurrect_foreground) {
+            (None, _) | (Some(_), crate::config::RestoreMode::Never) => RestoreAction::Nothing,
+            (Some(command), crate::config::RestoreMode::Hold) => RestoreAction::Type(command),
+            (Some(command), crate::config::RestoreMode::Auto) => RestoreAction::Run(command),
         }
     }
 
@@ -964,11 +972,9 @@ impl SessionServer {
         saved: Option<&SnapshotAgentResume>,
         resumed: &mut std::collections::HashSet<(String, String)>,
     ) -> Option<AgentResumeLaunch> {
-        if !self.settings.resurrect_agents
-            // Read as the setting stands *now*, so starting a server with `never` also defuses a
-            // snapshot taken while it was on.
-            || self.settings.resurrect_foreground == crate::config::ForegroundRestore::Never
-        {
+        // Read as the setting stands *now*, so starting a server with `never` also defuses a
+        // snapshot taken while it was on.
+        if self.settings.resurrect_agents == crate::config::RestoreMode::Never {
             return None;
         }
         let saved = saved?;
@@ -1010,16 +1016,18 @@ impl SessionServer {
     /// eaten by an `rc` file that reads stdin would submit *something other than what was
     /// captured* - which is the one failure mode `auto` cannot be allowed to have. See
     /// [`SessionServer::flush_pending_foreground`] for what it waits for.
-    fn replay_foreground_command(&mut self, pane_id: PaneId, generation: u64, command: &str) {
-        if self.settings.resurrect_foreground == crate::config::ForegroundRestore::Never {
-            // Capture already declined to record anything under `Never`, but a snapshot taken
-            // under a different setting must still be honored as the setting reads *now*.
-            return;
-        }
+    fn replay_foreground_command(
+        &mut self,
+        pane_id: PaneId,
+        generation: u64,
+        command: String,
+        submit: bool,
+    ) {
         self.pending_foreground.push(PendingForeground {
             pane_id,
             generation,
-            command: command.to_string(),
+            command,
+            submit,
             waiting_since: Instant::now(),
         });
     }
@@ -1033,14 +1041,13 @@ impl SessionServer {
     /// then take the same path a client's keystrokes do; to the shell this is indistinguishable
     /// from someone typing fast.
     ///
-    /// Under [`Auto`](crate::config::ForegroundRestore::Auto) the line is submitted. Under
-    /// [`Hold`](crate::config::ForegroundRestore::Hold) it is left at the prompt unsubmitted, so
+    /// A line queued under [`Auto`](crate::config::RestoreMode::Auto) is submitted. Under
+    /// [`Hold`](crate::config::RestoreMode::Hold) it is left at the prompt unsubmitted, so
     /// running it is a keystroke the user chose - and so is deleting it.
     pub(super) fn flush_pending_foreground(&mut self) {
         if self.pending_foreground.is_empty() {
             return;
         }
-        let submit = self.settings.resurrect_foreground == crate::config::ForegroundRestore::Auto;
         let mut ready = Vec::new();
         let mut waiting = Vec::new();
         for pending in std::mem::take(&mut self.pending_foreground) {
@@ -1063,7 +1070,7 @@ impl SessionServer {
         self.pending_foreground = waiting;
         for pending in ready {
             let mut bytes = pending.command.into_bytes();
-            if submit {
+            if pending.submit {
                 bytes.push(b'\r');
             }
             self.handle_pane_input(None, pending.pane_id, pending.generation, &bytes);
@@ -3021,7 +3028,7 @@ mod tests {
             "never",
             ServerSettings {
                 resurrect: true,
-                resurrect_foreground: crate::config::ForegroundRestore::Never,
+                resurrect_foreground: crate::config::RestoreMode::Never,
                 snapshot_dir: Some(root.clone()),
                 snapshot_interval: Duration::ZERO,
                 ..ServerSettings::default()
@@ -3249,7 +3256,7 @@ mod tests {
             name,
             ServerSettings {
                 resurrect: true,
-                resurrect_foreground: crate::config::ForegroundRestore::Never,
+                resurrect_foreground: crate::config::RestoreMode::Never,
                 snapshot_dir: Some(root.clone()),
                 snapshot_interval: Duration::from_secs(60 * 60),
                 ..ServerSettings::default()
@@ -3500,7 +3507,11 @@ mod tests {
             .expect("report fact");
         assert_eq!(resume.session, "opaque-session-123");
 
-        server.settings.resurrect_agents = false;
+        // Forgetting commands keeps the conversation; only the agents' own `never` drops it.
+        server.settings.resurrect_foreground = crate::config::RestoreMode::Never;
+        let job = server.capture_snapshot(Instant::now()).expect("capture");
+        assert!(job.meta.panes[0].agent_resume.is_some());
+        server.settings.resurrect_agents = crate::config::RestoreMode::Never;
         let private_job = server.capture_snapshot(Instant::now()).expect("capture");
         assert!(private_job.meta.panes[0].agent_resume.is_none());
     }
@@ -3532,7 +3543,10 @@ mod tests {
         }
     }
 
-    fn restore_server(mode: crate::config::ForegroundRestore, agents: bool) -> SessionServer {
+    fn restore_server(
+        mode: crate::config::RestoreMode,
+        agents: crate::config::RestoreMode,
+    ) -> SessionServer {
         SessionServer::new_named_with_settings(
             "restore-action",
             ServerSettings {
@@ -3556,7 +3570,10 @@ mod tests {
     /// the pane's own process. The conversation reference is one argv element, so nothing parses it.
     #[test]
     fn a_reported_conversation_is_relaunched_with_the_current_resume_recipe() {
-        let server = restore_server(crate::config::ForegroundRestore::Auto, true);
+        let server = restore_server(
+            crate::config::RestoreMode::Auto,
+            crate::config::RestoreMode::Auto,
+        );
         let saved = saved_pane("claude", "opaque-session-123", Some("claude"));
 
         match action(&server, &saved, &mut std::collections::HashSet::new()) {
@@ -3581,7 +3598,10 @@ mod tests {
     /// other program published lives on the shared background server, which is what to reconnect to.
     #[test]
     fn a_conversation_resumes_the_way_rozi_learned_of_it() {
-        let server = restore_server(crate::config::ForegroundRestore::Auto, true);
+        let server = restore_server(
+            crate::config::RestoreMode::Auto,
+            crate::config::RestoreMode::Auto,
+        );
         let argv = |reported: bool| {
             let mut saved = saved_pane("codex", "thread", None);
             saved.agent_resume.as_mut().unwrap().reported = reported;
@@ -3602,7 +3622,10 @@ mod tests {
     /// The fact the restore needs has to survive being saved, from both ways of learning it.
     #[test]
     fn a_snapshot_records_how_a_conversation_was_learned() {
-        let mut server = restore_server(crate::config::ForegroundRestore::Auto, true);
+        let mut server = restore_server(
+            crate::config::RestoreMode::Auto,
+            crate::config::RestoreMode::Auto,
+        );
         let mut pane = running("codex", &[], protocol::PaneCommandPhase::Executing);
         pane.agent.retained_resume = Some(RetainedResume {
             agent: "codex".to_string(),
@@ -3627,7 +3650,10 @@ mod tests {
     /// running, so it waits at the prompt like any other held command.
     #[test]
     fn hold_leaves_the_resume_command_at_the_prompt() {
-        let mut server = restore_server(crate::config::ForegroundRestore::Hold, true);
+        let mut server = restore_server(
+            crate::config::RestoreMode::Hold,
+            crate::config::RestoreMode::Hold,
+        );
         server.settings.shell = vec!["/bin/bash".to_string()];
         let saved = saved_pane("claude", "needs quoting", None);
 
@@ -3651,7 +3677,10 @@ mod tests {
     fn a_held_resume_line_is_quoted_for_the_shell_that_will_read_it() {
         let saved = saved_pane("claude", "it's here", None);
         let line = |shell: &str| {
-            let mut server = restore_server(crate::config::ForegroundRestore::Hold, true);
+            let mut server = restore_server(
+                crate::config::RestoreMode::Hold,
+                crate::config::RestoreMode::Hold,
+            );
             server.settings.shell = vec![shell.to_string()];
             match action(&server, &saved, &mut std::collections::HashSet::new()) {
                 RestoreAction::Type(line) => line,
@@ -3682,7 +3711,10 @@ mod tests {
     /// line it always did, rather than one that fails to parse.
     #[test]
     fn a_shell_that_may_not_chain_gets_the_plain_resume_line() {
-        let mut server = restore_server(crate::config::ForegroundRestore::Hold, true);
+        let mut server = restore_server(
+            crate::config::RestoreMode::Hold,
+            crate::config::RestoreMode::Hold,
+        );
         server.settings.shell = vec!["nu".to_string()];
         let saved = saved_pane("claude", "needs quoting", None);
 
@@ -3708,7 +3740,10 @@ mod tests {
     /// back to it when PowerShell 7 is missing.
     #[test]
     fn windows_powershell_gets_the_plain_resume_line() {
-        let mut server = restore_server(crate::config::ForegroundRestore::Hold, true);
+        let mut server = restore_server(
+            crate::config::RestoreMode::Hold,
+            crate::config::RestoreMode::Hold,
+        );
         server.settings.shell = vec!["powershell.exe".to_string()];
         let saved = saved_pane("claude", "abc", None);
 
@@ -3722,7 +3757,10 @@ mod tests {
     /// or is no longer declared at all - restores as the ordinary pane it otherwise is.
     #[test]
     fn an_agent_without_a_resume_capability_restores_normally() {
-        let server = restore_server(crate::config::ForegroundRestore::Auto, true);
+        let server = restore_server(
+            crate::config::RestoreMode::Auto,
+            crate::config::RestoreMode::Auto,
+        );
 
         for saved in [
             saved_pane("gone-from-the-catalog", "abc", Some("nvim")),
@@ -3730,7 +3768,7 @@ mod tests {
             saved_pane("aider", "abc", Some("nvim")),
         ] {
             match action(&server, &saved, &mut std::collections::HashSet::new()) {
-                RestoreAction::Type(line) => assert_eq!(line, "nvim"),
+                RestoreAction::Run(line) => assert_eq!(line, "nvim"),
                 _ => panic!("nothing can resume `{}`", saved.agent_resume.unwrap().agent),
             }
         }
@@ -3740,7 +3778,10 @@ mod tests {
     /// into one history, and neither of them the one the user was talking to.
     #[test]
     fn one_conversation_is_resumed_once() {
-        let server = restore_server(crate::config::ForegroundRestore::Auto, true);
+        let server = restore_server(
+            crate::config::RestoreMode::Auto,
+            crate::config::RestoreMode::Auto,
+        );
         let mut resumed = std::collections::HashSet::new();
         let first = saved_pane("claude", "shared-session", None);
         let mut second = saved_pane("claude", "shared-session", None);
@@ -3756,29 +3797,44 @@ mod tests {
         ));
     }
 
-    /// Both halves of the policy are read as they stand *now*, so turning either off also defuses a
-    /// snapshot written while it was on.
+    /// Each half of the policy governs its own kind of pane and is read as it stands *now*:
+    /// forgetting commands still reopens a conversation, a held conversation is not submitted
+    /// because commands run, and turning agents off defuses a stored conversation.
     #[test]
-    fn policy_declines_to_reopen_a_stored_conversation() {
-        let mut resumed = std::collections::HashSet::new();
-        let saved = saved_pane("claude", "opaque-session-123", None);
+    fn agents_and_commands_follow_their_own_restore_policy() {
+        use crate::config::RestoreMode::{Auto, Hold, Never};
+        let saved = saved_pane("claude", "opaque-session-123", Some("claude"));
+        let restore = |foreground, agents| {
+            action(
+                &restore_server(foreground, agents),
+                &saved,
+                &mut std::collections::HashSet::new(),
+            )
+        };
 
-        for server in [
-            restore_server(crate::config::ForegroundRestore::Never, true),
-            restore_server(crate::config::ForegroundRestore::Auto, false),
-        ] {
-            assert!(matches!(
-                action(&server, &saved, &mut resumed),
-                RestoreAction::Nothing
-            ));
-        }
+        assert!(matches!(
+            restore(Never, Auto),
+            RestoreAction::ResumeAgent(_)
+        ));
+        assert!(matches!(
+            restore(Auto, Hold),
+            RestoreAction::Type(line) if line.starts_with("claude --resume opaque-session-123")
+        ));
+        assert!(matches!(
+            restore(Hold, Never),
+            RestoreAction::Type(line) if line == "claude"
+        ));
+        assert!(matches!(restore(Never, Never), RestoreAction::Nothing));
     }
 
     /// Rozi never reads the reference, but it does hand it to a process that will echo it. A value
     /// carrying terminal control bytes is not a conversation id.
     #[test]
     fn an_implausible_conversation_reference_is_refused() {
-        let server = restore_server(crate::config::ForegroundRestore::Auto, true);
+        let server = restore_server(
+            crate::config::RestoreMode::Auto,
+            crate::config::RestoreMode::Auto,
+        );
 
         for session in ["", "abc\u{1b}[2J", &"x".repeat(MAX_NATIVE_SESSION + 1)] {
             let saved = saved_pane("claude", session, None);
@@ -3790,27 +3846,6 @@ mod tests {
                 "accepted {session:?}"
             );
         }
-    }
-
-    /// `never` is a privacy setting as much as a restore setting: an opaque conversation id is
-    /// exactly the kind of thing a user who set it does not want left in the state directory.
-    #[test]
-    fn never_writes_no_conversation_reference_to_the_snapshot() {
-        let mut server = SessionServer::new_named_with_settings(
-            "native-never",
-            ServerSettings {
-                resurrect: true,
-                resurrect_foreground: crate::config::ForegroundRestore::Never,
-                ..ServerSettings::default()
-            },
-        );
-        server
-            .panes
-            .insert(1, reporting_agent_pane(&server.instance_id));
-
-        let job = server.capture_snapshot(Instant::now()).expect("capture");
-
-        assert!(job.meta.panes[0].agent_resume.is_none());
     }
 
     /// A pane still running the resume command a restore started for it has no shell in it, so
@@ -3946,7 +3981,7 @@ mod tests {
                 resurrect: true,
                 snapshot_dir: Some(root.path().join("snapshots")),
                 shell: vec![bash.to_string_lossy().into_owned(), "--noprofile".into()],
-                resurrect_foreground: crate::config::ForegroundRestore::Hold,
+                resurrect_foreground: crate::config::RestoreMode::Hold,
                 ..ServerSettings::default()
             },
         );
@@ -4032,7 +4067,7 @@ mod tests {
                 resurrect: true,
                 snapshot_dir: Some(root.path().join("snapshots")),
                 shell: vec!["/bin/sh".into()],
-                resurrect_foreground: crate::config::ForegroundRestore::Hold,
+                resurrect_agents: crate::config::RestoreMode::Hold,
                 ..ServerSettings::default()
             },
         );
@@ -4105,7 +4140,7 @@ mod tests {
         let mut pane = test_pane();
         pane.generation = 7;
         server.panes.insert(1, pane);
-        server.replay_foreground_command(1, 7, "cursor-agent");
+        server.replay_foreground_command(1, 7, "cursor-agent".to_string(), true);
 
         server.flush_pending_foreground();
         assert_eq!(
@@ -4135,7 +4170,7 @@ mod tests {
             let mut pane = test_pane();
             pane.runtime.command_phase = phase;
             server.panes.insert(1, pane);
-            server.replay_foreground_command(1, 1, "cursor-agent");
+            server.replay_foreground_command(1, 1, "cursor-agent".to_string(), true);
             server.pending_foreground[0].waiting_since = Instant::now() - REPLAY_PROMPT_WAIT;
 
             server.flush_pending_foreground();
@@ -4158,28 +4193,10 @@ mod tests {
         pane.generation = 7;
         pane.runtime.command_phase = protocol::PaneCommandPhase::Prompt;
         server.panes.insert(1, pane);
-        server.replay_foreground_command(1, 7, "cursor-agent");
+        server.replay_foreground_command(1, 7, "cursor-agent".to_string(), true);
 
         server.panes.get_mut(&1).unwrap().generation = 8;
         server.flush_pending_foreground();
-
-        assert!(server.pending_foreground.is_empty());
-    }
-
-    /// `never` is read when the session is restored, not when it was snapshotted, so turning it on
-    /// also defuses a snapshot taken while it was off.
-    #[test]
-    fn never_replays_nothing_from_an_existing_snapshot() {
-        let mut server = SessionServer::new_named_with_settings(
-            "defused",
-            ServerSettings {
-                resurrect: true,
-                resurrect_foreground: crate::config::ForegroundRestore::Never,
-                ..ServerSettings::default()
-            },
-        );
-        server.panes.insert(1, test_pane());
-        server.replay_foreground_command(1, 1, "terraform apply");
 
         assert!(server.pending_foreground.is_empty());
     }

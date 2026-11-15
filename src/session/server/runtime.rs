@@ -1868,7 +1868,7 @@ impl SessionServer {
         let session_instance = self.instance_id.clone();
         let tracks_snapshot = owner.is_none() && self.settings.resurrect;
         let tracks_snapshot_foreground = tracks_snapshot
-            && self.settings.resurrect_foreground != crate::config::ForegroundRestore::Never;
+            && self.settings.resurrect_foreground != crate::config::RestoreMode::Never;
         let history_leased = owner.is_none() && self.agent_history.contains_key(&pane_id);
         let Some(pane) = self.pane_mut(owner, pane_id) else {
             return;

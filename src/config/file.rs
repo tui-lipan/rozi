@@ -498,7 +498,7 @@ struct SessionFileConfig {
     picker_open_on: Option<String>,
     resurrect: Option<bool>,
     resurrect_foreground: Option<String>,
-    resurrect_agents: Option<bool>,
+    resurrect_agents: Option<String>,
     allow_takeover: Option<bool>,
     on_attach: Option<String>,
 }
@@ -1122,9 +1122,6 @@ fn load_config_from_text_with_extensions(
     if let Some(resurrect) = parsed.session.resurrect {
         config.session.resurrect = resurrect;
     }
-    if let Some(resurrect_agents) = parsed.session.resurrect_agents {
-        config.session.resurrect_agents = resurrect_agents;
-    }
     if let Some(allow_takeover) = parsed.session.allow_takeover {
         config.session.allow_takeover = allow_takeover;
     }
@@ -1136,11 +1133,25 @@ fn load_config_from_text_with_extensions(
             )),
         }
     }
-    if let Some(value) = non_empty(parsed.session.resurrect_foreground) {
-        match crate::config::ForegroundRestore::parse(&value) {
-            Some(mode) => config.session.resurrect_foreground = mode,
+    for (key, value, field) in [
+        (
+            "resurrect_foreground",
+            parsed.session.resurrect_foreground,
+            &mut config.session.resurrect_foreground,
+        ),
+        (
+            "resurrect_agents",
+            parsed.session.resurrect_agents,
+            &mut config.session.resurrect_agents,
+        ),
+    ] {
+        let Some(value) = non_empty(value) else {
+            continue;
+        };
+        match crate::config::RestoreMode::parse(&value) {
+            Some(mode) => *field = mode,
             None => warnings.push(format!(
-                "Ignored unknown session.resurrect_foreground \"{value}\" (expected `auto`, `hold`, or `never`)"
+                "Ignored unknown session.{key} \"{value}\" (expected `auto`, `hold`, or `never`)"
             )),
         }
     }
@@ -2234,7 +2245,7 @@ mod file_tests {
 
         assert_eq!(
             loaded.config.session.resurrect_foreground,
-            crate::config::ForegroundRestore::Hold
+            crate::config::RestoreMode::Hold
         );
         assert!(
             loaded
@@ -2271,32 +2282,34 @@ mod file_tests {
         );
     }
 
+    /// Each key sets its own field: a restore that read one for the other would run commands
+    /// under the agents' `auto`.
     #[test]
-    fn session_section_parses_every_resurrect_foreground_mode() {
-        for (text, expected) in [
-            ("auto", crate::config::ForegroundRestore::Auto),
-            ("hold", crate::config::ForegroundRestore::Hold),
-            ("never", crate::config::ForegroundRestore::Never),
-        ] {
+    fn session_section_parses_every_resurrect_mode_into_its_own_key() {
+        use crate::config::RestoreMode::{Auto, Hold, Never};
+        for (foreground, agents) in [(Auto, Never), (Hold, Auto), (Never, Hold)] {
             let loaded = load_config_from_text(
-                &format!("[session]\nresurrect_foreground = \"{text}\""),
+                &format!(
+                    "[session]\nresurrect_foreground = \"{}\"\nresurrect_agents = \"{}\"",
+                    foreground.as_str(),
+                    agents.as_str()
+                ),
                 Path::new("config.toml"),
             );
-            assert_eq!(loaded.config.session.resurrect_foreground, expected);
+            assert_eq!(loaded.config.session.resurrect_foreground, foreground);
+            assert_eq!(loaded.config.session.resurrect_agents, agents);
             assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         }
     }
 
-    /// The server reads this at both ends of a resurrection, so its own default must agree with
+    /// The server reads these at both ends of a resurrection, so its own defaults must agree with
     /// the config's. A server started without a config must not restore differently.
     #[test]
-    fn resurrect_foreground_defaults_agree_on_both_sides() {
-        assert_eq!(
-            crate::config::Config::default()
-                .session
-                .resurrect_foreground,
-            crate::session::server::ServerSettings::default().resurrect_foreground
-        );
+    fn resurrect_defaults_agree_on_both_sides() {
+        let config = crate::config::Config::default().session;
+        let server = crate::session::server::ServerSettings::default();
+        assert_eq!(config.resurrect_foreground, server.resurrect_foreground);
+        assert_eq!(config.resurrect_agents, server.resurrect_agents);
     }
 
     #[test]
@@ -2311,15 +2324,6 @@ mod file_tests {
             assert_eq!(loaded.config.session.keep_awake_while_agents_work, enabled);
             assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         }
-    }
-
-    #[test]
-    fn session_can_disable_native_agent_snapshot_facts() {
-        let loaded = load_config_from_text(
-            "[session]\nresurrect_agents = false",
-            Path::new("config.toml"),
-        );
-        assert!(!loaded.config.session.resurrect_agents);
     }
 
     /// Takeover is on unless a config turns it off, and the server's own settings default agrees —

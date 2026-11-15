@@ -8,9 +8,8 @@ use std::path::PathBuf;
 use tui_lipan::prelude::CapStyle;
 
 use crate::config::{
-    Config, CopyFeedback, CopyOnSelect, CursorBlink, ForegroundRestore, MiddleClickPaste,
-    MousePointer, RightClickClipboardAction, SessionOnAttach, SessionPickerOpenOn, SessionStartup,
-    WhichKey,
+    Config, CopyFeedback, CopyOnSelect, CursorBlink, MiddleClickPaste, MousePointer, RestoreMode,
+    RightClickClipboardAction, SessionOnAttach, SessionPickerOpenOn, SessionStartup, WhichKey,
 };
 use crate::input::Action;
 use crate::layout::anim::{
@@ -1341,16 +1340,32 @@ pub static SETTINGS: &[SettingSpec] = {
         row(
             CycleResurrectForeground,
             G::Sessions,
-            "Restored running commands",
-            &["rerun", "agents", "foreground"],
+            "Commands after restart",
+            &["rerun", "foreground", "restore", "resurrect"],
             Choice(&EnumChoice::new(
-                "Restored running commands",
-                Choices::Fixed(ForegroundRestore::all),
+                "Commands after restart",
+                Choices::Fixed(RestoreMode::all),
                 config_field!(session.resurrect_foreground),
-                ForegroundRestore::label,
+                RestoreMode::label,
                 ChoiceSave::Key(
                     ConfigKey::new("session", "resurrect_foreground"),
-                    ForegroundRestore::as_str,
+                    RestoreMode::as_str,
+                ),
+            )),
+        ),
+        row(
+            CycleResurrectAgents,
+            G::Sessions,
+            "Agents after restart",
+            &["resume", "reopen", "conversation", "restore", "resurrect"],
+            Choice(&EnumChoice::new(
+                "Agents after restart",
+                Choices::Fixed(RestoreMode::all),
+                config_field!(session.resurrect_agents),
+                RestoreMode::agent_label,
+                ChoiceSave::Key(
+                    ConfigKey::new("session", "resurrect_agents"),
+                    RestoreMode::as_str,
                 ),
             )),
         ),

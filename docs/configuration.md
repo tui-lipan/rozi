@@ -660,8 +660,8 @@ Each switch controls whether rozi asks before a destructive action. They apply t
 | `keep_awake_while_agents_work` | bool | `false` | Keeps the host awake while an agent is working; activities such as `rozi status` and generic published rows do not count. See [sleep policy](sessions.md#keep-the-system-awake). |
 | `autosave` | bool | `false` | Saves and restores the local layout, not running programs. |
 | `resurrect` | bool | `true` | Saves each named session's layout, commands, scrollback, and what to restart. |
-| `resurrect_foreground` | string | `"hold"` | What a restore does with a command a pane was running or an agent conversation it reported: `"auto"` runs it, `"hold"` types it at the prompt, `"never"` restores only the shell. |
-| `resurrect_agents` | bool | `true` | Saves agents' native session references in named-session snapshots and reopens those conversations on restore. |
+| `resurrect_foreground` | string | `"hold"` | What a restore does with a command a pane was running: `"auto"` runs it, `"hold"` types it at the prompt, `"never"` restores only the shell. |
+| `resurrect_agents` | string | `"auto"` | What a restore does with an agent conversation a pane reported: `"auto"` reopens it, `"hold"` types the resume command at the prompt, `"never"` keeps it out of the snapshot. |
 | `picker_open_on` | string | `"current-host"` | Initial Sessions tab: `"current-host"` opens the current session’s host, the launcher's host, or Local; `"all"` opens All sessions. |
 | `startup` | string | `"picker"` | What a bare `rozi` launch opens: `"picker"`, `"ephemeral"` (a temporary session), `"last"`, or `"profile"`. |
 | `path` | path string | `session.toml` in the state directory | Autosave file. `~` expands. The default file is private (mode `0600`); a path you choose gets ordinary permissions. |

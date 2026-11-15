@@ -294,11 +294,13 @@ pub struct ServerSettings {
     /// What a snapshot does with a command a pane was observed running at its prompt. Mirrors
     /// [`crate::config::SessionConfig::resurrect_foreground`], and is read at both ends: capture
     /// declines to write the command down under
-    /// [`Never`](crate::config::ForegroundRestore::Never), and restore decides between running the
+    /// [`Never`](crate::config::RestoreMode::Never), and restore decides between running the
     /// captured command and leaving it pending at the prompt.
-    pub resurrect_foreground: crate::config::ForegroundRestore,
-    /// Whether snapshots may retain explicit native agent session references.
-    pub resurrect_agents: bool,
+    pub resurrect_foreground: crate::config::RestoreMode,
+    /// What a snapshot does with an agent conversation a pane reported. Mirrors
+    /// [`crate::config::SessionConfig::resurrect_agents`] and, like `resurrect_foreground`, is read
+    /// at both ends.
+    pub resurrect_agents: crate::config::RestoreMode,
     pub snapshot_dir: Option<PathBuf>,
     pub snapshot_interval: Duration,
     /// Maximum time an attached client may go without a heartbeat pong.
@@ -358,8 +360,8 @@ impl Default for ServerSettings {
             log_max_bytes: crate::config::DEFAULT_LOG_MAX_BYTES,
             resurrect: false,
             keep_awake_while_agents_work: false,
-            resurrect_foreground: crate::config::ForegroundRestore::default(),
-            resurrect_agents: true,
+            resurrect_foreground: crate::config::RestoreMode::Hold,
+            resurrect_agents: crate::config::RestoreMode::Auto,
             snapshot_dir: None,
             snapshot_interval: Duration::from_secs(30),
             heartbeat_timeout: DEFAULT_HEARTBEAT_TIMEOUT,

@@ -35,7 +35,7 @@ Settings is divided into categories:
 | Panes | Background, borders, and titlebar |
 | Bars | Workbar and sidebar |
 | Alerts | Pane border and workspace tab effects, workspace markers, desktop notifications, and sounds |
-| Sessions | Startup, layout autosave, resurrection, and restored commands |
+| Sessions | Startup, layout autosave, resurrection, and commands and agents after restart |
 | All | Every setting |
 
 To change a setting:

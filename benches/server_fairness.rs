@@ -1705,7 +1705,7 @@ fn run_server(
         resurrect,
         // The corpus measures terminal snapshots, not asynchronously discovered foreground
         // commands. A late process-inspector update would create another dirty generation.
-        resurrect_foreground: rozi::config::ForegroundRestore::Never,
+        resurrect_foreground: rozi::config::RestoreMode::Never,
         snapshot_dir: resurrect.then(|| root.join("snapshots")),
         snapshot_interval: if resurrect {
             Duration::ZERO

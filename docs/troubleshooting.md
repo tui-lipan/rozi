@@ -153,7 +153,9 @@ With `[session] resurrect_foreground = "auto"`, resurrection types a shell pane'
 back and runs it. Set `"hold"`, the default, to leave it at the prompt for you to confirm, or
 `"never"` to restore only the shell.
 
-A command explicitly configured when creating a pane or in a profile still runs automatically.
+A command explicitly configured when creating a pane or in a profile still runs automatically. An
+agent conversation follows `resurrect_agents` instead, which reopens it by default; set `"hold"` or
+`"never"` there.
 
 The session server reads this setting when it starts, so restart the session for it to apply. See
 [Commands a pane was running](sessions.md#commands-a-pane-was-running).

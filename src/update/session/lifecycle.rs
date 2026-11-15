@@ -113,7 +113,7 @@ pub(crate) fn attach_failed(ctx: &mut Context<AppRoot>, epoch: u64, message: Str
         .request
         .remote
         .clone()
-        .filter(|_| crate::session::discovery::probe_failure_is_offline(&message));
+        .filter(|_| crate::session::discovery::ssh_connect_found_host_offline(&message));
     crate::update::cancel_attach_askpass(ctx, epoch);
     ctx.state.current_mut().pending_session_attach = None;
     crate::ops::session::clear_pending_session_action(ctx, Some(&message));

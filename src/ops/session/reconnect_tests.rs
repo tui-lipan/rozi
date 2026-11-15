@@ -361,3 +361,50 @@ fn sidebar_connect_arms_and_monitor_only_disconnect_removes_intent() {
         }
     });
 }
+
+/// A Sessions tab starts nothing on a host until it answers: not while it is offline, where every
+/// key a creation could come from is a no-op and `Enter` connects, and not while that connection
+/// is still under way.
+#[test]
+fn a_session_picker_tab_creates_only_on_a_host_that_answered() {
+    with_backend(|backend| {
+        use crate::state::{SessionPickerState, SessionPickerTab};
+        let target = RemoteTarget::Alias("create-gate.invalid".into());
+        picker(
+            backend,
+            &target,
+            HostProbe::Failed("ssh: connect to host gate port 22: Connection timed out".into()),
+        );
+        backend.state_mut().remote_picker = None;
+        backend.state_mut().current_mut().pending_session_attach = None;
+        let mut sessions = SessionPickerState::new(Vec::new());
+        sessions.tab = SessionPickerTab::Host(Some(target.clone()));
+        backend.state_mut().session_picker = Some(sessions);
+        backend.state_mut().show_session_picker = true;
+        let attempt = |backend: &mut TestBackend<AppRoot>| {
+            backend.update_level(Msg::SessionPickerEphemeral).unwrap();
+            backend
+                .update_level(Msg::SessionPickerCreateFromQuery)
+                .unwrap();
+            let state = backend.state();
+            state.current().pending_session_attach.is_some() || state.rename_session.is_some()
+        };
+
+        assert!(!attempt(backend), "an offline host creates nothing");
+        backend.update_level(Msg::SessionPickerConnectHost).unwrap();
+        assert_eq!(
+            backend.state().remote.hosts.get(&target).unwrap().probe,
+            HostProbe::InFlight
+        );
+        assert!(!attempt(backend), "a host still connecting creates nothing");
+
+        backend
+            .state_mut()
+            .remote
+            .hosts
+            .get_mut(&target)
+            .unwrap()
+            .probe = HostProbe::Reached;
+        assert!(attempt(backend), "a host that answered creates");
+    });
+}

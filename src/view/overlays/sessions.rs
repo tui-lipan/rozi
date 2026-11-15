@@ -391,18 +391,22 @@ fn push_session_activation(
     actions: &mut Vec<OverlayAction>,
 ) {
     if picker.input.text().trim().is_empty() && picker_list_is_empty(&ctx.state, picker) {
-        actions.push(
-            if crate::ops::session::session_picker_failed_host(&ctx.state).is_some() {
-                OverlayAction::new("enter", "connect", Msg::SessionPickerConnectHost, true)
-            } else {
-                OverlayAction::new(
-                    "enter",
-                    session_creation_label(ctx, picker, "ephemeral shell"),
-                    Msg::SessionPickerEphemeral,
-                    true,
-                )
-            },
-        );
+        // A host still connecting offers neither: its tab fills in once it answers.
+        if crate::ops::session::session_picker_can_create(&ctx.state) {
+            actions.push(OverlayAction::new(
+                "enter",
+                session_creation_label(ctx, picker, "ephemeral shell"),
+                Msg::SessionPickerEphemeral,
+                true,
+            ));
+        } else if crate::ops::session::session_picker_unreached_host(&ctx.state).is_some() {
+            actions.push(OverlayAction::new(
+                "enter",
+                "connect",
+                Msg::SessionPickerConnectHost,
+                true,
+            ));
+        }
     }
     let Some(entry) = selected else {
         return;
@@ -466,8 +470,8 @@ fn push_session_creation_actions(
     picker: &SessionPickerState,
     actions: &mut Vec<OverlayAction>,
 ) {
-    // A host that could not be reached creates nothing until it is connected again.
-    let reached = crate::ops::session::session_picker_failed_host(&ctx.state).is_none();
+    // A host that has not answered creates nothing until it does.
+    let reached = crate::ops::session::session_picker_can_create(&ctx.state);
     actions.push(OverlayAction::new(
         "ctrl-n",
         session_creation_label(ctx, picker, "new"),
@@ -663,7 +667,7 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
     }
     // Say what is (not) there, nothing more: the footer already advertises `new ctrl+n`, and
     // repeating it in the body says the same thing twice in a longer sentence.
-    let failure = crate::ops::session::session_picker_failed_host(&ctx.state)
+    let failure = crate::ops::session::session_picker_unreached_host(&ctx.state)
         .and_then(|target| ctx.state.remote.hosts.get(&target))
         .and_then(|host| host.probe.error())
         .map(crate::session::discovery::probe_failure_reason);

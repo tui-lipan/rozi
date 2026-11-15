@@ -221,7 +221,7 @@ impl AgentScratch {
     pub(super) fn observe(&mut self, before: AgentStates, runtime: &PaneRuntimeState) {
         self.sync_references(runtime);
         let after = self.agent_states(runtime);
-        let counting = self.launch.is_none();
+        let counting = !self.launch_gates(runtime);
         for entry in &after {
             let Some(tracked) = self
                 .references
@@ -260,6 +260,13 @@ impl AgentScratch {
         self.references.clear();
     }
 
+    /// Whether a launch keeps the pane's own work from counting as a run. Published agent rows
+    /// speak for the pane while they last, so a launch is suspended under them - not ended, since
+    /// the rows can be withdrawn while the agent is still loading.
+    pub(super) fn launch_gates(&self, runtime: &PaneRuntimeState) -> bool {
+        self.launch.is_some() && !runtime.rows.iter().any(protocol::PublishedRow::is_agent)
+    }
+
     /// A run has started on its own evidence, so the launch is over: work from here is a run, even
     /// work that was already on screen as the launch's loading.
     pub(super) fn start_run(&mut self) {
@@ -270,21 +277,25 @@ impl AgentScratch {
     /// starts. A line typed into a dialog answers it instead - the loading after a trust prompt is
     /// still loading.
     ///
-    /// The dialog is the one the latest reading shows, not the settled state, which keeps a dialog
-    /// up for a moment after it closes. And a reading's dialog is answered once: a second line typed
-    /// before anything new is read goes to whatever came after it.
+    /// The dialog is the one the agent's report or the latest reading shows, not the settled
+    /// state, which keeps a dialog up for a moment after it closes. And a reading's dialog is
+    /// answered once: a second line typed before anything new is read goes to whatever came after
+    /// it.
     pub(super) fn note_input(&mut self, runtime: &PaneRuntimeState, bytes: &[u8]) {
         if self.launch.is_none() || !input_submits_line(bytes) {
             return;
         }
-        let blocked = match runtime.integration.as_deref() {
-            Some(report) => report.state == protocol::AgentState::Blocked,
-            None => self
+        // Either source showing a dialog is enough: a screen dialog can outrank a report that
+        // says the agent is working, and taking a prompt for an answer only misses a run.
+        let blocked = runtime
+            .integration
+            .as_deref()
+            .is_some_and(|report| report.state == protocol::AgentState::Blocked)
+            || self
                 .read
                 .as_ref()
                 .and_then(|read| read.resolved.as_ref())
-                .is_some_and(|detected| detected.state == protocol::DetectedAgentState::Blocked),
-        };
+                .is_some_and(|detected| detected.state == protocol::DetectedAgentState::Blocked);
         let screen = self.read.as_ref().map(|read| read.screen.clone());
         let answered = matches!(
             (&screen, &self.answered),
@@ -1069,7 +1080,7 @@ impl SessionServer {
             pane.runtime.status.as_ref(),
             pane.runtime.detected_agent.as_ref(),
             pane.runtime.integration.as_deref(),
-            pane.agent.launch.is_none(),
+            !pane.agent.launch_gates(&pane.runtime),
         );
         pane.agent.observe(before, &pane.runtime);
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
@@ -1497,7 +1508,7 @@ impl SessionServer {
             pane.runtime.status.as_ref(),
             pane.runtime.detected_agent.as_ref(),
             pane.runtime.integration.as_deref(),
-            pane.agent.launch.is_none(),
+            !pane.agent.launch_gates(&pane.runtime),
         );
         pane.agent.observe(before, &pane.runtime);
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
@@ -1766,7 +1777,7 @@ impl SessionServer {
                 next.status.as_ref(),
                 next.detected_agent.as_ref(),
                 None,
-                pane.agent.launch.is_none(),
+                !pane.agent.launch_gates(&next),
             );
         }
         // A snapshot must stop offering a conversation the pane has visibly left.
@@ -2096,20 +2107,28 @@ fn compute_pane_runtime(
         ),
     };
 
-    advance_launch(
-        &mut pane.agent.launch,
-        crate::session::protocol::effective_semantic_agent_state(
-            integration.as_deref(),
-            pane.runtime.status.as_ref(),
-            detected_agent.as_ref(),
-        ),
-    );
+    // Rows' states say nothing about what the pane's own launch is loading.
+    if !pane
+        .runtime
+        .rows
+        .iter()
+        .any(protocol::PublishedRow::is_agent)
+    {
+        advance_launch(
+            &mut pane.agent.launch,
+            crate::session::protocol::effective_semantic_agent_state(
+                integration.as_deref(),
+                pane.runtime.status.as_ref(),
+                detected_agent.as_ref(),
+            ),
+        );
+    }
     let work_started_at = next_work_started_at(
         &pane.runtime,
         pane.runtime.status.as_ref(),
         detected_agent.as_ref(),
         integration.as_deref(),
-        pane.agent.launch.is_none(),
+        !pane.agent.launch_gates(&pane.runtime),
     );
     let foreground_shell = foreground
         .program
@@ -2663,11 +2682,9 @@ pub(super) fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::Publi
     if had_agent_rows || has_agent_rows {
         pane.agent.hold = None;
     }
-    // Live agent rows speak for the pane's conversations again, and for whatever a launch was
-    // still loading: no screen speaks for the pane while they do.
+    // Live agent rows speak for the pane's conversations again.
     if has_agent_rows {
         pane.agent.retained_resume = None;
-        pane.agent.start_run();
     }
     pane.agent.observe(before, &pane.runtime);
     pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
@@ -5547,6 +5564,34 @@ mod tests {
             agent.launch.is_none(),
             "a dialog only the settle grace still holds"
         );
+
+        // Codex can report working while its screen shows a chooser that outranks the report.
+        agent.launch = Some(Default::default());
+        read(&mut agent, "enter continue · esc back", Blocked);
+        let reporting = PaneRuntimeState {
+            integration: Some(Box::new(protocol::AgentIntegrationReport {
+                integration: PROGRAM_STATUS_INTEGRATION.into(),
+                identity: crate::session::protocol::AgentIdentity::new("codex", "Codex"),
+                reference: protocol::AgentRef {
+                    pane: protocol::PaneRef {
+                        session_instance: protocol::SessionInstanceId::for_test("server"),
+                        pane_id: 1,
+                        generation: 1,
+                    },
+                    slot: None,
+                    incarnation: 1,
+                },
+                state: protocol::AgentState::Working,
+                reason: None,
+                native_session: None,
+                unless_quiet: None,
+                seq: 1,
+                reported_at_unix_ms: 0,
+            })),
+            ..settled.clone()
+        };
+        agent.note_input(&reporting, b"\r");
+        assert!(agent.launch.is_some(), "the screen's dialog was answered");
     }
 
     /// A conversation a publisher lists is its word about a real turn, whatever the pane's own
@@ -5569,15 +5614,24 @@ mod tests {
             live_session: None,
             reported: false,
         };
+        rig.screen(LOADING);
         replace_pane_rows(&mut rig.pane, vec![row("idle")]);
         replace_pane_rows(&mut rig.pane, vec![row("working")]);
         replace_pane_rows(&mut rig.pane, vec![row("idle")]);
-        let finished: u64 = records(&rig.pane)
-            .iter()
-            .filter(|record| record.reference.slot.is_some())
-            .map(|record| record.completions)
-            .sum();
-        assert_eq!(finished, 1);
+        let finished = |rig: &LaunchRig, row: bool| -> u64 {
+            records(&rig.pane)
+                .iter()
+                .filter(|record| record.reference.slot.is_some() == row)
+                .map(|record| record.completions)
+                .sum()
+        };
+        assert_eq!(finished(&rig, true), 1);
+
+        // The publisher goes away while the agent is still loading: its loading is no run.
+        replace_pane_rows(&mut rig.pane, Vec::new());
+        rig.screen(LOADING);
+        rig.screen(PROMPT);
+        assert_eq!(finished(&rig, false), 0);
     }
 
     /// `codex "fix the tests"` goes from loading straight into the turn it was given.

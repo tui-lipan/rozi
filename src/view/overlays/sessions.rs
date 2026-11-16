@@ -123,7 +123,7 @@ fn collaborator_rows(
                     .is_none_or(|role| role >= crate::session::protocol::SessionRole::Controller)
                 && !client.parked,
             requesting: client.requesting_control,
-            kickable: can_evict,
+            kickable: can_evict || shared.can_remove(client),
         };
         rows.push(
             SearchItem::new(client_tag(&client.label, client.id), item).description(
@@ -143,10 +143,9 @@ fn collaborator_markers(
     if Some(client.id) == shared.controller {
         markers.push("ctrl".to_string());
     }
-    if let Some(user) = client.user.as_deref() {
-        markers.push(format!("@{user}"));
-    }
-    match client.role {
+    // A guest's label is its account, so its role is the only thing left to say. The owner's own
+    // clients are all owners: for them only a read-only attach is worth a token.
+    match client.role.filter(|_| client.user.is_some()) {
         Some(role) => markers.push(role.as_str().to_string()),
         None if client.read_only => markers.push("ro".to_string()),
         None => {}
@@ -206,20 +205,19 @@ fn self_tag(shared: &crate::state::SharedSessionState) -> String {
         .map(|client| client_tag(&client.label, client.id))
         .unwrap_or_else(|| format!("#{}", shared.client_id));
     let mut markers = Vec::new();
-    if let Some(user) = me.and_then(|client| client.user.as_deref()) {
-        markers.push(format!("@{user}"));
-    }
-    if let Some(role) = shared.role {
-        if shared.is_controller() {
-            markers.push("ctrl".to_string());
-        }
-        markers.push(role.as_str().to_string());
+    let guest_role = shared.role.filter(|_| shared.is_guest());
+    if shared.is_controller() {
+        markers.push("ctrl");
     } else if shared.read_only {
-        markers.push("ro".to_string());
-    } else if shared.is_controller() {
-        markers.push("ctrl".to_string());
+        // A guest viewer's role says it already.
+        if guest_role.is_none() {
+            markers.push("ro");
+        }
     } else {
-        markers.push("follow".to_string());
+        markers.push("follow");
+    }
+    if let Some(role) = guest_role {
+        markers.push(role.as_str());
     }
     format!("{label} · {}", markers.join(" · "))
 }

@@ -295,7 +295,7 @@ fn attach_local(
                 if !autostart && should_autostart_session(&err) {
                     link.send(Msg::SessionAttachFailed {
                         epoch,
-                        message: format!("Session `{name}` is not running"),
+                        message: crate::session::naming::not_running_message(&name),
                     });
                     return;
                 }

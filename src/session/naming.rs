@@ -66,6 +66,16 @@ pub fn is_shared_target(target: &str) -> bool {
     SessionAddress::parse(target).is_some_and(|address| address.is_shared())
 }
 
+/// What to say when nothing answers at `target`. A guest cannot tell a session that is not
+/// running from one that is not shared with it, and is not meant to.
+pub fn not_running_message(target: &str) -> String {
+    if is_shared_target(target) {
+        format!("Session `{target}` is not running or not shared with you")
+    } else {
+        format!("Session `{target}` is not running")
+    }
+}
+
 /// The owner prefix of `target` applied to `name`: what a guest calls a session after its owner
 /// renamed it. A bare target leaves `name` as it is.
 pub fn with_owner_of(target: &str, name: &str) -> String {

@@ -44,7 +44,7 @@ pub(crate) fn nudge_if_follower(ctx: &mut Context<AppRoot>) -> bool {
     let how = if shared.is_some_and(|shared| shared.read_only) {
         "read-only".to_string()
     } else if shared.is_some_and(crate::state::SharedSessionState::is_editor) {
-        "shared with you as editor".to_string()
+        "needs the controller role".to_string()
     } else {
         // Advertise the live request binding so the hint tracks any `[keys]` override.
         let allow_takeover = shared.is_some_and(|shared| shared.allow_takeover);
@@ -81,7 +81,7 @@ pub(crate) fn request_control(ctx: &mut Context<AppRoot>) -> Update {
         .as_ref()
         .expect("writable session checked");
     if shared.is_editor() {
-        crate::pane::pty_events::notify_info(ctx, "shared with you as editor");
+        crate::pane::pty_events::notify_info(ctx, "Layout control needs the controller role");
         return Update::full();
     }
     let already_requested = shared
@@ -140,7 +140,7 @@ pub(crate) fn evict_client(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let Some(target) = shared.clients.get(index) else {
         return Update::none();
     };
-    if !ctx.state.is_controller() {
+    if !ctx.state.is_controller() && !shared.can_remove(target) {
         nudge_if_follower(ctx);
         return Update::full();
     }

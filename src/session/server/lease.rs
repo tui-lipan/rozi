@@ -421,11 +421,17 @@ impl SessionServer {
         client_id: ClientId,
         target: ClientId,
     ) -> Vec<(Target, ServerMessage)> {
-        if !self.is_controller(client_id)
-            || self.client_read_only(client_id)
-            || !self.client_may_hold_lease(client_id)
-            || target == client_id
-            || !self.client_attached(target)
+        if target == client_id || !self.client_attached(target) {
+            return Vec::new();
+        }
+        // The owner removes a guest whoever holds layout control: a guest given control must not
+        // be able to keep its place by holding the lease.
+        let owner_removes_guest = self.client_allows(client_id, protocol::Permission::Admin)
+            && !self.client_is_owner(target);
+        if !owner_removes_guest
+            && (!self.is_controller(client_id)
+                || self.client_read_only(client_id)
+                || !self.client_may_hold_lease(client_id))
         {
             return Vec::new();
         }

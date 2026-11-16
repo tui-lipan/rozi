@@ -656,7 +656,10 @@ fn check_local_shared_attach_target(name: &str) -> std::result::Result<(), Strin
                 std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
             ) =>
         {
-            Err(format!("Session `{name}` is not running."))
+            Err(format!(
+                "{}.",
+                crate::session::naming::not_running_message(name)
+            ))
         }
         Err(err) => Err(format!("Cannot attach to `{name}`: {err}")),
     }

@@ -4469,7 +4469,7 @@ fn guest_role_mirrors_roster_live_and_renamed_keeps_owner_prefix() {
                 crate::input::Action::RequestControl,
                 backend.state(),
             ),
-            Some("shared with you as editor".to_string())
+            Some("needs the controller role".to_string())
         );
 
         // Live downgrade to Viewer flips read_only without reattaching.

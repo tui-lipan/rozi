@@ -434,7 +434,7 @@ pub(crate) fn action_disabled_reason(action: Action, state: &State) -> Option<St
             .as_ref()
             .is_some_and(crate::state::SharedSessionState::is_editor)
     {
-        return Some("shared with you as editor".to_string());
+        return Some("needs the controller role".to_string());
     }
     action.disabled_reason_for_capabilities(
         state

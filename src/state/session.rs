@@ -592,6 +592,12 @@ impl SharedSessionState {
         self.me().is_some_and(|client| client.user.is_some())
     }
 
+    /// Whether this client may remove `client` without holding layout control: the session's
+    /// owner removes a guest whoever controls the layout.
+    pub fn can_remove(&self, client: &crate::session::protocol::ClientInfo) -> bool {
+        self.role == Some(crate::session::protocol::SessionRole::Owner) && client.user.is_some()
+    }
+
     pub fn can_request_control(&self) -> bool {
         !self.read_only && !self.is_editor()
     }

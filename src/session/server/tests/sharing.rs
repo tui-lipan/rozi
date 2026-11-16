@@ -643,6 +643,17 @@ fn owner_retakes_control_from_guest_with_takeover_disabled_and_guest_cannot_evic
         [ServerMessage::Error { code, .. }] if code == PERMISSION_DENIED_ERROR_CODE
     ));
 
+    // The owner removes a guest without holding the lease the other guest keeps.
+    grant_user(&mut server, charlie_uid(), "charlie", SessionRole::Editor);
+    let (charlie, _c_stream) = attach_guest(&mut server, charlie_uid(), "alice/dev", false);
+    send_frame(
+        &mut server,
+        owner,
+        ClientMessage::EvictClient { target: charlie },
+    );
+    assert_eq!(server.controller, Some(bob));
+    assert!(server.client(charlie).unwrap().close_after_flush);
+
     // Owner's RequestControl takes control from the guest immediately despite allow_takeover = false.
     send_frame(&mut server, owner, ClientMessage::RequestControl);
     assert_eq!(server.controller, Some(owner));

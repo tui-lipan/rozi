@@ -2522,7 +2522,17 @@ pub fn attach_endpoint(target: &str) -> io::Result<IpcEndpoint> {
     let account = crate::platform::user::lookup_user(owner)?.ok_or_else(|| {
         io::Error::new(io::ErrorKind::NotFound, format!("unknown user `{owner}`"))
     })?;
-    let shared_dir = crate::platform::paths::verified_shared_dir(account.id)?;
+    let shared_dir = crate::platform::paths::verified_shared_dir(account.id).map_err(|err| {
+        if err.kind() == io::ErrorKind::NotFound {
+            // The owner shares nothing right now.
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "the session is not running or not shared with you",
+            )
+        } else {
+            err
+        }
+    })?;
     Ok(EndpointRegistry::shared_session_endpoint(
         &shared_dir,
         &address.name,

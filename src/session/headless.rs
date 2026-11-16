@@ -54,6 +54,9 @@ pub enum SessionControlError {
 impl std::fmt::Display for SessionControlError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::NoSuchSession(name) if crate::session::naming::is_shared_target(name) => {
+                write!(f, "no session `{name}` is running and shared with you")
+            }
             Self::NoSuchSession(name) => write!(
                 f,
                 "no running session named `{name}` (run `rozi sessions list`)"
@@ -123,8 +126,13 @@ impl SessionControlConnection {
                 "invalid session name".into(),
             ));
         }
-        let endpoint = crate::session::server::attach_endpoint(name)
-            .map_err(|err| SessionControlError::Transport(err.to_string()))?;
+        let endpoint = crate::session::server::attach_endpoint(name).map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                SessionControlError::NoSuchSession(name.into())
+            } else {
+                SessionControlError::Transport(err.to_string())
+            }
+        })?;
         if !endpoint.is_live() {
             return Err(SessionControlError::NoSuchSession(name.into()));
         }

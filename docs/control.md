@@ -291,6 +291,9 @@ attached.
 | `ports list [--format text\|json]` | List active and failed client-owned SSH port forwards in the running UI. | no |
 | `ports forward <PORT> [--remote HOST] [--host HOST] [--local-port PORT] [--format text\|json]` | Open or reuse a client-owned SSH port forward onto `127.0.0.1` in the running UI. | no |
 | `ports close <PORT> [--remote HOST] [--host HOST] [--format text\|json]` | Close a client-owned SSH port forward in the running UI. | no |
+| `sessions share <NAME> --user <USER> [--role viewer\|editor\|controller] [--format json] [--remote HOST]` | Grant another local OS account access to a session. | — |
+| `sessions unshare <NAME> (--user <USER> \| --all) [--format json] [--remote HOST]` | Revoke session sharing for one or all accounts. | — |
+| `sessions shares <NAME> [--format json] [--remote HOST]` | List accounts a session is shared with. | — |
 | `api describe` | Print the API versions and capabilities of the installed binary. | — |
 | `api schema` | Print the [JSON Schema](#json-schema) of the installed binary's control API. | — |
 | `api commands` | List the installed binary's control commands. | — |
@@ -1329,6 +1332,9 @@ rozi sessions list
 rozi sessions restart dev
 rozi sessions upgrade dev
 rozi sessions kill dev
+rozi sessions share dev --user bob --role editor
+rozi sessions shares dev
+rozi sessions unshare dev --user bob
 ```
 
 `sessions list`, `sessions new --detach`, `sessions restart`, `sessions upgrade`, and `sessions kill`

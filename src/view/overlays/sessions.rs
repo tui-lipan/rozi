@@ -118,6 +118,9 @@ fn collaborator_rows(
             grantable: !shared.read_only
                 && shared.is_controller()
                 && !client.read_only
+                && client
+                    .role
+                    .is_none_or(|role| role >= crate::session::protocol::SessionRole::Controller)
                 && !client.parked,
             requesting: client.requesting_control,
             kickable: can_evict,
@@ -135,21 +138,26 @@ fn collaborator_rows(
 fn collaborator_markers(
     shared: &crate::state::SharedSessionState,
     client: &crate::session::protocol::ClientInfo,
-) -> Vec<&'static str> {
+) -> Vec<String> {
     let mut markers = Vec::new();
     if Some(client.id) == shared.controller {
-        markers.push("ctrl");
+        markers.push("ctrl".to_string());
     }
-    if client.read_only {
-        markers.push("ro");
+    if let Some(user) = client.user.as_deref() {
+        markers.push(format!("@{user}"));
+    }
+    match client.role {
+        Some(role) => markers.push(role.as_str().to_string()),
+        None if client.read_only => markers.push("ro".to_string()),
+        None => {}
     }
     // A parked client is connected but not here: it holds no control and is not competing
     // for the session, which is worth flagging rather than listing it like an active viewer.
     if client.parked {
-        markers.push("parked");
+        markers.push("parked".to_string());
     }
     if client.requesting_control && Some(client.id) != shared.controller {
-        markers.push("wants ctrl");
+        markers.push("wants ctrl".to_string());
     }
     markers
 }
@@ -193,20 +201,27 @@ fn client_tag(label: &str, id: crate::layout::shared::ClientId) -> String {
 
 /// This client's own row of the roster, for the dialog's right header: `razuer #2077 · ctrl`.
 fn self_tag(shared: &crate::state::SharedSessionState) -> String {
-    let label = shared
-        .clients
-        .iter()
-        .find(|client| client.id == shared.client_id)
+    let me = shared.me();
+    let label = me
         .map(|client| client_tag(&client.label, client.id))
         .unwrap_or_else(|| format!("#{}", shared.client_id));
-    let role = if shared.read_only {
-        "ro"
+    let mut markers = Vec::new();
+    if let Some(user) = me.and_then(|client| client.user.as_deref()) {
+        markers.push(format!("@{user}"));
+    }
+    if let Some(role) = shared.role {
+        if shared.is_controller() {
+            markers.push("ctrl".to_string());
+        }
+        markers.push(role.as_str().to_string());
+    } else if shared.read_only {
+        markers.push("ro".to_string());
     } else if shared.is_controller() {
-        "ctrl"
+        markers.push("ctrl".to_string());
     } else {
-        "follow"
-    };
-    format!("{label} · {role}")
+        markers.push("follow".to_string());
+    }
+    format!("{label} · {}", markers.join(" · "))
 }
 
 /// The choice offered when an attach lands on a session another client is driving.

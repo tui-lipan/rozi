@@ -37,7 +37,7 @@ pub fn forward_control(
     request: &ControlRequest,
     config: &RemoteConfig,
 ) -> Result<ControlResponse, String> {
-    if !crate::session::discovery::valid_attach_target(session) {
+    if crate::session::naming::SessionAddress::parse(session).is_none() {
         return Err("invalid session name".to_string());
     }
     // An action call ends with its caller, which only a runner that watches for it can tell.
@@ -213,7 +213,7 @@ pub fn forward_control_stream(
     config: &RemoteConfig,
     out: &mut impl Write,
 ) -> Result<RemoteStream, String> {
-    if !crate::session::discovery::valid_attach_target(session) {
+    if crate::session::naming::SessionAddress::parse(session).is_none() {
         return Err("invalid session name".to_string());
     }
     json_transport::stream_forward(

@@ -648,6 +648,14 @@ pub(crate) fn open_rename_session(ctx: &mut Context<AppRoot>) -> Update {
     let Some(()) = require_attached(ctx) else {
         return Update::full();
     };
+    if ctx.state.current().is_guest_session() {
+        crate::pane::pty_events::notify_error(
+            ctx,
+            "Rename failed",
+            "Only the session owner can rename this session",
+        );
+        return Update::full();
+    }
     let ephemeral = ctx.state.is_ephemeral_session();
     let initial = ctx
         .state
@@ -745,6 +753,15 @@ fn apply_session_name(
     name: String,
     leave: Option<crate::state::LeaveIntent>,
 ) -> Update {
+    if ctx.state.current().is_guest_session() {
+        ctx.state.rename_session = None;
+        crate::pane::pty_events::notify_error(
+            ctx,
+            "Rename failed",
+            "Only the session owner can rename this session",
+        );
+        return crate::ops::overlay_return::finish(ctx);
+    }
     if name.is_empty()
         && let Some(leave) = leave
     {
@@ -1150,6 +1167,12 @@ pub(crate) fn shutdown_discovered_session(
     entry: &DiscoveredSession,
     remote_config: &crate::config::RemoteConfig,
 ) -> std::io::Result<()> {
+    if crate::session::naming::is_shared_target(&entry.name) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("cannot kill another user's session `{}`", entry.name),
+        ));
+    }
     if let Some(target) = &entry.remote_target {
         return crate::session::remote::kill_remote_session(target, &entry.name, remote_config)
             .map_err(std::io::Error::other);
@@ -1167,6 +1190,12 @@ fn stop_discovered_session_for_restart(
     entry: &DiscoveredSession,
     remote_config: &crate::config::RemoteConfig,
 ) -> std::io::Result<()> {
+    if crate::session::naming::is_shared_target(&entry.name) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("cannot restart another user's session `{}`", entry.name),
+        ));
+    }
     if entry.ephemeral {
         return shutdown_discovered_session(entry, remote_config);
     }
@@ -1208,6 +1237,12 @@ fn upgrade_discovered_session(
     entry: &DiscoveredSession,
     remote_config: &crate::config::RemoteConfig,
 ) -> std::io::Result<()> {
+    if crate::session::naming::is_shared_target(&entry.name) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("cannot upgrade another user's session `{}`", entry.name),
+        ));
+    }
     if let Some(target) = &entry.remote_target {
         return crate::session::remote::upgrade_remote_session(target, &entry.name, remote_config)
             .map(|_| ())

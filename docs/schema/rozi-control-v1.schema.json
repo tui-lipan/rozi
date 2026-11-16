@@ -8631,6 +8631,57 @@
       ],
       "type": "object"
     },
+    "ShareGrantInfo": {
+      "description": "One account a session is shared with.",
+      "properties": {
+        "connected": {
+          "description": "How many of this account's clients are attached now.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "role": {
+          "$ref": "#/$defs/SessionRole"
+        },
+        "uid": {
+          "description": "The account's numeric id on the session's host.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "user": {
+          "description": "The account's name on the session's host.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "user",
+        "uid",
+        "role",
+        "connected"
+      ],
+      "type": "object"
+    },
+    "ShareState": {
+      "description": "Who a session is shared with: the `data` of `share-grant`, `share-revoke`, and `share-list`.",
+      "properties": {
+        "endpoint": {
+          "description": "The endpoint other accounts connect to, absent while the session is shared with no one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "grants": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ShareGrantInfo"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "SidebarActionSpec": {
       "description": "A key a stream producer offers on its rows.",
       "properties": {

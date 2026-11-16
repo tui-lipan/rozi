@@ -80,10 +80,15 @@ pub(crate) fn connect_remote_within(
     existing_only: bool,
     may_install: bool,
 ) -> Result<(IpcConnection, RemotePreamble), RemoteConnectError> {
-    if !crate::session::discovery::valid_attach_target(session) {
+    let Some(address) = crate::session::naming::SessionAddress::parse(session) else {
         return Err(RemoteConnectError::Message(
             "invalid session name".to_string(),
         ));
+    };
+    if address.is_shared() && !existing_only {
+        return Err(RemoteConnectError::Message(format!(
+            "cannot start another user's session `{session}`"
+        )));
     }
     validate_remote_target(target).map_err(RemoteConnectError::Message)?;
     let resolved = ResolvedRemote::resolve(target, config);

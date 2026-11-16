@@ -449,12 +449,23 @@ impl Attachment {
         }
     }
 
+    pub fn is_guest_session(&self) -> bool {
+        self.session_name
+            .as_deref()
+            .is_some_and(crate::session::naming::is_shared_target)
+            || self
+                .shared
+                .as_ref()
+                .is_some_and(SharedSessionState::is_guest)
+    }
+
     /// Whether this client alone owns this session's disposable server: a temporary session it
     /// leads, that nobody else is attached to, and that it may write to. Only then is closing the
     /// server this client's call at all — the question of *whether* it should is
     /// [`Self::disposition`].
     pub fn solely_owns_temporary_server(&self) -> bool {
         self.is_ephemeral_session()
+            && !self.is_guest_session()
             && self.is_controller()
             && self.attached_client_count() == 1
             && self.shared.as_ref().is_none_or(|shared| !shared.read_only)

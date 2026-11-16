@@ -413,14 +413,16 @@ impl SessionClient {
         read_only: bool,
         proof: protocol::AttachProof,
     ) -> io::Result<(Self, ServerMessage)> {
-        // A local endpoint puts this client on the server's own machine, so it can read whatever
-        // the session's children leave in a file.
+        let session = session.into();
+        // A local bare endpoint puts this client on the server's own machine and account; a
+        // qualified `owner/name` guest attachment must never read the owner's files outside panes.
+        let shares_filesystem = !crate::session::naming::is_shared_target(&session);
         Self::from_stream_attached_target(
             endpoint.connect()?,
             session,
             InboundTarget::Mailbox(inbound),
             read_only,
-            true,
+            shares_filesystem,
             HEARTBEAT_POLL,
             None,
             proof,
@@ -489,6 +491,8 @@ impl SessionClient {
     ) -> io::Result<(Self, ServerMessage)> {
         let mut stream = stream;
         let session: String = session.into();
+        let shares_filesystem =
+            shares_filesystem && !crate::session::naming::is_shared_target(&session);
         // Advice for a refused attach names commands that act on this machine, which reach a
         // remote session's server only through `--remote`.
         let advice_for = shares_filesystem.then(|| session.clone());
@@ -1621,6 +1625,15 @@ impl ClientOutbound {
     }
 }
 
+fn plain_access_message(message: &str, code: &str, fallback: &str) -> String {
+    let trimmed = message.trim();
+    if trimmed.is_empty() || trimmed.contains(code) {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// Validate the attach reply and return the negotiated wire version.
 /// `local_session` names the session when its server runs on this machine, for advice on a refusal.
 fn validate_attached(local_session: Option<&str>, attached: &ServerMessage) -> io::Result<u32> {
@@ -1635,6 +1648,14 @@ fn validate_attached(local_session: Option<&str>, attached: &ServerMessage) -> i
             format!(
                 "runs an incompatible rozi version ({message}); {}",
                 advice()
+            )
+        } else if code == crate::session::protocol::NOT_SHARED_ERROR_CODE {
+            plain_access_message(message, code, "this session is not shared with you")
+        } else if code == crate::session::protocol::PERMISSION_DENIED_ERROR_CODE {
+            plain_access_message(
+                message,
+                code,
+                "your role in this session does not allow that",
             )
         } else {
             message.clone()

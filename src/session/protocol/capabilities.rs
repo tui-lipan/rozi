@@ -58,11 +58,16 @@ pub enum Capability {
     /// [`super::PaneMeta::program_title`] carries the program's own title, so a client can tell it
     /// from a name the user gave the pane. Without it, `title` is the only title there is.
     PaneProgramTitle,
+    /// The server shares its session with other operating-system accounts: it serves the
+    /// `share-grant`, `share-revoke`, and `share-list` control commands, reports each client's
+    /// [`super::SessionRole`] in the roster, and refuses a request a client's access does not cover
+    /// with [`super::PERMISSION_DENIED_ERROR_CODE`].
+    SessionSharing,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 10] = [
+    pub const ALL: [Capability; 11] = [
         Capability::AgentReplyLater,
         Capability::AgentRequestUpdates,
         Capability::AgentRequests,
@@ -73,6 +78,7 @@ impl Capability {
         Capability::PaneProgramTitle,
         Capability::ProjectSummaries,
         Capability::RuntimeMetrics,
+        Capability::SessionSharing,
     ];
 
     /// The name this capability travels under.
@@ -88,6 +94,7 @@ impl Capability {
             Capability::AgentReplyLater => "agent-reply-later",
             Capability::AgentRequestUpdates => "agent-request-updates",
             Capability::PaneProgramTitle => "pane-program-title",
+            Capability::SessionSharing => "session-sharing",
         }
     }
 
@@ -102,6 +109,7 @@ impl Capability {
             Self::DragAndDrop => "0.0.46",
             Self::AgentRequests => "0.0.47",
             Self::AgentReplyLater | Self::AgentRequestUpdates | Self::PaneProgramTitle => "0.0.48",
+            Self::SessionSharing => "0.0.50",
         }
     }
 

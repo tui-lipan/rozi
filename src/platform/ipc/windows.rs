@@ -169,6 +169,11 @@ impl IpcEndpoint {
         std::fs::write(&self.path, self.pipe_name())
     }
 
+    /// Sharing a session with another account is not implemented for named pipes.
+    pub fn bind_shared(&self) -> io::Result<BoundEndpoint> {
+        Err(crate::platform::user::sharing_unsupported())
+    }
+
     pub fn connect(&self) -> io::Result<IpcConnection> {
         let name = self.wide_pipe_name();
         for attempt in 0..2 {
@@ -459,6 +464,11 @@ impl IpcConnection {
             Self::Local(local) => local.set_write_timeout(timeout),
             Self::Piped(piped) => piped.set_write_timeout(timeout),
         }
+    }
+
+    /// Always `None`: sharing a session with another account is not implemented here.
+    pub fn peer_user(&self) -> Option<crate::platform::user::UserId> {
+        None
     }
 
     /// The pid of the process at the *other* end. Best-effort; `None` on any failure.

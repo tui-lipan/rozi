@@ -14,6 +14,7 @@
 //! negotiation machinery stays regardless: the day a range is worth supporting is the day it has to
 //! already be on the wire.
 
+pub mod access;
 pub mod agent_runtime;
 pub mod agent_summary;
 pub mod agent_title;
@@ -31,6 +32,7 @@ pub mod tolerant;
 #[cfg(feature = "schema-gen")]
 pub mod wire_schema;
 
+pub use access::*;
 pub use agent_runtime::*;
 pub use agent_summary::*;
 pub use capabilities::*;

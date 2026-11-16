@@ -816,6 +816,8 @@ mod reconciler_tests {
                 read_only: false,
                 requesting_control: false,
                 parked: false,
+                role: None,
+                user: None,
             },
             crate::session::protocol::ClientInfo {
                 id: 2,
@@ -823,6 +825,8 @@ mod reconciler_tests {
                 read_only: false,
                 requesting_control: false,
                 parked: false,
+                role: None,
+                user: None,
             },
         ];
         state.current_mut().shared = Some(shared);
@@ -2186,6 +2190,8 @@ mod reconciler_tests {
                         read_only: false,
                         requesting_control: false,
                         parked: false,
+                        role: None,
+                        user: None,
                     },
                     crate::session::protocol::ClientInfo {
                         id: 2,
@@ -2193,6 +2199,8 @@ mod reconciler_tests {
                         read_only: false,
                         requesting_control: false,
                         parked: false,
+                        role: None,
+                        user: None,
                     },
                 ];
                 state.current_mut().shared = Some(shared);

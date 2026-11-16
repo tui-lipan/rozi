@@ -31,6 +31,18 @@ pub struct ClientInfo {
     /// mode. Broadcast in the roster so the clients view can say which clients are only parked.
     #[serde(default)]
     pub parked: bool,
+    /// What this client may do, as the server enforces it. `read_only` is `role == Viewer`.
+    /// Absent from a server without [`super::Capability::SessionSharing`].
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::access::deserialize_optional_role"
+    )]
+    pub role: Option<super::SessionRole>,
+    /// The operating-system account of a client that is not the session owner's, as the server
+    /// authenticated it. `None` for the owner's own clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -992,6 +1004,67 @@ impl ClientMessage {
                 debug_assert!(false, "ClientMessage::Unknown is never sent");
                 None
             }
+        }
+    }
+}
+
+impl ClientMessage {
+    /// What a client must be allowed before the server acts on this message.
+    ///
+    /// The match is exhaustive on purpose: a new message does not compile until its author decides
+    /// who may send it. See [`super::Permission`] for how to choose.
+    pub fn required_permission(&self) -> super::Permission {
+        use super::Permission;
+        match self {
+            // The handshake is answered for anyone the transport admitted; a control request is
+            // gated on the command it carries (`ControlCommand::required_permission`).
+            ClientMessage::Attach { .. }
+            | ClientMessage::Query { .. }
+            | ClientMessage::SessionControl { .. }
+            | ClientMessage::AttachedControl { .. }
+            | ClientMessage::CancelAttachedControl { .. }
+            // Connection upkeep and state that is the client's own.
+            | ClientMessage::Pong { .. }
+            | ClientMessage::Detach
+            | ClientMessage::SetParked { .. }
+            | ClientMessage::PrepareHandoff { .. }
+            | ClientMessage::CommitHandoff { .. }
+            | ClientMessage::DepartForHandoff { .. }
+            | ClientMessage::AbortHandoff { .. }
+            | ClientMessage::RequestRuntimeMetrics
+            // Acted on only for the client holding layout control.
+            | ClientMessage::Resize { .. }
+            | ClientMessage::SetPalette { .. }
+            | ClientMessage::ConfigurePane { .. }
+            | ClientMessage::CommitLayout { .. }
+            | ClientMessage::DragUpdate { .. }
+            | ClientMessage::DragEnd
+            | ClientMessage::SetControlTakeover { .. }
+            | ClientMessage::GrantControl { .. }
+            | ClientMessage::DeclineControl { .. }
+            | ClientMessage::EvictClient { .. }
+            | ClientMessage::SetInputLock { .. }
+            | ClientMessage::ReloadAgents
+            | ClientMessage::ReloadSpawnPolicy
+            | ClientMessage::ReloadSleepPolicy
+            | ClientMessage::Unknown => Permission::View,
+            ClientMessage::SpawnPane { .. }
+            | ClientMessage::Kill { .. }
+            | ClientMessage::SetPaneLogging { .. }
+            | ClientMessage::SetPaneStatus { .. }
+            | ClientMessage::ReportAgent { .. }
+            | ClientMessage::ReportPaneRows { .. }
+            | ClientMessage::MarkedInput { .. }
+            | ClientMessage::Attachment { .. }
+            | ClientMessage::DragAndDrop { .. } => Permission::Input,
+            ClientMessage::RequestControl => Permission::Layout,
+            ClientMessage::SetSessionOrigin { .. }
+            | ClientMessage::Rename { .. }
+            | ClientMessage::Shutdown
+            | ClientMessage::ShutdownForRestart => Permission::Admin,
+            ClientMessage::ListDirectory { .. }
+            | ClientMessage::ListChanges { .. }
+            | ClientMessage::Worktree { .. } => Permission::HostFiles,
         }
     }
 }

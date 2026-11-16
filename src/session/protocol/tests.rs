@@ -674,6 +674,8 @@ fn golden_controller_changed_and_clients_changed_json_shape() {
                 read_only: false,
                 requesting_control: true,
                 parked: false,
+                role: None,
+                user: None,
             }],
             input_locked: true,
             allow_takeover: false,

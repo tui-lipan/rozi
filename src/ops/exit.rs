@@ -557,6 +557,8 @@ mod tests {
             read_only: false,
             requesting_control: false,
             parked: false,
+            role: None,
+            user: None,
         }];
         state.current_mut().shared = Some(shared);
         backend
@@ -588,6 +590,8 @@ mod tests {
                 read_only: false,
                 requesting_control: false,
                 parked: false,
+                role: None,
+                user: None,
             }];
             shared.last_committed_layout = None;
             state.current_mut().shared = Some(shared);
@@ -697,6 +701,8 @@ mod tests {
                     read_only: false,
                     requesting_control: false,
                     parked: false,
+                    role: None,
+                    user: None,
                 }];
                 state.current_mut().shared = Some(shared);
             }

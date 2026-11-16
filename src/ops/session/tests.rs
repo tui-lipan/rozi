@@ -716,6 +716,8 @@ fn follower_request_control_asks_the_controller_without_stealing() {
                     read_only: false,
                     requesting_control: false,
                     parked: false,
+                    role: None,
+                    user: None,
                 },
                 ClientInfo {
                     id: 2,
@@ -723,6 +725,8 @@ fn follower_request_control_asks_the_controller_without_stealing() {
                     read_only: false,
                     requesting_control: false,
                     parked: false,
+                    role: None,
+                    user: None,
                 },
             ];
             state.current_mut().shared = Some(shared);
@@ -778,6 +782,8 @@ fn shared_controller_backend() -> tui_lipan::TestBackend<crate::AppRoot> {
             read_only: false,
             requesting_control: false,
             parked: false,
+            role: None,
+            user: None,
         },
         ClientInfo {
             id: 2,
@@ -785,6 +791,8 @@ fn shared_controller_backend() -> tui_lipan::TestBackend<crate::AppRoot> {
             read_only: false,
             requesting_control: true,
             parked: false,
+            role: None,
+            user: None,
         },
     ];
     state.current_mut().shared = Some(shared);
@@ -1131,6 +1139,8 @@ fn cancelling_occupied_attach_does_not_retain_it_as_offline() {
                     read_only: false,
                     requesting_control: false,
                     parked: false,
+                    role: None,
+                    user: None,
                 },
                 ClientInfo {
                     id: 2,
@@ -1138,6 +1148,8 @@ fn cancelling_occupied_attach_does_not_retain_it_as_offline() {
                     read_only: false,
                     requesting_control: false,
                     parked: false,
+                    role: None,
+                    user: None,
                 },
             ];
             state.current_mut().shared = Some(shared);
@@ -1483,6 +1495,8 @@ fn controller_grant_control_key_grants_to_the_earliest_requester() {
                 read_only: false,
                 requesting_control: true,
                 parked: false,
+                role: None,
+                user: None,
             };
             shared.clients = vec![
                 ClientInfo {
@@ -1491,6 +1505,8 @@ fn controller_grant_control_key_grants_to_the_earliest_requester() {
                     read_only: false,
                     requesting_control: false,
                     parked: false,
+                    role: None,
+                    user: None,
                 },
                 requester(3),
                 requester(2),
@@ -1522,6 +1538,8 @@ fn only_solo_ephemeral_controller_may_shutdown_on_release() {
         read_only: false,
         requesting_control: false,
         parked: false,
+        role: None,
+        user: None,
     };
     assert!(may_shutdown_ephemeral(&ephemeral_state(
         1,
@@ -1571,6 +1589,8 @@ fn background_after_leaving_ephemeral(engaged: bool) -> bool {
                 read_only: false,
                 requesting_control: false,
                 parked: false,
+                role: None,
+                user: None,
             }];
             state.current_mut().shared = Some(shared);
             state.rename_session = Some(SessionRenameState::new(&name, NamingMode::CreateSession));

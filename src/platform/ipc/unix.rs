@@ -62,6 +62,15 @@ impl IpcEndpoint {
         })
     }
 
+    /// Bind a listener that accounts other than the owner may connect to.
+    ///
+    /// The socket's file mode admits everyone; what a peer may do is decided from
+    /// [`IpcConnection::peer_user`] after it connects. Only ever bound inside
+    /// [`crate::platform::paths::ensure_own_shared_dir`].
+    pub fn bind_shared(&self) -> io::Result<BoundEndpoint> {
+        Err(crate::platform::user::sharing_unsupported())
+    }
+
     pub fn connect(&self) -> io::Result<IpcConnection> {
         Ok(IpcConnection::Local(UnixStream::connect(&self.path)?))
     }
@@ -181,6 +190,12 @@ impl IpcConnection {
             Self::Local(stream) => peer_pid(stream),
             Self::Piped(piped) => piped.peer_pid(),
         }
+    }
+
+    /// The account the connecting process runs as, read from the kernel. `None` for
+    /// [`Self::Piped`] and on any failure, which callers treat as an unidentified peer.
+    pub fn peer_user(&self) -> Option<crate::platform::user::UserId> {
+        None
     }
 
     pub fn shutdown(&self, how: std::net::Shutdown) -> io::Result<()> {

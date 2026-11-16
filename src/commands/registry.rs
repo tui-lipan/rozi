@@ -1589,6 +1589,8 @@ mod tests {
                 read_only: read_only && id == client_id,
                 requesting_control: false,
                 parked: false,
+                role: None,
+                user: None,
             })
             .collect();
         state.current_mut().shared = Some(shared);

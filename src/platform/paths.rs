@@ -455,6 +455,24 @@ fn fallback_runtime_dir_in(temp_dir: PathBuf, owner: &str) -> PathBuf {
     temp_dir.join(name)
 }
 
+/// The directory this account's shared session endpoints live in, created and checked.
+///
+/// Unlike the runtime directory, other accounts must be able to reach it, so it sits at a fixed
+/// machine-wide path and admits traversal but not listing. It is refused unless this account owns
+/// it and it is a real directory: nothing here repairs a path another account created.
+pub fn ensure_own_shared_dir() -> io::Result<PathBuf> {
+    Err(super::user::sharing_unsupported())
+}
+
+/// The shared directory of `owner`, verified to belong to that account.
+///
+/// A guest connects only to an endpoint inside a directory this accepts, which is what keeps a
+/// third account from standing in for the owner's session server.
+pub fn verified_shared_dir(owner: super::user::UserId) -> io::Result<PathBuf> {
+    let _ = owner;
+    Err(super::user::sharing_unsupported())
+}
+
 /// This binary's own path, injected into spawned processes as `ROZI_BIN`.
 ///
 /// Everything on the extension surface - a picker, a publisher, a hook, a service - reaches back

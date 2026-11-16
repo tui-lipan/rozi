@@ -216,6 +216,12 @@ pub(crate) fn handle_control_request(
             crate::control::ControlErrorCode::Unsupported,
             "agent requests belong to a session server; run this from a pane or pass `--session <NAME>`",
         ),
+        ControlCommand::ShareGrant { .. }
+        | ControlCommand::ShareRevoke { .. }
+        | ControlCommand::ShareList => ControlResponse::error_with(
+            crate::control::ControlErrorCode::Unsupported,
+            "sharing belongs to a session server; use `rozi sessions share <NAME>`",
+        ),
         ControlCommand::AgentGet { target } => match resolve_agent(ctx, &target) {
             Ok(agent) => ControlResponse::ok(agent),
             Err(response) => response,

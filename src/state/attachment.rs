@@ -575,6 +575,8 @@ mod tests {
                 read_only: false,
                 requesting_control: false,
                 parked: false,
+                role: None,
+                user: None,
             },
             crate::session::protocol::ClientInfo {
                 id: 2,
@@ -582,6 +584,8 @@ mod tests {
                 read_only: false,
                 requesting_control: false,
                 parked: false,
+                role: None,
+                user: None,
             },
         ];
         shared_session.shared = Some(shared);

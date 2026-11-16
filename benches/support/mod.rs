@@ -199,6 +199,8 @@ pub fn attached_message() -> ServerMessage {
                 read_only: id % 5 == 0,
                 requesting_control: id % 7 == 0,
                 parked: id % 3 == 0,
+                role: None,
+                user: None,
             })
             .collect(),
         input_locked: false,

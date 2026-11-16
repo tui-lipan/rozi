@@ -518,6 +518,8 @@ impl SessionServer {
                 read_only: client.read_only,
                 requesting_control: client.requesting_control,
                 parked: client.parked,
+                role: None,
+                user: None,
             })
             .collect()
     }

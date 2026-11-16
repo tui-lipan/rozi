@@ -47,6 +47,80 @@ pub fn current_user_label() -> String {
         .unwrap_or_else(|| "client".to_string())
 }
 
+/// An operating-system account, as the kernel identifies it: the numeric uid on Unix.
+///
+/// This is the identity session sharing authorizes against. It is read from the kernel for a
+/// connected peer ([`super::ipc::IpcConnection::peer_user`]) and resolved from the account
+/// database for a name the session owner typed ([`lookup_user`]). It never comes from an
+/// environment variable or from anything a peer sent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UserId(u32);
+
+impl UserId {
+    pub const fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    pub const fn as_raw(self) -> u32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for UserId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// A [`UserId`] with the account name the system's account database gives it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UserAccount {
+    pub id: UserId,
+    pub name: String,
+}
+
+/// Why session sharing between accounts is unavailable on this platform, or `None` where it works.
+pub const fn session_sharing_unavailable() -> Option<&'static str> {
+    if cfg!(unix) {
+        None
+    } else {
+        Some("sharing a session with another user is not supported on this platform")
+    }
+}
+
+/// The account this process runs as.
+pub fn current_user_id() -> UserId {
+    #[cfg(unix)]
+    {
+        UserId(super::fs_security::current_uid())
+    }
+    #[cfg(not(unix))]
+    {
+        UserId(0)
+    }
+}
+
+/// Resolve an account from what a person typed: an account name, or a numeric uid.
+///
+/// `Ok(None)` means the account database has no such account.
+pub fn lookup_user(spec: &str) -> std::io::Result<Option<UserAccount>> {
+    let _ = spec;
+    Err(sharing_unsupported())
+}
+
+/// The account a [`UserId`] belongs to, when the account database knows it.
+pub fn account_of(id: UserId) -> Option<UserAccount> {
+    let _ = id;
+    None
+}
+
+pub(crate) fn sharing_unsupported() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        session_sharing_unavailable().unwrap_or("session sharing is not implemented"),
+    )
+}
+
 /// The local machine's hostname, used to tell a *local* OSC 7 working directory (which a pane may
 /// be spawned into) from a *remote* one over SSH (which is displayable but never spawnable).
 ///

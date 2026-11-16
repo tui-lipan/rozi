@@ -134,7 +134,10 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::AgentAwait { .. }
         | ControlCommand::AgentRequest { .. }
         | ControlCommand::AgentRequests { .. }
-        | ControlCommand::AgentCancel { .. } => None,
+        | ControlCommand::AgentCancel { .. }
+        | ControlCommand::ShareGrant { .. }
+        | ControlCommand::ShareRevoke { .. }
+        | ControlCommand::ShareList => None,
         ControlCommand::ListAttachedPanes => Some(
             "list-panes --scope attached needs a UI; a session server knows only its own panes",
         ),

@@ -99,6 +99,9 @@ pub enum ControlCapability {
     /// A session server runs the `placement = "session"` services of what is deployed to it, with no UI
     /// attached, under credentials it issues itself.
     SessionServices,
+    /// A session server shares its session with other operating-system accounts through
+    /// `share-grant`, `share-revoke`, and `share-list`, and enforces each client's role.
+    SessionSharing,
     /// `subscribe` on session endpoints streams authoritative session events, snapshots, and cursors.
     SessionSubscribe,
     /// `sidebar-publish` streams rows into a sidebar stream tab, several producers to a tab, and
@@ -118,7 +121,7 @@ pub enum ControlCapability {
 
 impl ControlCapability {
     /// Every control capability this binary has, in name order.
-    pub const ALL: [ControlCapability; 42] = [
+    pub const ALL: [ControlCapability; 43] = [
         ControlCapability::AgentPromptResults,
         ControlCapability::AgentRequests,
         ControlCapability::AgentResponses,
@@ -156,6 +159,7 @@ impl ControlCapability {
         ControlCapability::SessionNoResurrect,
         ControlCapability::SessionNotifications,
         ControlCapability::SessionServices,
+        ControlCapability::SessionSharing,
         ControlCapability::SessionSubscribe,
         ControlCapability::SidebarStreams,
         ControlCapability::SidebarTabSettings,
@@ -203,6 +207,7 @@ impl ControlCapability {
             ControlCapability::SessionNoResurrect => "session-no-resurrect",
             ControlCapability::SessionNotifications => "session-notifications",
             ControlCapability::SessionServices => "session-services",
+            ControlCapability::SessionSharing => "session-sharing",
             ControlCapability::SessionSubscribe => "session-subscribe",
             ControlCapability::SidebarStreams => "sidebar-streams",
             ControlCapability::SidebarTabSettings => "sidebar-tab-settings",

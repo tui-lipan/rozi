@@ -197,7 +197,19 @@ pub const GATED_VOCABULARY: &[GatedValue] = &[
         value: "agent-reply-later",
         capability: Capability::AgentReplyLater,
     },
+    session_sharing_command("share-grant"),
+    session_sharing_command("share-revoke"),
+    session_sharing_command("share-list"),
 ];
+
+/// A control command a session server serves only with [`Capability::SessionSharing`].
+const fn session_sharing_command(value: &'static str) -> GatedValue {
+    GatedValue {
+        vocabulary: "ControlRequest",
+        value,
+        capability: Capability::SessionSharing,
+    }
+}
 
 /// A control command a session server serves only with [`Capability::AgentRequests`].
 const fn agent_request_command(value: &'static str) -> GatedValue {

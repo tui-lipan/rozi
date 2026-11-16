@@ -436,7 +436,7 @@ impl SessionServer {
         let Some(client) = self.client(id) else {
             return false;
         };
-        if client.access.allows(message.required_permission()) {
+        if client.access.allows(message.required_permission()) || refused_by_its_handler(message) {
             return true;
         }
 
@@ -1814,6 +1814,18 @@ impl SessionServer {
             },
         )]
     }
+}
+
+/// Requests whose handler answers a client that may not send input with a reply the sender is
+/// waiting for. Refusing them here would leave that wait unanswered.
+fn refused_by_its_handler(message: &ClientMessage) -> bool {
+    matches!(
+        message,
+        ClientMessage::SetPaneLogging { .. }
+            | ClientMessage::ReportAgent { .. }
+            | ClientMessage::SpawnPane { .. }
+            | ClientMessage::MarkedInput { .. }
+    )
 }
 
 fn permission_refusal_for_request_message(message: &ClientMessage) -> Option<ServerMessage> {

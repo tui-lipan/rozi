@@ -694,7 +694,7 @@ impl SessionServer {
                 generation,
                 enabled,
             } => {
-                if self.client_read_only(client_id) {
+                if !self.client_allows(client_id, protocol::Permission::Admin) {
                     vec![(
                         Target::Sender,
                         ServerMessage::PaneLoggingChanged {

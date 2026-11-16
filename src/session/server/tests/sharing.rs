@@ -303,6 +303,27 @@ fn editor_can_type_but_cannot_take_lease_and_controller_can() {
         Some("working")
     );
 
+    // Typing does not extend to writing the owner's files: an editor cannot turn on pane logging.
+    clear_outboxes(&mut server, &[editor]);
+    send_frame(
+        &mut server,
+        editor,
+        ClientMessage::SetPaneLogging {
+            pane_id: 1,
+            local: false,
+            generation: 2,
+            enabled: true,
+        },
+    );
+    assert!(matches!(
+        outbox_controls(&server, editor).as_slice(),
+        [ServerMessage::PaneLoggingChanged {
+            enabled: false,
+            error: Some(_),
+            ..
+        }]
+    ));
+
     // Editor requesting the lease is refused with permission-denied.
     clear_outboxes(&mut server, &[editor]);
     send_frame(&mut server, editor, ClientMessage::RequestControl);

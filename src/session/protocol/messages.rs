@@ -1050,7 +1050,6 @@ impl ClientMessage {
             | ClientMessage::Unknown => Permission::View,
             ClientMessage::SpawnPane { .. }
             | ClientMessage::Kill { .. }
-            | ClientMessage::SetPaneLogging { .. }
             | ClientMessage::SetPaneStatus { .. }
             | ClientMessage::ReportAgent { .. }
             | ClientMessage::ReportPaneRows { .. }
@@ -1058,7 +1057,9 @@ impl ClientMessage {
             | ClientMessage::Attachment { .. }
             | ClientMessage::DragAndDrop { .. } => Permission::Input,
             ClientMessage::RequestControl => Permission::Layout,
-            ClientMessage::SetSessionOrigin { .. }
+            // Logging writes a pane's output to a file in the owner's account.
+            ClientMessage::SetPaneLogging { .. }
+            | ClientMessage::SetSessionOrigin { .. }
             | ClientMessage::Rename { .. }
             | ClientMessage::Shutdown
             | ClientMessage::ShutdownForRestart => Permission::Admin,

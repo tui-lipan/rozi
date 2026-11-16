@@ -894,13 +894,26 @@ fn a_new_native_conversation_ends_the_conversation_for_good() {
             .apply_agent_integration(None, 3, generation, update)
             .unwrap();
     };
+    let follows = |rig: &mut Rig, id: &str| {
+        rig.server.ask_agent(
+            None,
+            AgentTarget::Pane(3),
+            "and then?".into(),
+            None,
+            Some(id),
+            None,
+        )
+    };
     // Asked before 3 named its native conversation, then again once it had.
     let first = rig.ask(Some(2), 3, "plan the release");
+    let outside = rig.ask(None, 3, "who are you?");
     assert_eq!(first.to_native_session, None);
+    assert_eq!(outside.to_native_session, None);
     move_to(&mut rig, "x");
     let second = rig.ask(Some(2), 3, "and the changelog?");
     assert_eq!(second.conversation, first.conversation);
-    let outside = rig.ask(None, 3, "who are you?");
+    let followed = info(follows(&mut rig, &outside.id));
+    assert_eq!(followed.conversation.as_deref(), Some(outside.id.as_str()));
 
     // A `/clear`: the unknown first exchange must not stand in for the conversation it left.
     move_to(&mut rig, "y");
@@ -909,15 +922,11 @@ fn a_new_native_conversation_ends_the_conversation_for_good() {
         after_clear.conversation.as_deref(),
         Some(after_clear.id.as_str())
     );
-    let follows = rig.server.ask_agent(
-        None,
-        AgentTarget::Pane(3),
-        "and then?".into(),
-        None,
-        Some(&outside.id),
-        None,
+    // Following the request asked before "x" was known, not the later one held in "x".
+    assert_eq!(
+        code(follows(&mut rig, &outside.id)),
+        Some(ControlErrorCode::InvalidArgument)
     );
-    assert_eq!(code(follows), Some(ControlErrorCode::InvalidArgument));
 }
 
 #[test]

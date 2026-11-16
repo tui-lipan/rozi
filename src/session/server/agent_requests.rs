@@ -266,17 +266,14 @@ impl AgentRequestStore {
                 )));
             }
             // Nor can it continue once either side has moved on to another native conversation:
-            // the agent no longer knows what was said.
-            let asked = Party::new(&earlier.to, earlier.to_native_session.as_deref());
-            let asker = earlier
-                .from
-                .as_ref()
-                .map(|asker| Party::new(asker, earlier.from_native_session.as_deref()));
-            let still_held = asked.is(&to)
-                && match (&asker, &from) {
-                    (Some(asker), Some(from)) => asker.is(from),
-                    _ => true,
-                };
+            // the agent no longer knows what was said. Where each side last held the conversation
+            // decides, not the request named, which may predate the agent naming its own.
+            let conversation = earlier.conversation();
+            let still_held = |now: &Party<'_>| {
+                self.last_held(conversation, &now.agent)
+                    .is_none_or(|held| held.is(now))
+            };
+            let still_held = still_held(&to) && from.as_ref().is_none_or(still_held);
             if !still_held {
                 return Err(invalid(format!(
                     "the conversation of request `{id}` ended when its agent moved to another one; ask without --follows"
@@ -313,6 +310,26 @@ impl AgentRequestStore {
         Ok(latest
             .filter(|(_, still_held)| *still_held)
             .map(|(info, _)| of(info)))
+    }
+
+    /// How `agent` was recorded in the latest exchange of `conversation` it took part in, on
+    /// either side.
+    fn last_held(&self, conversation: &str, agent: &protocol::AgentInstance) -> Option<Party<'_>> {
+        self.requests
+            .iter()
+            .rev()
+            .map(|stored| &stored.info)
+            .filter(|info| info.parent.is_none() && info.conversation() == conversation)
+            .find_map(|info| {
+                if info.to.instance() == *agent {
+                    Some(Party::new(&info.to, info.to_native_session.as_deref()))
+                } else {
+                    info.from
+                        .as_ref()
+                        .filter(|from| from.instance() == *agent)
+                        .map(|from| Party::new(from, info.from_native_session.as_deref()))
+                }
+            })
     }
 
     fn has_work(&self) -> bool {

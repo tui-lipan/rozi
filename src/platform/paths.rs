@@ -532,9 +532,9 @@ mod unix_shared_dir {
     pub(super) fn verified_shared_dir(owner: UserId) -> io::Result<PathBuf> {
         if user_dirs_are_isolated() {
             let base = isolated_shared_base();
-            verified_shared_dir_in(&base, owner, false)
+            verified_shared_dir_in(&base, owner)
         } else {
-            verified_shared_dir_in(system_shared_base(), owner, true)
+            verified_shared_dir_in(system_shared_base(), owner)
         }
     }
 
@@ -629,14 +629,10 @@ mod unix_shared_dir {
         Ok(())
     }
 
-    pub(super) fn verified_shared_dir_in(
-        base: &Path,
-        owner: UserId,
-        verify_system_base: bool,
-    ) -> io::Result<PathBuf> {
-        if verify_system_base {
-            validate_shared_tmp_base(base)?;
-        }
+    pub(super) fn verified_shared_dir_in(base: &Path, owner: UserId) -> io::Result<PathBuf> {
+        // The owner check below is the whole defense here: whoever else may write to `base`, a
+        // directory they put at this path is theirs, not `owner`'s. The base itself is not
+        // judged, since inside a user namespace its real owner is not visible.
         let dir = base.join(shared_dir_name(owner.as_raw()));
         let meta = fs::symlink_metadata(&dir)?;
         if !meta.file_type().is_dir() {
@@ -2004,14 +2000,14 @@ mod tests {
 
         // verified_shared_dir accepts 0o711 for the owner.
         assert_eq!(
-            unix_shared_dir::verified_shared_dir_in(base, own_uid, false).expect("verify 0711"),
+            unix_shared_dir::verified_shared_dir_in(base, own_uid).expect("verify 0711"),
             created
         );
 
         // Group-writable or world-writable directory is refused by verified_shared_dir.
         for bad_mode in [0o731, 0o713, 0o777] {
             fs::set_permissions(&created, fs::Permissions::from_mode(bad_mode)).expect("set bad");
-            let err = unix_shared_dir::verified_shared_dir_in(base, own_uid, false).unwrap_err();
+            let err = unix_shared_dir::verified_shared_dir_in(base, own_uid).unwrap_err();
             assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{bad_mode:o}");
         }
         fs::set_permissions(&created, fs::Permissions::from_mode(0o711)).expect("restore 0711");
@@ -2021,7 +2017,7 @@ mod tests {
         let other_dir = base.join(format!("rozi-shared-{other_uid}"));
         fs::create_dir(&other_dir).expect("create other dir");
         fs::set_permissions(&other_dir, fs::Permissions::from_mode(0o711)).expect("0711");
-        let err = unix_shared_dir::verified_shared_dir_in(base, other_uid, false).unwrap_err();
+        let err = unix_shared_dir::verified_shared_dir_in(base, other_uid).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
 
         // Symlink in place of the shared directory is refused by both ensure and verify.
@@ -2046,7 +2042,7 @@ mod tests {
             "ensure must not chmod a symlink target"
         );
         assert_eq!(
-            unix_shared_dir::verified_shared_dir_in(base, own_uid, false)
+            unix_shared_dir::verified_shared_dir_in(base, own_uid)
                 .unwrap_err()
                 .kind(),
             io::ErrorKind::PermissionDenied

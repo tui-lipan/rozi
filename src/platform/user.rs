@@ -102,7 +102,8 @@ pub fn current_user_id() -> UserId {
 
 /// Resolve an account from what a person typed: an account name, or a numeric uid.
 ///
-/// `Ok(None)` means the account database has no such account.
+/// `Ok(None)` means the account database has no account of that name. A numeric id always
+/// resolves, named by the number when the database does not list it.
 pub fn lookup_user(spec: &str) -> std::io::Result<Option<UserAccount>> {
     #[cfg(unix)]
     {
@@ -153,7 +154,14 @@ mod unix_impl {
             let Ok(uid) = spec.parse::<u32>() else {
                 return Ok(None);
             };
-            return lookup_by_uid_with_buf_len(uid, initial_pw_buf_len());
+            // A numeric id is an identity by itself: an account the database does not list (a
+            // container's, a directory service that is down) is still one the kernel reports.
+            return Ok(Some(
+                lookup_by_uid_with_buf_len(uid, initial_pw_buf_len())?.unwrap_or(UserAccount {
+                    id: UserId(uid),
+                    name: uid.to_string(),
+                }),
+            ));
         }
         let Ok(c_name) = CString::new(spec) else {
             return Ok(None);

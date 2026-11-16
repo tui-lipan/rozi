@@ -33,7 +33,7 @@ fn list_overlay(ctx: &Context<AppRoot>, selected: Option<&str>, query: &str) -> 
     let rows = threaded(all);
     let now = crate::view::agent_requests::server_now_ms(&ctx.state).unwrap_or(0);
     // A conversation lists under Waiting while any request in it waits, so it is never split.
-    let waiting_conversations: Vec<&str> = all
+    let waiting_conversations: std::collections::HashSet<&str> = all
         .iter()
         .filter(|request| !request.state.is_resolved())
         .map(AgentRequestSummary::conversation)
@@ -48,7 +48,7 @@ fn list_overlay(ctx: &Context<AppRoot>, selected: Option<&str>, query: &str) -> 
     let rendered: Arc<Vec<RenderedRow>> = Arc::new(
         rows.iter()
             .map(|(request, branch)| {
-                let waiting = waiting_conversations.contains(&request.conversation());
+                let waiting = waiting_conversations.contains(request.conversation());
                 let guides = guides.spans(branch, max_depth);
                 RenderedRow::new(&ctx.state, request, guides, waiting, now, theme)
             })

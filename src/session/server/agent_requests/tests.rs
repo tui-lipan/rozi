@@ -447,7 +447,10 @@ fn requests_reach_a_target_one_turn_at_a_time() {
     rig.set_state(3, DetectedAgentState::Idle);
     assert_eq!(rig.request(&first.id).state, AgentRequestState::Active);
     assert_eq!(rig.request(&second.id).state, AgentRequestState::Queued);
-    assert!(rig.typed_into(3, &format!("rozi agents reply {} --stdin", first.id)));
+    assert!(rig.typed_into(
+        3,
+        &format!("rozi agents reply {} --format text --stdin", first.id)
+    ));
 
     // An approval dialog is not the end of the turn.
     rig.set_state(3, DetectedAgentState::Working);
@@ -493,7 +496,10 @@ fn a_request_answered_later_outlives_its_turn_until_the_reply() {
     let mut rig = Rig::new(&[2, 3]);
     let first = rig.ask(Some(2), 3, "run the slow suite");
     let second = rig.ask(Some(2), 3, "and then this");
-    assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", first.id)));
+    assert!(rig.typed_into(
+        3,
+        &format!("rozi agents reply {} --format text --later", first.id)
+    ));
     rig.set_state(3, DetectedAgentState::Working);
 
     // Only the agent the request went to can promise a later answer.
@@ -551,10 +557,16 @@ fn a_request_answered_later_outlives_its_turn_until_the_reply() {
 fn an_agent_owing_several_requests_names_the_one_it_asks_for() {
     let mut rig = Rig::new(&[2, 3, 4]);
     let first = rig.ask(Some(2), 3, "run the slow suite");
-    assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", first.id)));
+    assert!(rig.typed_into(
+        3,
+        &format!("rozi agents reply {} --format text --later", first.id)
+    ));
     info(rig.server.reply_later(Some(rig.agent(3)), &first.id));
     let second = rig.ask(Some(4), 3, "run the fuzzer");
-    assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", second.id)));
+    assert!(rig.typed_into(
+        3,
+        &format!("rozi agents reply {} --format text --later", second.id)
+    ));
     info(rig.server.reply_later(Some(rig.agent(3)), &second.id));
 
     // Neither delivery was observed working. Deferring must not hide the next user run.
@@ -594,7 +606,10 @@ fn an_agent_owing_several_requests_names_the_one_it_asks_for() {
 fn a_promised_answer_fails_when_its_agent_changes_conversation() {
     let mut rig = Rig::new(&[3]);
     let request = rig.ask(None, 3, "run the slow suite");
-    assert!(rig.typed_into(3, &format!("rozi agents reply {} --later", request.id)));
+    assert!(rig.typed_into(
+        3,
+        &format!("rozi agents reply {} --format text --later", request.id)
+    ));
     let target = rig.agent(3);
     info(rig.server.reply_later(Some(target.clone()), &request.id));
 
@@ -855,6 +870,54 @@ fn exchanges_between_the_same_two_agents_make_one_conversation() {
         None,
     );
     assert_eq!(code(someone_elses), Some(ControlErrorCode::InvalidArgument));
+}
+
+#[test]
+fn a_new_native_conversation_ends_the_conversation_for_good() {
+    let mut rig = Rig::new(&[2, 3]);
+    let generation = rig.server.panes[&3].generation;
+    let mut seq = 0;
+    let mut move_to = |rig: &mut Rig, native_session: &str| {
+        seq += 1;
+        let update = super::super::runtime::AgentIntegrationUpdate {
+            agent: Some("claude".into()),
+            integration: "hooks".into(),
+            state: Some(protocol::AgentState::Idle),
+            reason: None,
+            native_session: Some(native_session.into()),
+            unless_quiet: None,
+            ended: false,
+            seq,
+            response: None,
+        };
+        rig.server
+            .apply_agent_integration(None, 3, generation, update)
+            .unwrap();
+    };
+    // Asked before 3 named its native conversation, then again once it had.
+    let first = rig.ask(Some(2), 3, "plan the release");
+    assert_eq!(first.to_native_session, None);
+    move_to(&mut rig, "x");
+    let second = rig.ask(Some(2), 3, "and the changelog?");
+    assert_eq!(second.conversation, first.conversation);
+    let outside = rig.ask(None, 3, "who are you?");
+
+    // A `/clear`: the unknown first exchange must not stand in for the conversation it left.
+    move_to(&mut rig, "y");
+    let after_clear = rig.ask(Some(2), 3, "start over");
+    assert_eq!(
+        after_clear.conversation.as_deref(),
+        Some(after_clear.id.as_str())
+    );
+    let follows = rig.server.ask_agent(
+        None,
+        AgentTarget::Pane(3),
+        "and then?".into(),
+        None,
+        Some(&outside.id),
+        None,
+    );
+    assert_eq!(code(follows), Some(ControlErrorCode::InvalidArgument));
 }
 
 #[test]

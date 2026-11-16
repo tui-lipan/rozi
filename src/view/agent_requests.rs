@@ -183,54 +183,55 @@ const OUTSIDE_MARK: &str = ", outside";
 pub(crate) fn threaded(
     requests: &[AgentRequestSummary],
 ) -> Vec<(&AgentRequestSummary, TreeBranch)> {
-    let is_exchange = |request: &AgentRequestSummary| {
-        request
+    use std::collections::{HashMap, HashSet};
+
+    let ids: HashSet<&str> = requests.iter().map(|request| request.id.as_str()).collect();
+    // What each request asked while answering it, and each conversation's exchanges: requests
+    // that answer none still listed, in the order they were asked.
+    let mut children: HashMap<&str, Vec<&AgentRequestSummary>> = HashMap::new();
+    let mut exchanges: HashMap<&str, Vec<&AgentRequestSummary>> = HashMap::new();
+    for request in requests {
+        match request
             .parent
-            .as_ref()
-            .is_none_or(|parent| !requests.iter().any(|other| &other.id == parent))
-    };
-    let mut firsts: Vec<&AgentRequestSummary> = Vec::new();
-    for exchange in requests.iter().filter(|request| is_exchange(request)) {
-        match firsts
-            .iter_mut()
-            .find(|first| first.conversation() == exchange.conversation())
+            .as_deref()
+            .filter(|parent| ids.contains(parent))
         {
-            Some(first) if exchange.created_at_unix_ms < first.created_at_unix_ms => {
-                *first = exchange;
-            }
-            Some(_) => {}
-            None => firsts.push(exchange),
+            Some(parent) => children.entry(parent).or_default().push(request),
+            None => exchanges
+                .entry(request.conversation())
+                .or_default()
+                .push(request),
         }
     }
-    let latest = |conversation: &str| {
-        requests
-            .iter()
-            .filter(|request| request.conversation() == conversation)
-            .map(|request| request.created_at_unix_ms)
-            .max()
-            .unwrap_or(0)
-    };
-    firsts.sort_by_key(|first| std::cmp::Reverse(latest(first.conversation())));
-    let mut ordered = Vec::new();
-    for first in firsts {
+    let mut latest: HashMap<&str, u64> = HashMap::new();
+    for request in requests {
+        let at = latest.entry(request.conversation()).or_default();
+        *at = (*at).max(request.created_at_unix_ms);
+    }
+    let mut conversations: Vec<Vec<&AgentRequestSummary>> = exchanges.into_values().collect();
+    for exchanges in &mut conversations {
+        exchanges.sort_by_key(|request| request.created_at_unix_ms);
+    }
+    // Newest activity first; a tie keeps the order the conversations started in.
+    conversations.sort_by(|a, b| {
+        let latest =
+            |exchanges: &[&AgentRequestSummary]| latest.get(exchanges[0].conversation()).copied();
+        latest(b)
+            .cmp(&latest(a))
+            .then_with(|| a[0].created_at_unix_ms.cmp(&b[0].created_at_unix_ms))
+            .then_with(|| a[0].id.cmp(&b[0].id))
+    });
+    let mut ordered = Vec::with_capacity(requests.len());
+    for exchanges in conversations {
         // The first exchange's followers sit beside what it delegated, in the order asked.
-        let followers = |request: &AgentRequestSummary| {
-            std::ptr::eq(request, first).then(|| {
-                requests
-                    .iter()
-                    .filter(|other| {
-                        !std::ptr::eq(*other, first)
-                            && is_exchange(other)
-                            && other.conversation() == first.conversation()
-                    })
-                    .collect::<Vec<_>>()
-            })
-        };
+        let (first, followers) = exchanges
+            .split_first()
+            .expect("a conversation has an exchange");
         push_thread(
-            requests,
             first,
             TreeBranch::root(),
-            &followers,
+            followers,
+            &children,
             &mut ordered,
         );
     }
@@ -238,28 +239,22 @@ pub(crate) fn threaded(
 }
 
 fn push_thread<'a>(
-    requests: &'a [AgentRequestSummary],
     request: &'a AgentRequestSummary,
     branch: TreeBranch,
-    followers: &dyn Fn(&AgentRequestSummary) -> Option<Vec<&'a AgentRequestSummary>>,
+    followers: &[&'a AgentRequestSummary],
+    children: &std::collections::HashMap<&str, Vec<&'a AgentRequestSummary>>,
     ordered: &mut Vec<(&'a AgentRequestSummary, TreeBranch)>,
 ) {
     ordered.push((request, branch.clone()));
-    let mut children: Vec<&AgentRequestSummary> = requests
-        .iter()
-        .filter(|child| child.parent.as_deref() == Some(request.id.as_str()))
-        .collect();
-    children.extend(followers(request).unwrap_or_default());
-    children.sort_by_key(|child| child.created_at_unix_ms);
-    let last = children.len().saturating_sub(1);
-    for (index, child) in children.into_iter().enumerate() {
-        push_thread(
-            requests,
-            child,
-            branch.child(index == last),
-            followers,
-            ordered,
-        );
+    let mut below: Vec<&AgentRequestSummary> = children
+        .get(request.id.as_str())
+        .map(|asked| asked.to_vec())
+        .unwrap_or_default();
+    below.extend_from_slice(followers);
+    below.sort_by_key(|child| child.created_at_unix_ms);
+    let last = below.len().saturating_sub(1);
+    for (index, child) in below.into_iter().enumerate() {
+        push_thread(child, branch.child(index == last), &[], children, ordered);
     }
 }
 

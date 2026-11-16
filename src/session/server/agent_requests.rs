@@ -265,27 +265,54 @@ impl AgentRequestStore {
                     "request `{id}` was asked by someone else; follow one of your own"
                 )));
             }
+            // Nor can it continue once either side has moved on to another native conversation:
+            // the agent no longer knows what was said.
+            let asked = Party::new(&earlier.to, earlier.to_native_session.as_deref());
+            let asker = earlier
+                .from
+                .as_ref()
+                .map(|asker| Party::new(asker, earlier.from_native_session.as_deref()));
+            let still_held = asked.is(&to)
+                && match (&asker, &from) {
+                    (Some(asker), Some(from)) => asker.is(from),
+                    _ => true,
+                };
+            if !still_held {
+                return Err(invalid(format!(
+                    "the conversation of request `{id}` ended when its agent moved to another one; ask without --follows"
+                )));
+            }
             return Ok(Some(of(earlier)));
         }
         let Some(from) = from else {
             return Ok(None);
         };
-        Ok(self
+        // Only the latest exchange between these two agents decides: an older one, however it
+        // matches, was left behind when they moved to the conversation the latest one was in.
+        let latest = self
             .requests
             .iter()
             .rev()
             .map(|stored| &stored.info)
-            .find(|info| {
+            .find_map(|info| {
                 // A request asked on behalf of another belongs to that one's conversation, so
                 // it says nothing about what these two agents were discussing.
                 let (Some(asker), None) = (info.from.as_ref(), info.parent.as_ref()) else {
-                    return false;
+                    return None;
                 };
                 let asker = Party::new(asker, info.from_native_session.as_deref());
                 let asked = Party::new(&info.to, info.to_native_session.as_deref());
-                (asker.is(&from) && asked.is(&to)) || (asker.is(&to) && asked.is(&from))
-            })
-            .map(of))
+                if asker.agent == from.agent && asked.agent == to.agent {
+                    Some((info, asker.is(&from) && asked.is(&to)))
+                } else if asker.agent == to.agent && asked.agent == from.agent {
+                    Some((info, asker.is(&to) && asked.is(&from)))
+                } else {
+                    None
+                }
+            });
+        Ok(latest
+            .filter(|(_, still_held)| *still_held)
+            .map(|(info, _)| of(info)))
     }
 
     fn has_work(&self) -> bool {
@@ -989,7 +1016,7 @@ impl SessionServer {
             .await_cycle(pending.caller.as_ref(), &pending.id)
         {
             return Some(conflict(format!(
-                "request `{inbound}` is yours to answer and `{}` waits on it; answer it with `rozi agents reply {inbound} --stdin` instead of waiting",
+                "request `{inbound}` is yours to answer and `{}` waits on it; answer it with `rozi agents reply {inbound} --format text --stdin` instead of waiting",
                 pending.id
             )));
         }
@@ -1331,7 +1358,7 @@ impl SessionServer {
             .map(|earlier| format!(", following {}", earlier.id))
             .unwrap_or_default();
         format!(
-            "Request {id}{asker}{follows}:\n\n{prompt}\n\nAnswer with `rozi agents reply {id} --stdin`. To answer after this turn ends, such as when a background command finishes, run `rozi agents reply {id} --later` first.",
+            "Request {id}{asker}{follows}:\n\n{prompt}\n\nAnswer with `rozi agents reply {id} --format text --stdin`. To answer after this turn ends, such as when a background command finishes, run `rozi agents reply {id} --format text --later` first.",
             id = request.id,
             prompt = request.prompt,
         )

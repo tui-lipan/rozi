@@ -333,16 +333,17 @@ rozi agents ask --target <PANE_ID> --wait --timeout 30m --format text -- 'Review
 
 **Answering.** A request that arrives in your own prompt starts with `Request <id> from <asker>`,
 and `following <id>` when it continues a conversation, and ends by naming the reply command. Pipe
-the whole answer to it; the reply text is all the asker receives. `reply` prints one line:
+the whole answer to it; the reply text is all the asker receives. With `--format text`,
+`reply` prints one line instead of the request as JSON:
 
 ```bash
-rozi agents reply <ID> --stdin <<'EOF'
+rozi agents reply <ID> --format text --stdin <<'EOF'
 The parser is fine; the lexer drops a trailing newline in src/lex.rs.
 EOF
 ```
 
 - To answer after your turn ends, such as when a background command finishes, run
-  `rozi agents reply <ID> --later` before the turn ends, then `reply` when you have the answer.
+  `rozi agents reply <ID> --format text --later` before the turn ends, then `reply` when you have the answer.
   Otherwise the end of your turn answers the request with your terminal. You can take other
   requests meanwhile. While you owe more than one request, an `ask` you make for one of them
   needs `--for <ID>`.

@@ -1146,16 +1146,6 @@ fn human_output(command: &ControlCli) -> bool {
     match command.output_format {
         Some(ListFormat::Text) => true,
         Some(ListFormat::Json) => false,
-        // An agent answering runs these from a shell with no terminal, where JSON would only
-        // echo back the request and the answer it just sent.
-        None if matches!(
-            command.request.command,
-            control::ControlCommand::AgentReply { .. }
-                | control::ControlCommand::AgentReplyLater { .. }
-        ) =>
-        {
-            true
-        }
         None => std::io::stdout().is_terminal(),
     }
 }

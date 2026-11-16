@@ -451,11 +451,11 @@ rozi agents ask --target 4 --wait --timeout 30m --format text -- "Review the par
 
 rozi types the request into the other agent once it is idle, done, or in error, shows no dialog,
 and nobody has typed into its pane for two seconds. The typed text names the request and how to
-answer it: `rozi agents reply <ID> --stdin`, with the answer on stdin. An agent receives one
+answer it: `rozi agents reply <ID> --format text --stdin`, with the answer on stdin. An agent receives one
 request at a time, and an approval prompt does not end its turn. Without a reply, the answer is the
 agent's [integration response](#read-the-agents-response), or else its terminal when the turn
 ends, read the same way, including an alternate-screen transcript. An agent that will answer after
-its turn, such as when a background command finishes, runs `rozi agents reply <ID> --later` first:
+its turn, such as when a background command finishes, runs `rozi agents reply <ID> --format text --later` first:
 the request then stays `active` past the turn, and the agent can take the next request meanwhile.
 What the agent asks while it owes a request belongs to that request; an agent that owes several
 names the one with `agents ask --for <ID>`, or the ask is refused.

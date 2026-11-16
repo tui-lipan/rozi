@@ -798,16 +798,24 @@ fn sidebar_focus_switches_workspace_and_clears_activity() {
 fn stale_session_results_are_ignored_after_close_switch_and_reload_epochs() {
     crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
+        let current = vec![discovered("dev")];
         {
             let state = backend.state_mut();
             state.sidebar.shown = [true, false];
             state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
+            state.sidebar.sessions = current.clone();
             state.sidebar.sessions_epoch = 10;
         }
         let stale = vec![discovered("old")];
 
-        backend.state_mut().sidebar.hide_all();
-        backend.state_mut().sidebar.invalidate_sessions();
+        backend
+            .dispatch(crate::Msg::RunAction(crate::input::Action::ToggleSidebar))
+            .expect("close sidebar");
+        assert_eq!(
+            backend.state().sidebar.sessions,
+            current,
+            "closing keeps the listed sessions on screen while the dock slides out"
+        );
         backend
             .dispatch(crate::Msg::SidebarSessionsDiscovered {
                 epoch: 10,
@@ -815,7 +823,7 @@ fn stale_session_results_are_ignored_after_close_switch_and_reload_epochs() {
                 host_status: Vec::new(),
             })
             .expect("stale close result");
-        assert!(backend.state().sidebar.sessions.is_empty());
+        assert_eq!(backend.state().sidebar.sessions, current);
 
         backend.state_mut().sidebar.shown = [true, false];
         backend.state_mut().sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
@@ -827,7 +835,7 @@ fn stale_session_results_are_ignored_after_close_switch_and_reload_epochs() {
                 host_status: Vec::new(),
             })
             .expect("stale tab result");
-        assert!(backend.state().sidebar.sessions.is_empty());
+        assert_eq!(backend.state().sidebar.sessions, current);
 
         backend
             .state_mut()
@@ -840,7 +848,7 @@ fn stale_session_results_are_ignored_after_close_switch_and_reload_epochs() {
                 host_status: Vec::new(),
             })
             .expect("stale reload result");
-        assert!(backend.state().sidebar.sessions.is_empty());
+        assert_eq!(backend.state().sidebar.sessions, current);
     });
 }
 

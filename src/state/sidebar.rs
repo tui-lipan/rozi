@@ -396,6 +396,7 @@ pub struct SidebarState {
     /// one, and under `--remote`, where the pane's path is not the client's to run in.
     pub command_cwd: Option<String>,
     pub sessions: Vec<crate::session::discovery::DiscoveredSession>,
+    pub sessions_stale: bool,
     pub sessions_epoch: u64,
     /// The `sessions_epoch` the auto-refresh loop is currently live for. When it lags behind
     /// `sessions_epoch` (a session switch, a create, a reopen bumped the epoch and killed the old
@@ -799,7 +800,7 @@ impl SidebarState {
     }
 
     pub fn invalidate_sessions(&mut self) {
-        self.sessions.clear();
+        self.sessions_stale = true;
         self.sessions_epoch = self.sessions_epoch.wrapping_add(1);
     }
 

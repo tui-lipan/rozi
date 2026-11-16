@@ -35,10 +35,11 @@ pub(crate) fn ensure_sessions_refresh_armed(ctx: &mut Context<AppRoot>) {
         return;
     };
     ctx.state.sidebar.sessions_refresh_armed_epoch = Some(epoch);
-    // Fill the tab instantly with local rows + known hosts when it would otherwise be blank (the
-    // epoch bump on a switch clears the list), so it never flashes empty while the async sweep runs.
-    if ctx.state.sidebar.sessions.is_empty() {
+    // Fill the tab instantly with local rows + known hosts when it is blank or invalidated while
+    // open, without clearing the existing list while a closing dock is still sliding out.
+    if ctx.state.sidebar.sessions.is_empty() || ctx.state.sidebar.sessions_stale {
         ctx.state.sidebar.sessions = crate::ops::session::local_picker_rows(ctx);
+        ctx.state.sidebar.sessions_stale = false;
     }
     crate::ops::session::seed_host_registry(ctx);
     link.send(crate::Msg::SidebarSessionsRefresh { epoch });
@@ -49,6 +50,7 @@ pub(crate) fn open_sessions(ctx: &mut Context<AppRoot>) {
     // included) off the UI thread. Querying remote hosts over ssh here used to block the tab switch
     // on a round-trip — or the whole connect timeout when a host was down — every time it opened.
     ctx.state.sidebar.sessions = crate::ops::session::local_picker_rows(ctx);
+    ctx.state.sidebar.sessions_stale = false;
     crate::ops::session::seed_host_registry(ctx);
 }
 
@@ -93,6 +95,7 @@ pub(crate) fn sessions_discovered(
     }
     if let Ok(rows) = rows {
         ctx.state.sidebar.sessions = rows;
+        ctx.state.sidebar.sessions_stale = false;
         // A local sweep may have started before newer host metadata arrived.
         ctx.state
             .sidebar

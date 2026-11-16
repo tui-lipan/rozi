@@ -294,9 +294,9 @@ pub fn run() -> Result<()> {
             apply_config_path(command.config_path.clone());
             return cli::run_control_cli(command);
         }
-        cli::ParsedCli::AskAndAwait(command, timeout_ms) => {
+        cli::ParsedCli::AgentAnswer(command, options) => {
             apply_config_path(command.config_path.clone());
-            return cli::run_ask_and_await(command, timeout_ms);
+            return cli::run_agent_answer(command, options);
         }
         cli::ParsedCli::Publish(command) => return cli::run_publish_cli(command),
         cli::ParsedCli::Subscribe(command) => return cli::run_subscribe_cli(command),
@@ -430,7 +430,7 @@ pub fn run() -> Result<()> {
             cli::CliArgs::default()
         }
         cli::ParsedCli::Control(_)
-        | cli::ParsedCli::AskAndAwait(..)
+        | cli::ParsedCli::AgentAnswer(..)
         | cli::ParsedCli::Publish(_)
         | cli::ParsedCli::Subscribe(_)
         | cli::ParsedCli::Pick(_)

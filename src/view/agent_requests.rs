@@ -150,7 +150,11 @@ pub(crate) fn agent_name(
     recorded: Option<&str>,
 ) -> String {
     let Some(agent) = agent else {
-        return OUTSIDE.to_string();
+        // An outside asker's own description, marked so it never passes for an agent here.
+        return recorded.map_or_else(
+            || OUTSIDE.to_string(),
+            |label| format!("{label} {OUTSIDE_MARK}"),
+        );
     };
     let label = recorded.map(str::to_string).or_else(|| {
         panes(state).find_map(|pane| {
@@ -169,25 +173,66 @@ pub(crate) fn agent_name(
 /// Who asked a request from outside any agent: a person or a script at the `rozi` CLI.
 pub(crate) const OUTSIDE: &str = "rozi CLI";
 
-/// `requests` in list order: each chain together, newest chain first, and within a chain each
-/// request followed by the ones asked while answering it. Pairs each with where it sits in its
-/// chain's tree, for the guides drawn in front of it.
+/// After the name an asker outside this session gave itself.
+const OUTSIDE_MARK: &str = "(outside)";
+
+/// `requests` in list order: each conversation together, the one with the latest exchange first.
+/// A conversation reads as one tree: its first exchange on top, then everything after it in the
+/// order it was asked, each follow-up with the requests asked while answering it beneath it.
+/// Pairs each with where it sits in that tree, for the guides drawn in front of it.
 pub(crate) fn threaded(
     requests: &[AgentRequestSummary],
 ) -> Vec<(&AgentRequestSummary, TreeBranch)> {
-    let mut roots: Vec<&AgentRequestSummary> = requests
-        .iter()
-        .filter(|request| {
-            request
-                .parent
-                .as_ref()
-                .is_none_or(|parent| !requests.iter().any(|other| &other.id == parent))
-        })
-        .collect();
-    roots.sort_by_key(|request| std::cmp::Reverse(request.created_at_unix_ms));
+    let is_exchange = |request: &AgentRequestSummary| {
+        request
+            .parent
+            .as_ref()
+            .is_none_or(|parent| !requests.iter().any(|other| &other.id == parent))
+    };
+    let mut firsts: Vec<&AgentRequestSummary> = Vec::new();
+    for exchange in requests.iter().filter(|request| is_exchange(request)) {
+        match firsts
+            .iter_mut()
+            .find(|first| first.conversation() == exchange.conversation())
+        {
+            Some(first) if exchange.created_at_unix_ms < first.created_at_unix_ms => {
+                *first = exchange;
+            }
+            Some(_) => {}
+            None => firsts.push(exchange),
+        }
+    }
+    let latest = |conversation: &str| {
+        requests
+            .iter()
+            .filter(|request| request.conversation() == conversation)
+            .map(|request| request.created_at_unix_ms)
+            .max()
+            .unwrap_or(0)
+    };
+    firsts.sort_by_key(|first| std::cmp::Reverse(latest(first.conversation())));
     let mut ordered = Vec::new();
-    for root in roots {
-        push_thread(requests, root, TreeBranch::root(), &mut ordered);
+    for first in firsts {
+        // The first exchange's followers sit beside what it delegated, in the order asked.
+        let followers = |request: &AgentRequestSummary| {
+            std::ptr::eq(request, first).then(|| {
+                requests
+                    .iter()
+                    .filter(|other| {
+                        !std::ptr::eq(*other, first)
+                            && is_exchange(other)
+                            && other.conversation() == first.conversation()
+                    })
+                    .collect::<Vec<_>>()
+            })
+        };
+        push_thread(
+            requests,
+            first,
+            TreeBranch::root(),
+            &followers,
+            &mut ordered,
+        );
     }
     ordered
 }
@@ -196,6 +241,7 @@ fn push_thread<'a>(
     requests: &'a [AgentRequestSummary],
     request: &'a AgentRequestSummary,
     branch: TreeBranch,
+    followers: &dyn Fn(&AgentRequestSummary) -> Option<Vec<&'a AgentRequestSummary>>,
     ordered: &mut Vec<(&'a AgentRequestSummary, TreeBranch)>,
 ) {
     ordered.push((request, branch.clone()));
@@ -203,10 +249,36 @@ fn push_thread<'a>(
         .iter()
         .filter(|child| child.parent.as_deref() == Some(request.id.as_str()))
         .collect();
+    children.extend(followers(request).unwrap_or_default());
     children.sort_by_key(|child| child.created_at_unix_ms);
     let last = children.len().saturating_sub(1);
     for (index, child) in children.into_iter().enumerate() {
-        push_thread(requests, child, branch.child(index == last), ordered);
+        push_thread(
+            requests,
+            child,
+            branch.child(index == last),
+            followers,
+            ordered,
+        );
+    }
+}
+
+/// Whether `request` continues a conversation an earlier exchange started, rather than starting
+/// it or being asked on behalf of another request.
+pub(crate) fn is_follow_up(request: &AgentRequestSummary) -> bool {
+    request.parent.is_none() && request.conversation() != request.id
+}
+
+/// What an answered request's answer is when the agent did not give it with `agents reply`: the
+/// word for its last message or its screen, read when its turn ended.
+pub(crate) fn not_a_reply(request: &AgentRequestSummary) -> Option<&'static str> {
+    use super::vocabulary::{REQUEST_FROM_TERMINAL, REQUEST_LAST_MESSAGE};
+    let source = request.response_source?;
+    match source {
+        _ if request.state != AgentRequestState::Answered => None,
+        crate::control::AgentResponseSource::AgentCli => None,
+        source if source.is_screen() => Some(REQUEST_FROM_TERMINAL),
+        _ => Some(REQUEST_LAST_MESSAGE),
     }
 }
 
@@ -219,14 +291,17 @@ pub(crate) enum ChainEvent<'a> {
     Settle(&'a AgentRequestSummary),
 }
 
-/// The arrows of the chain rooted at `root`, in the order they happened: each request asked, and
-/// each settled one answered back. An ask comes before a settle at the same moment.
+/// The arrows of a conversation, in the order they happened: each request asked, and each
+/// settled one answered back. An ask comes before a settle at the same moment.
 pub(crate) fn chain_events<'a>(
     requests: &'a [AgentRequestSummary],
-    root: &str,
+    conversation: &str,
 ) -> Vec<ChainEvent<'a>> {
     let mut events: Vec<(u64, u8, ChainEvent<'a>)> = Vec::new();
-    for request in requests.iter().filter(|request| request.root == root) {
+    for request in requests
+        .iter()
+        .filter(|request| request.conversation() == conversation)
+    {
         events.push((request.created_at_unix_ms, 0, ChainEvent::Ask(request)));
         if request.state.is_resolved() {
             events.push((request.updated_at_unix_ms, 1, ChainEvent::Settle(request)));
@@ -276,6 +351,10 @@ mod tests {
             id: id.into(),
             root: id.into(),
             parent: None,
+            conversation: None,
+            response_source: None,
+            response_complete: None,
+            response_truncated: None,
             from: from.map(|pane| AgentRef::for_test(pane, 1, None)),
             to: AgentRef::for_test(to, 1, None),
             from_label: None,
@@ -288,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn chains_list_newest_first_with_each_request_before_what_it_asked() {
+    fn conversations_list_newest_first_with_each_request_before_what_it_asked() {
         let at = |mut request: AgentRequestSummary, created: u64, parent: Option<&str>| {
             request.created_at_unix_ms = created;
             request.updated_at_unix_ms = created + 5;
@@ -296,7 +375,12 @@ mod tests {
             request.root = parent.map_or(request.id.clone(), |_| "a".into());
             request
         };
+        // `f` follows `a` in its conversation, later than everything else, so `a`'s conversation
+        // lists first and `f` sits beside what `a` delegated.
+        let mut follow_up = at(request("f", None, 1, AgentRequestState::Queued), 25, None);
+        follow_up.conversation = Some("a".into());
         let requests = [
+            follow_up,
             at(request("a", None, 1, AgentRequestState::Active), 10, None),
             at(
                 request("b", Some(1), 2, AgentRequestState::Answered),
@@ -314,7 +398,7 @@ mod tests {
             .into_iter()
             .map(|(request, branch)| (request.id.as_str(), branch.depth()))
             .collect();
-        assert_eq!(order, [("z", 0), ("a", 0), ("b", 1), ("c", 2)]);
+        assert_eq!(order, [("a", 0), ("b", 1), ("c", 2), ("f", 1), ("z", 0)]);
         // `b` answers at 16, after `c` was asked at 12: the diagram keeps that order.
         let events: Vec<String> = chain_events(&requests, "a")
             .into_iter()
@@ -323,7 +407,7 @@ mod tests {
                 ChainEvent::Settle(request) => format!("settle {}", request.id),
             })
             .collect();
-        assert_eq!(events, ["ask a", "ask b", "ask c", "settle b"]);
+        assert_eq!(events, ["ask a", "ask b", "ask c", "settle b", "ask f"]);
     }
 
     #[test]

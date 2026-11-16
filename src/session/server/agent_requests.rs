@@ -78,6 +78,62 @@ struct StoredRequest {
     later: bool,
 }
 
+/// One side of a conversation: an agent, in the native conversation it was in. A `/clear` or
+/// a resumed session keeps the agent but not what it knew, so it starts a new conversation.
+#[derive(Clone)]
+struct Party<'a> {
+    agent: protocol::AgentInstance,
+    native_session: Option<&'a str>,
+}
+
+impl<'a> Party<'a> {
+    fn new(agent: &protocol::AgentRef, native_session: Option<&'a str>) -> Self {
+        Self {
+            agent: agent.instance(),
+            native_session,
+        }
+    }
+
+    /// Whether this side, as a request recorded it, is `now`. An agent often reports its native
+    /// conversation only after its first turn, so one unknown then is not a different one.
+    fn is(&self, now: &Party<'_>) -> bool {
+        self.agent == now.agent
+            && (self.native_session.is_none() || self.native_session == now.native_session)
+    }
+}
+
+/// How an asker that is not an agent of this session names itself: one line, at most
+/// [`MAX_ASKER_LABEL_CHARS`] characters. It comes from outside the session, so it is never trusted
+/// to name anything; it is only shown.
+fn outside_asker_label(label: Option<String>) -> Option<String> {
+    // Only letters, digits, and plain punctuation are kept: anything else, such as a line break,
+    // an escape, a bidirectional control, or an invisible tag character, could hide or reorder
+    // text, or smuggle instructions into the agent's prompt. A quote cannot close the quotes the
+    // request's header puts around the label.
+    let label: String = label?
+        .chars()
+        .map(|c| match c {
+            '"' => '\'',
+            c if shown_in_asker_label(c) => c,
+            _ => ' ',
+        })
+        .collect();
+    let label: String = label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(MAX_ASKER_LABEL_CHARS)
+        .collect();
+    (!label.is_empty()).then_some(label)
+}
+
+const MAX_ASKER_LABEL_CHARS: usize = 80;
+
+fn shown_in_asker_label(c: char) -> bool {
+    c.is_alphanumeric() || " -_.,:;()[]/@#+'&".contains(c)
+}
+
 struct DeliverySlot {
     request: String,
     tracker: AgentTurnTracker,
@@ -175,6 +231,61 @@ impl AgentRequestStore {
                 format!("no request `{id}` in this session"),
             )
         })
+    }
+
+    /// The conversation a new request from `from` to `to` joins, or `None` to start one. A
+    /// request asked on behalf of another stays in that one's conversation; one that `follows`
+    /// an earlier request to the same agent joins its conversation; otherwise an agent asking
+    /// joins the latest conversation between the same two agents, either way round, as long as
+    /// both are still in the native conversations it was held in. Callers that are not agents
+    /// all look alike, so they never join one without `follows`.
+    fn conversation(
+        &self,
+        from: Option<Party<'_>>,
+        to: Party<'_>,
+        parent: Option<&str>,
+        follows: Option<&str>,
+    ) -> std::result::Result<Option<String>, ControlResponse> {
+        let of = |info: &AgentRequestInfo| info.conversation().to_string();
+        if let Some(parent) = parent {
+            return Ok(self.get(parent).map(|stored| of(&stored.info)));
+        }
+        if let Some(id) = follows {
+            let earlier = self.lookup(id)?;
+            if earlier.to.instance() != to.agent {
+                return Err(invalid(format!(
+                    "request `{id}` asked another agent; follow a request to this one"
+                )));
+            }
+            // Only the asker continues its own conversation.
+            if earlier.from.as_ref().map(protocol::AgentRef::instance)
+                != from.as_ref().map(|from| from.agent.clone())
+            {
+                return Err(invalid(format!(
+                    "request `{id}` was asked by someone else; follow one of your own"
+                )));
+            }
+            return Ok(Some(of(earlier)));
+        }
+        let Some(from) = from else {
+            return Ok(None);
+        };
+        Ok(self
+            .requests
+            .iter()
+            .rev()
+            .map(|stored| &stored.info)
+            .find(|info| {
+                // A request asked on behalf of another belongs to that one's conversation, so
+                // it says nothing about what these two agents were discussing.
+                let (Some(asker), None) = (info.from.as_ref(), info.parent.as_ref()) else {
+                    return false;
+                };
+                let asker = Party::new(asker, info.from_native_session.as_deref());
+                let asked = Party::new(&info.to, info.to_native_session.as_deref());
+                (asker.is(&from) && asked.is(&to)) || (asker.is(&to) && asked.is(&from))
+            })
+            .map(of))
     }
 
     fn has_work(&self) -> bool {
@@ -479,6 +590,8 @@ impl SessionServer {
         target: AgentTarget,
         prompt: String,
         parent: Option<&str>,
+        follows: Option<&str>,
+        asker_label: Option<String>,
     ) -> ControlResponse {
         if prompt.trim().is_empty() {
             return invalid("a request needs prompt text");
@@ -500,9 +613,28 @@ impl SessionServer {
             Ok(lineage) => lineage,
             Err(response) => return response,
         };
+        if lineage.is_some() && follows.is_some() {
+            return invalid(
+                "this ask belongs to the request you are answering, so it cannot follow another",
+            );
+        }
         if let Err(response) = self.agent_requests.admit(&to, lineage.as_ref()) {
             return response;
         }
+        let from_native_session = from
+            .as_ref()
+            .and_then(|from| self.response_native_session(from));
+        let to_native_session = self.response_native_session(&to);
+        let conversation = match self.agent_requests.conversation(
+            from.as_ref()
+                .map(|from| Party::new(from, from_native_session.as_deref())),
+            Party::new(&to, to_native_session.as_deref()),
+            lineage.as_ref().map(|(parent, _, _)| parent.as_str()),
+            follows,
+        ) {
+            Ok(conversation) => conversation,
+            Err(response) => return response,
+        };
         let id = new_request_id();
         let now = crate::runtime_metrics::unix_time_millis();
         let (parent, root, depth) = match lineage {
@@ -514,19 +646,21 @@ impl SessionServer {
                 .ok()
                 .map(|runtime| runtime.label)
         };
-        let from_label = from.as_ref().and_then(label);
+        let from_label = match &from {
+            Some(from) => label(from),
+            None => outside_asker_label(asker_label),
+        };
         let to_label = label(&to);
         let info = AgentRequestInfo {
+            conversation: Some(conversation.unwrap_or_else(|| id.clone())),
             id: id.clone(),
             root,
             parent,
             from_label,
             to_label,
-            from_native_session: from
-                .as_ref()
-                .and_then(|from| self.response_native_session(from)),
+            from_native_session,
             from,
-            to_native_session: self.response_native_session(&to),
+            to_native_session,
             to,
             prompt,
             state: AgentRequestState::Queued,
@@ -1164,19 +1298,40 @@ impl SessionServer {
     }
 
     fn request_frame(&self, request: &AgentRequestInfo) -> String {
-        let asker = request
-            .from
-            .as_ref()
-            .and_then(|from| self.current_agent_runtime(from).ok())
-            .map(|runtime| {
-                format!(
-                    " from {} in pane {}",
-                    runtime.label, runtime.reference.pane.pane_id
-                )
+        let asker = match &request.from {
+            Some(from) => self
+                .current_agent_runtime(from)
+                .ok()
+                .map(|runtime| {
+                    format!(
+                        " from {} in pane {}",
+                        runtime.label, runtime.reference.pane.pane_id
+                    )
+                })
+                .unwrap_or_default(),
+            None => request
+                .from_label
+                .as_ref()
+                .map(|label| format!(" from \"{label}\", outside this session"))
+                .unwrap_or_default(),
+        };
+        // The exchange before this one in its conversation; requests are stored as asked.
+        let requests = &self.agent_requests.requests;
+        let asked_before = requests
+            .iter()
+            .position(|stored| stored.info.id == request.id)
+            .unwrap_or(requests.len());
+        let follows = requests[..asked_before]
+            .iter()
+            .map(|stored| &stored.info)
+            .filter(|_| request.parent.is_none())
+            .rfind(|earlier| {
+                earlier.parent.is_none() && earlier.conversation() == request.conversation()
             })
+            .map(|earlier| format!(", following {}", earlier.id))
             .unwrap_or_default();
         format!(
-            "Request {id}{asker}:\n\n{prompt}\n\nAnswer with `rozi agents reply {id} --stdin`. To answer after this turn ends, such as when a background command finishes, run `rozi agents reply {id} --later` first.",
+            "Request {id}{asker}{follows}:\n\n{prompt}\n\nAnswer with `rozi agents reply {id} --stdin`. To answer after this turn ends, such as when a background command finishes, run `rozi agents reply {id} --later` first.",
             id = request.id,
             prompt = request.prompt,
         )

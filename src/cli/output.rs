@@ -1656,8 +1656,13 @@ fn format_agent_request_line(data: Option<&serde_json::Value>, styles: OutputSty
         data.get(key)
             .and_then(|agent| agent.get("pane"))
             .and_then(|pane| value_u64(pane, "pane_id"))
-            .map_or_else(|| "-".to_string(), |id| format!("pane {id}"))
+            .map(|id| format!("pane {id}"))
     };
+    // An asker outside the session has no pane here; it may have said who it is.
+    let asker = pane("from").unwrap_or_else(|| {
+        value_string(data, "from_label")
+            .map_or_else(|| "-".to_string(), |label| format!("\"{label}\" (outside)"))
+    });
     let state = value_string(data, "state").unwrap_or("unknown");
     let tone = match state {
         "answered" => OutputTone::Success,
@@ -1672,12 +1677,17 @@ fn format_agent_request_line(data: Option<&serde_json::Value>, styles: OutputSty
             OutputTone::Accent
         ),
         styles.paint(state, tone),
-        pane("from"),
-        pane("to"),
+        asker,
+        pane("to").unwrap_or_else(|| "-".to_string()),
     );
     if let Some(reason) = value_string(data, "reason") {
         line.push_str("  ");
         line.push_str(&styles.paint(reason, OutputTone::Muted));
+    }
+    if answered_without_reply(Some(data)) {
+        let word = not_a_reply_word(answer_source(data).unwrap_or_default());
+        line.push_str("  ");
+        line.push_str(&styles.paint(word, OutputTone::Warning));
     }
     line.push('\n');
     line
@@ -1701,6 +1711,69 @@ pub(super) fn style_first_line(text: String, tone: OutputTone, styles: OutputSty
     format!("{}\n{rest}", styles.paint(first, tone))
 }
 
+/// Whether a request was answered by something other than `agents reply`: the agent's turn ended
+/// first, so the answer was read from it. A request that failed or was cancelled is neither.
+pub(crate) fn answered_without_reply(request: Option<&serde_json::Value>) -> bool {
+    request.is_some_and(|request| {
+        value_string(request, "state") == Some("answered")
+            && answer_source(request).is_some_and(|source| source != "agent-cli")
+    })
+}
+
+/// Where an answered request's text came from: `response.source` in a full request, or the
+/// `response_source` a listed one carries.
+fn answer_source(request: &serde_json::Value) -> Option<&str> {
+    request
+        .get("response")
+        .and_then(|response| value_string(response, "source"))
+        .or_else(|| value_string(request, "response_source"))
+}
+
+/// What an answer that is not a reply is, in a word: the agent's last message, or its screen.
+fn not_a_reply_word(source: &str) -> &'static str {
+    match source {
+        "terminal" | "alternate-screen-history" => "from terminal",
+        _ => "last message",
+    }
+}
+
+/// What a text-mode reader of an answered request cannot see in its text: that it is not the
+/// agent's reply, or not all of it. Printed on stderr, so the answer on stdout stays the answer.
+pub(crate) fn answer_provenance_note(request: Option<&serde_json::Value>) -> Option<String> {
+    let request = request?;
+    let response = request.get("response")?;
+    let mut notes = Vec::new();
+    if answered_without_reply(Some(request)) {
+        let pane = request
+            .get("to")
+            .and_then(|agent| agent.get("pane"))
+            .and_then(|pane| value_u64(pane, "pane_id"))
+            .map_or_else(|| "the agent".to_string(), |id| format!("pane {id}"));
+        let source = value_string(response, "source").unwrap_or("unknown");
+        let what = match not_a_reply_word(source) {
+            "from terminal" => format!("this was read from {pane}'s terminal"),
+            _ => format!("this is {pane}'s last message, which may not be addressed to you"),
+        };
+        notes.push(format!(
+            "not a reply: the agent's turn ended without `agents reply`, so {what} (source: {source})"
+        ));
+    }
+    if response
+        .get("truncated")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        notes.push("the answer was cut to its size limit".into());
+    } else if response
+        .get("complete")
+        .and_then(serde_json::Value::as_bool)
+        == Some(false)
+    {
+        notes.push("the answer may be incomplete".into());
+    }
+    (!notes.is_empty()).then(|| format!("note: {}", notes.join("; ")))
+}
+
 fn format_agent_response_text(data: Option<&serde_json::Value>) -> String {
     match data
         .and_then(|data| data.get("text"))
@@ -1714,6 +1787,38 @@ fn format_agent_response_text(data: Option<&serde_json::Value>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_an_answer_that_is_not_the_agents_whole_reply_gets_a_note() {
+        let request = |source: &str, complete: bool, truncated: bool| {
+            serde_json::json!({
+                "state": "answered",
+                "to": {"pane": {"pane_id": 34}},
+                "response": {"text": "hi", "source": source, "complete": complete, "truncated": truncated},
+            })
+        };
+        assert_eq!(
+            answer_provenance_note(Some(&request("agent-cli", true, false))),
+            None
+        );
+        assert_eq!(
+            answer_provenance_note(Some(&request("terminal", false, false))).as_deref(),
+            Some(
+                "note: not a reply: the agent's turn ended without `agents reply`, so this was read from pane 34's terminal (source: terminal); the answer may be incomplete"
+            )
+        );
+        assert_eq!(
+            answer_provenance_note(Some(&request("native-hook", true, false))).as_deref(),
+            Some(
+                "note: not a reply: the agent's turn ended without `agents reply`, so this is pane 34's last message, which may not be addressed to you (source: native-hook)"
+            )
+        );
+        assert_eq!(
+            answer_provenance_note(Some(&request("agent-cli", true, true))).as_deref(),
+            Some("note: the answer was cut to its size limit")
+        );
+        assert_eq!(answer_provenance_note(Some(&serde_json::json!({}))), None);
+    }
 
     #[test]
     fn a_deploy_that_changed_nothing_says_so() {

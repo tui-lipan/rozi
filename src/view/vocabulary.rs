@@ -62,6 +62,12 @@ pub(crate) const REQUEST_LATER: &str = "Answering later";
 pub(crate) const REQUEST_ANSWERED: &str = "Answered";
 pub(crate) const REQUEST_FAILED: &str = "Failed";
 pub(crate) const REQUEST_CANCELLED: &str = "Cancelled";
+/// A later exchange of a conversation, as its row says.
+pub(crate) const REQUEST_FOLLOW_UP: &str = "follow-up";
+/// An answer the agent did not give with `agents reply`, read from its last message or its
+/// screen when its turn ended.
+pub(crate) const REQUEST_LAST_MESSAGE: &str = "last message";
+pub(crate) const REQUEST_FROM_TERMINAL: &str = "from terminal";
 
 /// The one you are in: the session on screen in Sessions, the agent on screen in Agents.
 pub(crate) const CURRENT: &str = "Current";

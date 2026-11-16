@@ -44,11 +44,11 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Safely submit a prompt",
             ),
             row(
-                "ask --ref <JSON> [--for <ID>] -- <TEXT>",
+                "ask --target <PANE> [--for <ID> | --follows <ID>] -- <TEXT>",
                 "Ask another agent; returns the request at once",
             ),
             row(
-                "ask --ref <JSON> --wait --timeout <DUR> -- <TEXT>",
+                "ask --target <PANE> --wait --timeout <DUR> [--require-reply] -- <TEXT>",
                 "Ask, then wait for the answer like await",
             ),
             row(
@@ -60,7 +60,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Keep a request open to answer after your turn",
             ),
             row(
-                "await <ID> --timeout <DUR>",
+                "await <ID> --timeout <DUR> [--require-reply]",
                 "Wait until a request is answered",
             ),
             row("request <ID>", "Show one request"),
@@ -120,6 +120,14 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "    --allow-working",
                 "Prompt an agent that is still working",
             ),
+            row(
+                "    --follows <ID>",
+                "Continue the conversation of an earlier request",
+            ),
+            row(
+                "    --require-reply",
+                "Exit 3 unless the agent answered with reply",
+            ),
             row("    --state <STATE>", "working, blocked, idle, or done"),
             row("    --reason <TEXT>", "Why the agent is in this state"),
             row("    --native-session <ID>", "The agent's own session id"),
@@ -150,16 +158,26 @@ pub(super) struct ParsedAgents {
     pub(super) format: Option<ListFormat>,
     /// `ask --wait`: await the new request for this long once it is asked.
     pub(super) await_ms: Option<u64>,
+    /// `ask --wait` or `await` with `--require-reply`: an answer the agent did not give with
+    /// `agents reply` fails the command.
+    pub(super) require_reply: bool,
 }
 
-pub(super) fn parse_agents(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
+pub(super) fn parse_agents(mut args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
     if args.first().map(String::as_str) == Some("ask") {
         return parse_ask(args.into_iter().skip(1).collect());
+    }
+    let mut require_reply = false;
+    if args.first().map(String::as_str) == Some("await") {
+        let before = args.len();
+        args.retain(|arg| arg != "--require-reply");
+        require_reply = args.len() < before;
     }
     parse_agents_args(args).map(|(command, format)| ParsedAgents {
         command,
         format,
         await_ms: None,
+        require_reply,
     })
 }
 
@@ -480,11 +498,20 @@ fn parse_ask(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
     let mut wait = false;
     let mut timeout_ms = None;
     let mut parent = None;
+    let mut follows = None;
+    let mut require_reply = false;
     let mut iter = args.into_iter();
     while let Some(argument) = iter.next() {
         match argument.as_str() {
             "--target" | "--ref" => set_target(&mut target, &argument, &mut iter)?,
             "--format" => set_format(&mut format, &mut iter, "agents ask")?,
+            "--follows" => {
+                let id = super::require_value(&mut iter, "--follows requires a request id")?;
+                if follows.replace(id).is_some() {
+                    return Err("agents ask --follows specified more than once".into());
+                }
+            }
+            "--require-reply" => require_reply = true,
             "--for" => {
                 let id = super::require_value(&mut iter, "--for requires a request id")?;
                 if parent.replace(id).is_some() {
@@ -522,6 +549,12 @@ fn parse_ask(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
         (false, Some(_)) => return Err("agents ask --timeout needs --wait".into()),
         (false, None) => None,
     };
+    if require_reply && await_ms.is_none() {
+        return Err("agents ask --require-reply needs --wait".into());
+    }
+    if parent.is_some() && follows.is_some() {
+        return Err("agents ask takes --for or --follows, not both".into());
+    }
     Ok(ParsedAgents {
         command: ControlCommand::AgentAsk {
             target: require_target(target, "agents ask")?,
@@ -529,9 +562,12 @@ fn parse_ask(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
                 "agents ask requires text: agents ask --ref <JSON> -- <TEXT>".to_string()
             })?,
             parent,
+            follows,
+            asker_label: None,
         },
         format,
         await_ms,
+        require_reply,
     })
 }
 
@@ -1255,6 +1291,8 @@ mod tests {
                 target: AgentTarget::Pane(3),
                 prompt: "--why not?".into(),
                 parent: None,
+                follows: None,
+                asker_label: None,
             }
         );
         assert_eq!(parsed.await_ms, None);

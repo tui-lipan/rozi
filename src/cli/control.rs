@@ -696,6 +696,45 @@ pub(super) fn drop_caller_pane(request: &mut control::ControlRequest) {
     request.source_session = None;
 }
 
+/// An ask sent to a session the caller is not addressed in reaches it with no asker, so it says
+/// who is asking: the caller's agent, pane, and session when it runs in one, and this host when
+/// the ask goes to another. The receiving session shows this as coming from outside it, and never
+/// acts on it.
+fn label_outside_asker(request: &mut control::ControlRequest, remote: bool) {
+    if !matches!(
+        request.command,
+        control::ControlCommand::AgentAsk {
+            asker_label: None,
+            ..
+        }
+    ) {
+        return;
+    }
+    let context = super::context::verified_caller_context(request).ok();
+    let who = context.as_ref().and_then(|context| {
+        let pane = context.pane.as_ref()?.pane_id;
+        let session = context
+            .session
+            .as_ref()
+            .map(|session| format!(" of session {}", session.name))
+            .unwrap_or_default();
+        Some(match &context.agent {
+            Some(agent) => format!("{} in pane {pane}{session}", agent.label),
+            None => format!("pane {pane}{session}"),
+        })
+    });
+    let host = remote.then(crate::platform::user::hostname).flatten();
+    let label = match (who, host) {
+        (Some(who), Some(host)) => format!("{who} on {host}"),
+        (Some(who), None) => who,
+        (None, Some(host)) => format!("rozi CLI on {host}"),
+        (None, None) => return,
+    };
+    if let control::ControlCommand::AgentAsk { asker_label, .. } = &mut request.command {
+        *asker_label = Some(label);
+    }
+}
+
 /// Ask a named session server directly, with no UI in the picture.
 ///
 /// A failure to *reach* the session exits 2 like an unreachable UI endpoint; a command the server
@@ -705,6 +744,7 @@ fn ask_session_endpoint(
     session: &str,
     mut request: control::ControlRequest,
 ) -> std::result::Result<serde_json::Value, SendFailure> {
+    label_outside_asker(&mut request, false);
     drop_caller_pane(&mut request);
     crate::session::headless::run_session_control(session, request)
         .map(|response| serde_json::to_value(response).unwrap_or_default())
@@ -773,6 +813,7 @@ fn ask_remote_endpoint(
     // Same reason as the local session endpoint: `ROZI_PANE` names a pane in the namespace the
     // caller is sitting in, which is not the one being addressed - and here it is not even the
     // same machine.
+    label_outside_asker(&mut request, true);
     drop_caller_pane(&mut request);
     let parsed = match crate::session::remote::parse_remote_target(target) {
         Ok(parsed) => parsed,
@@ -935,10 +976,36 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
     report_control(&command, raw_capture, value)
 }
 
+/// How `agents ask --wait` and `agents await --require-reply` treat the answer they collect.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct AnswerOptions {
+    /// `ask --wait`: ask first, then await the new request for this many milliseconds.
+    pub(crate) ask_then_await_ms: Option<u64>,
+    /// An answer the agent did not give with `agents reply` exits [`NOT_A_REPLY_EXIT`].
+    pub(crate) require_reply: bool,
+}
+
+/// `--require-reply` saw an answer read off the agent's terminal rather than its reply.
+const NOT_A_REPLY_EXIT: i32 = 3;
+
+pub(crate) fn run_agent_answer(mut command: ControlCli, options: AnswerOptions) -> Result<()> {
+    let value = match options.ask_then_await_ms {
+        Some(timeout_ms) => ask_then_await(&mut command, timeout_ms)?,
+        None => send_control(&command).or_else(SendFailure::report)?,
+    };
+    let not_a_reply = crate::cli::output::answered_without_reply(value.get("data"));
+    report_control(&command, None, value)?;
+    if options.require_reply && not_a_reply {
+        std::process::exit(NOT_A_REPLY_EXIT);
+    }
+    Ok(())
+}
+
 /// `agents ask --wait`: ask, then wait for the answer exactly as `agents await` does. A refused
-/// ask is reported as itself.
-pub(crate) fn run_ask_and_await(mut command: ControlCli, timeout_ms: u64) -> Result<()> {
-    let asked = send_control(&command).or_else(SendFailure::report)?;
+/// ask is reported as itself. The request's id goes to stderr as soon as it exists, so a command
+/// that is killed or put in the background can always be collected with `agents await`.
+fn ask_then_await(command: &mut ControlCli, timeout_ms: u64) -> Result<serde_json::Value> {
+    let asked = send_control(command).or_else(SendFailure::report)?;
     let Some(request) = asked
         .get("ok")
         .and_then(serde_json::Value::as_bool)
@@ -947,24 +1014,25 @@ pub(crate) fn run_ask_and_await(mut command: ControlCli, timeout_ms: u64) -> Res
         .filter(|data| data.get("id").and_then(serde_json::Value::as_str).is_some())
         .cloned()
     else {
-        return report_control(&command, None, asked);
+        return Ok(asked);
     };
     let id = request["id"].as_str().expect("checked id").to_string();
+    eprintln!("asked {id}");
     command.request.command = control::ControlCommand::AgentAwait {
         id,
         timeout_ms: Some(timeout_ms),
     };
-    let (awaited, unreachable) = match send_control(&command) {
+    let (awaited, unreachable) = match send_control(command) {
         Ok(value) => (Ok(value), false),
         Err(SendFailure::Unreachable(error)) => (Err(error), true),
         Err(SendFailure::Failed(error)) => (Err(error.to_string()), false),
     };
     let value = keep_asked_request(request, awaited);
     if !unreachable {
-        return report_control(&command, None, value);
+        return Ok(value);
     }
     // Reported like any unanswered request, exiting 2, but with the request it leaves behind.
-    if !human_output(&command) {
+    if !human_output(command) {
         println!("{value}");
     }
     eprintln!("{}", value["error"].as_str().unwrap_or_default());
@@ -1052,6 +1120,16 @@ fn human_output(command: &ControlCli) -> bool {
     match command.output_format {
         Some(ListFormat::Text) => true,
         Some(ListFormat::Json) => false,
+        // An agent answering runs these from a shell with no terminal, where JSON would only
+        // echo back the request and the answer it just sent.
+        None if matches!(
+            command.request.command,
+            control::ControlCommand::AgentReply { .. }
+                | control::ControlCommand::AgentReplyLater { .. }
+        ) =>
+        {
+            true
+        }
         None => std::io::stdout().is_terminal(),
     }
 }
@@ -1096,6 +1174,14 @@ fn report_control(
             "{}",
             format_control_text(&command.request.command, &value, OutputStyles::detect())
         );
+        if matches!(
+            command.request.command,
+            control::ControlCommand::AgentAwait { .. }
+                | control::ControlCommand::AgentRequest { .. }
+        ) && let Some(note) = crate::cli::output::answer_provenance_note(value.get("data"))
+        {
+            eprintln!("{note}");
+        }
     }
     Ok(())
 }

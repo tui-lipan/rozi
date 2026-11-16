@@ -72,14 +72,20 @@ impl Rig {
         let from = from.map(|pane| self.agent(pane));
         info(
             self.server
-                .ask_agent(from, AgentTarget::Pane(to), text.into(), None),
+                .ask_agent(from, AgentTarget::Pane(to), text.into(), None, None, None),
         )
     }
 
     fn try_ask(&mut self, from: PaneId, to: PaneId) -> ControlResponse {
         let from = self.agent(from);
-        self.server
-            .ask_agent(Some(from), AgentTarget::Pane(to), "another".into(), None)
+        self.server.ask_agent(
+            Some(from),
+            AgentTarget::Pane(to),
+            "another".into(),
+            None,
+            None,
+            None,
+        )
     }
 
     fn request(&self, id: &str) -> AgentRequestInfo {
@@ -563,6 +569,8 @@ fn an_agent_owing_several_requests_names_the_one_it_asks_for() {
             AgentTarget::Pane(2),
             "which tests are slow?".into(),
             parent,
+            None,
+            None,
         )
     };
     assert_eq!(code(ask(None)), Some(ControlErrorCode::InvalidArgument));
@@ -769,6 +777,87 @@ fn lineage_follows_the_request_being_answered_and_is_bounded() {
 }
 
 #[test]
+fn exchanges_between_the_same_two_agents_make_one_conversation() {
+    let mut rig = Rig::new(&[2, 3, 4]);
+    let first = rig.ask(Some(2), 3, "plan the release");
+    assert_eq!(first.conversation.as_deref(), Some(first.id.as_str()));
+    let again = rig.ask(Some(2), 3, "and the changelog?");
+    assert_eq!(again.conversation, first.conversation);
+    assert_eq!(again.parent, None);
+    let header = |request: &AgentRequestInfo| {
+        let frame = rig.server.request_frame(request);
+        frame.lines().next().unwrap_or_default().to_string()
+    };
+    assert!(
+        header(&again).ends_with(&format!(", following {}:", first.id)),
+        "{}",
+        header(&again)
+    );
+    assert!(
+        header(&first).ends_with(" in pane 2:"),
+        "{}",
+        header(&first)
+    );
+    // What 3 asks while answering belongs to the request it answers, and cannot follow another.
+    rig.set_state(4, DetectedAgentState::Working);
+    let delegated = rig.ask(Some(3), 4, "check the changelog");
+    assert_eq!(delegated.conversation, first.conversation);
+    let owing = rig.agent(3);
+    let follows_while_owing = rig.server.ask_agent(
+        Some(owing),
+        AgentTarget::Pane(4),
+        "more".into(),
+        None,
+        Some(&delegated.id),
+        None,
+    );
+    assert_eq!(
+        code(follows_while_owing),
+        Some(ControlErrorCode::InvalidArgument)
+    );
+    // That delegated request is not something 3 and 4 discussed themselves.
+    let other_pair = rig.ask(Some(4), 3, "status?");
+    assert_eq!(
+        other_pair.conversation.as_deref(),
+        Some(other_pair.id.as_str())
+    );
+
+    // Askers outside the session all look alike, so only `follows` joins one of them.
+    let outside = rig.ask(None, 3, "who are you?");
+    assert_eq!(outside.conversation.as_deref(), Some(outside.id.as_str()));
+    let follows = |rig: &mut Rig, to: PaneId| {
+        rig.server.ask_agent(
+            None,
+            AgentTarget::Pane(to),
+            "follow-up".into(),
+            None,
+            Some(&outside.id),
+            Some("Claude \"Code\"\u{1b}[31m on\nfar-host\u{202e}\u{e0041}".into()),
+        )
+    };
+    let follow_up = info(follows(&mut rig, 3));
+    assert_eq!(follow_up.conversation.as_deref(), Some(outside.id.as_str()));
+    assert_eq!(
+        follow_up.from_label.as_deref(),
+        Some("Claude 'Code' [31m on far-host")
+    );
+    assert_eq!(
+        code(follows(&mut rig, 4)),
+        Some(ControlErrorCode::InvalidArgument)
+    );
+    // Only whoever asked a request continues its conversation.
+    let someone_elses = rig.server.ask_agent(
+        None,
+        AgentTarget::Pane(3),
+        "me too".into(),
+        None,
+        Some(&first.id),
+        None,
+    );
+    assert_eq!(code(someone_elses), Some(ControlErrorCode::InvalidArgument));
+}
+
+#[test]
 fn an_await_answers_once_and_never_holds_up_its_request() {
     let mut rig = Rig::new(&[2, 3]);
     let (client, mut stream) = add_client(&mut rig.server);
@@ -829,6 +918,7 @@ fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
                 id: id.clone(),
                 root: id.clone(),
                 parent: None,
+                conversation: None,
                 from: None,
                 from_native_session: None,
                 to: to.clone(),

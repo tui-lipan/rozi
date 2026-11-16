@@ -30,7 +30,7 @@ pub(crate) use args::{
     print_ports_help, print_record_help, print_sessions_help, print_worktrees_help, usage_hint,
 };
 pub(crate) use control::{
-    run_ask_and_await, run_control_cli, run_pick_cli, run_prompt_cli, run_publish_cli,
+    run_agent_answer, run_control_cli, run_pick_cli, run_prompt_cli, run_publish_cli,
     run_subscribe_cli,
 };
 pub(crate) use extension::{

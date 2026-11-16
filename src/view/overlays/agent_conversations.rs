@@ -2,7 +2,8 @@ use super::*;
 
 use crate::control::{AgentRequestState, AgentRequestSummary};
 use crate::view::agent_requests::{
-    ChainEvent, agent_name, chain_events, requests, short_duration, state_word, threaded,
+    ChainEvent, agent_name, chain_events, is_follow_up, not_a_reply, requests, short_duration,
+    state_word, threaded,
 };
 use crate::view::vocabulary::SEPARATOR;
 use crate::view::widget_keys::{agent_conversations_chain_key, agent_conversations_key};
@@ -31,11 +32,11 @@ fn list_overlay(ctx: &Context<AppRoot>, selected: Option<&str>, query: &str) -> 
     let all = requests(&ctx.state);
     let rows = threaded(all);
     let now = crate::view::agent_requests::server_now_ms(&ctx.state).unwrap_or(0);
-    // A chain lists under Waiting while any request in it waits, so it is never split in two.
-    let waiting_roots: Vec<&str> = all
+    // A conversation lists under Waiting while any request in it waits, so it is never split.
+    let waiting_conversations: Vec<&str> = all
         .iter()
         .filter(|request| !request.state.is_resolved())
-        .map(|request| request.root.as_str())
+        .map(AgentRequestSummary::conversation)
         .collect();
     // The same branch guides as the sidebar's trees, so a chain reads like any other tree.
     let guides = TreeGuides::new(IndentStyle::Branch).guide_style(fg_only(&theme.muted));
@@ -47,7 +48,7 @@ fn list_overlay(ctx: &Context<AppRoot>, selected: Option<&str>, query: &str) -> 
     let rendered: Arc<Vec<RenderedRow>> = Arc::new(
         rows.iter()
             .map(|(request, branch)| {
-                let waiting = waiting_roots.contains(&request.root.as_str());
+                let waiting = waiting_conversations.contains(&request.conversation());
                 let guides = guides.spans(branch, max_depth);
                 RenderedRow::new(&ctx.state, request, guides, waiting, now, theme)
             })
@@ -57,7 +58,8 @@ fn list_overlay(ctx: &Context<AppRoot>, selected: Option<&str>, query: &str) -> 
     for row in rendered.iter() {
         let title = if row.waiting { "Waiting" } else { "Settled" };
         let entry = SearchEntry::Item(
-            SearchItem::new(row.search.clone(), row.id.clone()).aliases(vec![row.root.clone()]),
+            SearchItem::new(row.search.clone(), row.id.clone())
+                .aliases(vec![row.conversation.clone()]),
         );
         match groups.iter_mut().find(|(group, _)| *group == title) {
             Some((_, items)) => items.push(entry),
@@ -77,7 +79,7 @@ fn list_overlay(ctx: &Context<AppRoot>, selected: Option<&str>, query: &str) -> 
     let actions = vec![
         OverlayAction::new(
             "enter",
-            "show chain",
+            "show conversation",
             selected_id
                 .clone()
                 .map(Msg::AgentConversationsOpenChain)
@@ -154,7 +156,7 @@ fn list_overlay(ctx: &Context<AppRoot>, selected: Option<&str>, query: &str) -> 
 /// What one list row draws.
 struct RenderedRow {
     id: String,
-    root: String,
+    conversation: String,
     search: String,
     label: Vec<Span>,
     description: Vec<Span>,
@@ -173,7 +175,7 @@ impl RenderedRow {
         now: u64,
         theme: &Theme,
     ) -> Self {
-        use crate::view::vocabulary::{ASKING, fields};
+        use crate::view::vocabulary::{ASKING, REQUEST_FOLLOW_UP, fields};
         let from = agent_name(state, request.from.as_ref(), request.from_label.as_deref());
         let to = agent_name(state, Some(&request.to), request.to_label.as_deref());
         // One cell between a guide and its row, as the sidebar's trees leave.
@@ -211,11 +213,23 @@ impl RenderedRow {
                 )
             })
             .unwrap_or_default();
-        let text = fields([state_word(request).to_string(), age, reason]);
+        let provenance = not_a_reply(request).unwrap_or_default();
+        let follow_up = if is_follow_up(request) {
+            REQUEST_FOLLOW_UP
+        } else {
+            ""
+        };
+        let text = fields([
+            state_word(request).to_string(),
+            provenance.to_string(),
+            age,
+            reason,
+            follow_up.to_string(),
+        ]);
         let description = vec![Span::new(text).style(style)];
         Self {
             id: request.id.clone(),
-            root: request.root.clone(),
+            conversation: request.conversation().to_string(),
             search: format!("{from} {to} {}", request.id),
             label,
             description,
@@ -304,6 +318,10 @@ fn chain_overlay(ctx: &Context<AppRoot>, root: &str) -> Element {
                         .saturating_sub(request.created_at_unix_ms),
                 );
                 let (word, style) = match request.state {
+                    AgentRequestState::Answered if not_a_reply(request).is_some() => (
+                        not_a_reply(request).unwrap_or_default(),
+                        Style::new().fg(theme.status.warning),
+                    ),
                     AgentRequestState::Answered => {
                         ("answer", Style::new().fg(theme.status.success))
                     }
@@ -321,7 +339,7 @@ fn chain_overlay(ctx: &Context<AppRoot>, root: &str) -> Element {
     }
     let waiting = all
         .iter()
-        .filter(|request| request.root == root && !request.state.is_resolved())
+        .filter(|request| request.conversation() == root && !request.state.is_resolved())
         .count();
     let selected = ctx
         .state
@@ -371,7 +389,7 @@ fn chain_overlay(ctx: &Context<AppRoot>, root: &str) -> Element {
     let count = participants_count_label(participants.len(), waiting);
     wrap_palette(
         ctx,
-        std::borrow::Cow::Owned(format!("Conversation · {root}")),
+        std::borrow::Cow::Borrowed("Conversation"),
         Some(std::borrow::Cow::Owned(count)),
         "rozi-agent-conversation-chain",
         Msg::AgentConversationsBack,

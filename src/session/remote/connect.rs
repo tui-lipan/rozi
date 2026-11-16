@@ -68,6 +68,9 @@ pub fn connect_remote(
 
 /// Like [`connect_remote`], but cap SSH `ConnectTimeout` and the preamble read to `budget` so a
 /// reconnect attempt cannot outrun the advertised retry window.
+///
+/// `cancel_epoch` is set exactly when this is a reconnect of an attachment that already worked.
+/// A `budget` alone is only a deadline: a one-shot command still finds the remote binary itself.
 pub(crate) fn connect_remote_within(
     target: &RemoteTarget,
     session: &str,
@@ -205,7 +208,7 @@ fn read_remote_preamble(
         Err(err) => {
             // A quiet or dropped SSH pipe is not evidence the remote binary disappeared.
             // Reconnect must not flush the remembered path and spend the retry window re-probing.
-            if invalidate_binary_cache_after_preamble_failure(budget) {
+            if cancel_epoch.is_none() {
                 super::binary::invalidate(target, config);
             }
             // Kill the proxy, then give its stderr collector a moment, never longer. ssh's own
@@ -294,8 +297,8 @@ fn resolve_attach_binary(
     cancel_epoch: Option<u64>,
     may_install: bool,
 ) -> Result<super::binary::RemoteBinary, RemoteConnectError> {
-    if budget.is_some() {
-        if cancel_epoch.is_some_and(crate::session::bootstrap::remote_attach_cancelled) {
+    if let Some(epoch) = cancel_epoch {
+        if crate::session::bootstrap::remote_attach_cancelled(epoch) {
             return Err(RemoteConnectError::Message(
                 "reconnect cancelled".to_string(),
             ));
@@ -416,11 +419,6 @@ fn capped_preamble_timeout(config: &RemoteConfig, remaining: Duration) -> Durati
     } else {
         preamble_timeout(config).min(remaining)
     }
-}
-
-/// A quiet SSH pipe during reconnect is not evidence the remote binary disappeared.
-fn invalidate_binary_cache_after_preamble_failure(budget: Option<Duration>) -> bool {
-    budget.is_none()
 }
 
 /// Kill a named session on the remote host via `rozi sessions kill` over ssh.
@@ -698,11 +696,41 @@ mod tests {
     }
 
     #[test]
-    fn reconnect_preamble_failure_keeps_the_remembered_binary() {
-        assert!(!invalidate_binary_cache_after_preamble_failure(Some(
-            Duration::from_secs(30)
-        )));
-        assert!(invalidate_binary_cache_after_preamble_failure(None));
+    fn a_deadline_without_a_reconnect_still_looks_for_the_binary() {
+        // `rozi --remote <host> --session <name> agents ask` checks a capability under a short
+        // deadline from a fresh process, whose cache is empty. It must probe the host, as an
+        // unbudgeted lookup does, rather than refuse as a reconnect would.
+        let target = RemoteTarget::Alias("deadline-only-probe.invalid".into());
+        let config = RemoteConfig::default().unattended();
+        super::super::binary::invalidate(&target, &config);
+        let lookup = super::super::binary::resolve(&target, &config)
+            .err()
+            .map(|error| error.message);
+        let message = |result: Result<_, RemoteConnectError>| match result {
+            Err(RemoteConnectError::Message(message)) => Some(message),
+            _ => None,
+        };
+        assert_eq!(
+            message(resolve_attach_binary(
+                &target,
+                &config,
+                Some(Duration::from_secs(5)),
+                None,
+                false,
+            )),
+            lookup
+        );
+        assert_eq!(
+            message(resolve_attach_binary(
+                &target,
+                &config,
+                Some(Duration::from_secs(5)),
+                Some(u64::MAX),
+                false,
+            ))
+            .as_deref(),
+            Some("remote Rozi path is no longer known; reopen the host to probe it again")
+        );
     }
 
     #[test]

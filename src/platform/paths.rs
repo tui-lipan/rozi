@@ -461,7 +461,14 @@ fn fallback_runtime_dir_in(temp_dir: PathBuf, owner: &str) -> PathBuf {
 /// machine-wide path and admits traversal but not listing. It is refused unless this account owns
 /// it and it is a real directory: nothing here repairs a path another account created.
 pub fn ensure_own_shared_dir() -> io::Result<PathBuf> {
-    Err(super::user::sharing_unsupported())
+    #[cfg(unix)]
+    {
+        unix_shared_dir::ensure_own_shared_dir()
+    }
+    #[cfg(not(unix))]
+    {
+        Err(super::user::sharing_unsupported())
+    }
 }
 
 /// The shared directory of `owner`, verified to belong to that account.
@@ -469,8 +476,189 @@ pub fn ensure_own_shared_dir() -> io::Result<PathBuf> {
 /// A guest connects only to an endpoint inside a directory this accepts, which is what keeps a
 /// third account from standing in for the owner's session server.
 pub fn verified_shared_dir(owner: super::user::UserId) -> io::Result<PathBuf> {
-    let _ = owner;
-    Err(super::user::sharing_unsupported())
+    #[cfg(unix)]
+    {
+        unix_shared_dir::verified_shared_dir(owner)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = owner;
+        Err(super::user::sharing_unsupported())
+    }
+}
+
+#[cfg(unix)]
+mod unix_shared_dir {
+    use std::fs;
+    use std::io;
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+    use std::path::{Path, PathBuf};
+
+    use super::{PlatformEnv, fs_security, user_dirs_are_isolated};
+    use crate::platform::user::UserId;
+
+    const SHARED_DIR_MODE: u32 = 0o711;
+    const STICKY_BIT: u32 = 0o1000;
+
+    fn shared_dir_name(uid: u32) -> String {
+        format!("rozi-shared-{uid}")
+    }
+
+    fn system_shared_base() -> &'static Path {
+        // `/tmp` on macOS is a symlink to `/private/tmp`; `lstat` on the base requires a real
+        // directory, and both resolve to the same directory for every user.
+        if cfg!(target_vendor = "apple") {
+            Path::new("/private/tmp")
+        } else {
+            Path::new("/tmp")
+        }
+    }
+
+    fn isolated_shared_base() -> PathBuf {
+        PlatformEnv::from_process()
+            .xdg_runtime_dir
+            .unwrap_or_else(std::env::temp_dir)
+    }
+
+    pub(super) fn ensure_own_shared_dir() -> io::Result<PathBuf> {
+        if user_dirs_are_isolated() {
+            let base = isolated_shared_base();
+            ensure_own_shared_dir_in(&base, false)
+        } else {
+            ensure_own_shared_dir_in(system_shared_base(), true)
+        }
+    }
+
+    pub(super) fn verified_shared_dir(owner: UserId) -> io::Result<PathBuf> {
+        if user_dirs_are_isolated() {
+            let base = isolated_shared_base();
+            verified_shared_dir_in(&base, owner, false)
+        } else {
+            verified_shared_dir_in(system_shared_base(), owner, true)
+        }
+    }
+
+    pub(super) fn validate_shared_tmp_base(base: &Path) -> io::Result<()> {
+        let meta = fs::symlink_metadata(base)?;
+        if !meta.file_type().is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("{} is not a directory", base.display()),
+            ));
+        }
+        if meta.uid() != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("{} is not owned by root", base.display()),
+            ));
+        }
+        if meta.mode() & STICKY_BIT == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("{} does not have the sticky bit set", base.display()),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn ensure_own_shared_dir_in(
+        base: &Path,
+        verify_system_base: bool,
+    ) -> io::Result<PathBuf> {
+        if verify_system_base {
+            validate_shared_tmp_base(base)?;
+        }
+        let own_uid = fs_security::current_uid();
+        let dir = base.join(shared_dir_name(own_uid));
+
+        match fs::symlink_metadata(&dir) {
+            Ok(meta) => validate_and_set_own_shared_dir(&dir, &meta, own_uid)?,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                let mut builder = fs::DirBuilder::new();
+                builder.mode(SHARED_DIR_MODE);
+                match builder.create(&dir) {
+                    Ok(()) => {
+                        let meta = fs::symlink_metadata(&dir)?;
+                        validate_and_set_own_shared_dir(&dir, &meta, own_uid)?;
+                    }
+                    Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                        // A concurrent process won the create; `lstat` verifies ownership and
+                        // type before any chmod.
+                        let meta = fs::symlink_metadata(&dir)?;
+                        validate_and_set_own_shared_dir(&dir, &meta, own_uid)?;
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+            Err(err) => return Err(err),
+        }
+
+        Ok(dir)
+    }
+
+    fn validate_and_set_own_shared_dir(
+        dir: &Path,
+        meta: &fs::Metadata,
+        own_uid: u32,
+    ) -> io::Result<()> {
+        if !meta.file_type().is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("{} is not a directory", dir.display()),
+            ));
+        }
+        if meta.uid() != own_uid {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("{} is not owned by the current user", dir.display()),
+            ));
+        }
+        if (meta.mode() & 0o777) != SHARED_DIR_MODE {
+            fs::set_permissions(dir, fs::Permissions::from_mode(SHARED_DIR_MODE))?;
+            let after = fs::symlink_metadata(dir)?;
+            if !after.file_type().is_dir()
+                || after.uid() != own_uid
+                || (after.mode() & 0o777) != SHARED_DIR_MODE
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("{} could not be locked to mode 0711", dir.display()),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn verified_shared_dir_in(
+        base: &Path,
+        owner: UserId,
+        verify_system_base: bool,
+    ) -> io::Result<PathBuf> {
+        if verify_system_base {
+            validate_shared_tmp_base(base)?;
+        }
+        let dir = base.join(shared_dir_name(owner.as_raw()));
+        let meta = fs::symlink_metadata(&dir)?;
+        if !meta.file_type().is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("{} is not a directory", dir.display()),
+            ));
+        }
+        if meta.uid() != owner.as_raw() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("{} is not owned by user {}", dir.display(), owner),
+            ));
+        }
+        if meta.mode() & 0o022 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("{} must not be writable by group or others", dir.display()),
+            ));
+        }
+        Ok(dir)
+    }
 }
 
 /// This binary's own path, injected into spawned processes as `ROZI_BIN`.
@@ -1778,5 +1966,131 @@ mod tests {
         assert_eq!(second, first);
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_dir_creation_verification_and_security_checks() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let scratch = tempfile::tempdir().expect("tempdir");
+        let base = scratch.path();
+        let own_uid = super::super::user::current_user_id();
+        let expected = base.join(format!("rozi-shared-{own_uid}"));
+
+        // Creating the shared directory sets mode to exactly 0o711.
+        let created = unix_shared_dir::ensure_own_shared_dir_in(base, false).expect("create");
+        assert_eq!(created, expected);
+        assert_eq!(
+            fs::symlink_metadata(&created)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o711
+        );
+
+        // Pre-existing directory owned by us with wrong permissions is reset to 0o711.
+        fs::set_permissions(&created, fs::Permissions::from_mode(0o755)).expect("loosen");
+        unix_shared_dir::ensure_own_shared_dir_in(base, false).expect("tighten to 0711");
+        assert_eq!(
+            fs::symlink_metadata(&created)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o711
+        );
+
+        // verified_shared_dir accepts 0o711 for the owner.
+        assert_eq!(
+            unix_shared_dir::verified_shared_dir_in(base, own_uid, false).expect("verify 0711"),
+            created
+        );
+
+        // Group-writable or world-writable directory is refused by verified_shared_dir.
+        for bad_mode in [0o731, 0o713, 0o777] {
+            fs::set_permissions(&created, fs::Permissions::from_mode(bad_mode)).expect("set bad");
+            let err = unix_shared_dir::verified_shared_dir_in(base, own_uid, false).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{bad_mode:o}");
+        }
+        fs::set_permissions(&created, fs::Permissions::from_mode(0o711)).expect("restore 0711");
+
+        // Directory owned by someone else (wrong expected owner) is refused.
+        let other_uid = super::super::user::UserId::from_raw(own_uid.as_raw().wrapping_add(1));
+        let other_dir = base.join(format!("rozi-shared-{other_uid}"));
+        fs::create_dir(&other_dir).expect("create other dir");
+        fs::set_permissions(&other_dir, fs::Permissions::from_mode(0o711)).expect("0711");
+        let err = unix_shared_dir::verified_shared_dir_in(base, other_uid, false).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+
+        // Symlink in place of the shared directory is refused by both ensure and verify.
+        let target = base.join("symlink-target");
+        fs::create_dir(&target).expect("target");
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).expect("target 0755");
+        fs::remove_dir(&created).expect("remove dir");
+        std::os::unix::fs::symlink(&target, &created).expect("symlink");
+        assert_eq!(
+            unix_shared_dir::ensure_own_shared_dir_in(base, false)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(
+            fs::symlink_metadata(&target)
+                .expect("target intact")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755,
+            "ensure must not chmod a symlink target"
+        );
+        assert_eq!(
+            unix_shared_dir::verified_shared_dir_in(base, own_uid, false)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+
+        // /tmp base checks: symlink or non-sticky or non-root base is refused.
+        let link_base = base.join("link-base");
+        std::os::unix::fs::symlink(&target, &link_base).expect("link base");
+        assert_eq!(
+            unix_shared_dir::validate_shared_tmp_base(&link_base)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o777)).expect("non-sticky");
+        assert_eq!(
+            unix_shared_dir::validate_shared_tmp_base(&target)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        if fs::symlink_metadata(&target).expect("meta").uid() != 0 {
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o1777)).expect("sticky");
+            assert_eq!(
+                unix_shared_dir::validate_shared_tmp_base(&target)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::PermissionDenied
+            );
+        }
+
+        // Public functions resolve inside the isolated scratch root under cfg(test), never /tmp.
+        let isolated = ensure_own_shared_dir().expect("isolated ensure_own_shared_dir");
+        let isolated_base = PlatformEnv::from_process()
+            .xdg_runtime_dir
+            .expect("isolated runtime dir");
+        assert!(
+            isolated.starts_with(&isolated_base),
+            "{}",
+            isolated.display()
+        );
+        assert_eq!(
+            verified_shared_dir(own_uid).expect("isolated verified_shared_dir"),
+            isolated
+        );
     }
 }

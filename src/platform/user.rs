@@ -104,21 +104,151 @@ pub fn current_user_id() -> UserId {
 ///
 /// `Ok(None)` means the account database has no such account.
 pub fn lookup_user(spec: &str) -> std::io::Result<Option<UserAccount>> {
-    let _ = spec;
-    Err(sharing_unsupported())
+    #[cfg(unix)]
+    {
+        unix_impl::lookup_user(spec)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = spec;
+        Err(sharing_unsupported())
+    }
 }
 
 /// The account a [`UserId`] belongs to, when the account database knows it.
 pub fn account_of(id: UserId) -> Option<UserAccount> {
-    let _ = id;
-    None
+    #[cfg(unix)]
+    {
+        unix_impl::account_of(id)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = id;
+        None
+    }
 }
 
+#[cfg(not(unix))]
 pub(crate) fn sharing_unsupported() -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         session_sharing_unavailable().unwrap_or("session sharing is not implemented"),
     )
+}
+
+#[cfg(unix)]
+mod unix_impl {
+    use std::ffi::{CStr, CString};
+    use std::io;
+
+    use super::{UserAccount, UserId};
+
+    const MAX_PW_BUF_SIZE: usize = 1024 * 1024;
+
+    pub(super) fn lookup_user(spec: &str) -> io::Result<Option<UserAccount>> {
+        if spec.is_empty() {
+            return Ok(None);
+        }
+        if spec.bytes().all(|byte| byte.is_ascii_digit()) {
+            let Ok(uid) = spec.parse::<u32>() else {
+                return Ok(None);
+            };
+            return lookup_by_uid_with_buf_len(uid, initial_pw_buf_len());
+        }
+        let Ok(c_name) = CString::new(spec) else {
+            return Ok(None);
+        };
+        lookup_by_name_with_buf_len(&c_name, initial_pw_buf_len())
+    }
+
+    pub(super) fn account_of(id: UserId) -> Option<UserAccount> {
+        lookup_by_uid_with_buf_len(id.as_raw(), initial_pw_buf_len())
+            .ok()
+            .flatten()
+    }
+
+    fn initial_pw_buf_len() -> usize {
+        let max = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
+        if max > 0 {
+            (max as usize).clamp(1024, 16 * 1024)
+        } else {
+            1024
+        }
+    }
+
+    pub(super) fn lookup_by_uid_with_buf_len(
+        uid: u32,
+        initial_len: usize,
+    ) -> io::Result<Option<UserAccount>> {
+        #[allow(clippy::unnecessary_cast)]
+        let raw_uid = uid as libc::uid_t;
+        if raw_uid as u32 != uid {
+            return Ok(None);
+        }
+        lookup_passwd(initial_len, |pwd, buf, result| unsafe {
+            libc::getpwuid_r(
+                raw_uid,
+                pwd,
+                buf.as_mut_ptr().cast::<libc::c_char>(),
+                buf.len(),
+                result,
+            )
+        })
+    }
+
+    pub(super) fn lookup_by_name_with_buf_len(
+        name: &CStr,
+        initial_len: usize,
+    ) -> io::Result<Option<UserAccount>> {
+        lookup_passwd(initial_len, |pwd, buf, result| unsafe {
+            libc::getpwnam_r(
+                name.as_ptr(),
+                pwd,
+                buf.as_mut_ptr().cast::<libc::c_char>(),
+                buf.len(),
+                result,
+            )
+        })
+    }
+
+    fn lookup_passwd(
+        initial_len: usize,
+        mut call: impl FnMut(*mut libc::passwd, &mut [u8], *mut *mut libc::passwd) -> libc::c_int,
+    ) -> io::Result<Option<UserAccount>> {
+        let mut buf = vec![0u8; initial_len.max(1)];
+        loop {
+            let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+            let mut result: *mut libc::passwd = std::ptr::null_mut();
+            let rc = call(&mut pwd, &mut buf, &mut result);
+            match rc {
+                0 => {
+                    if result.is_null() || pwd.pw_name.is_null() {
+                        return Ok(None);
+                    }
+                    #[allow(clippy::unnecessary_cast)]
+                    let uid = pwd.pw_uid as u32;
+                    let name = unsafe { CStr::from_ptr(pwd.pw_name) }
+                        .to_string_lossy()
+                        .into_owned();
+                    return Ok(Some(UserAccount {
+                        id: UserId::from_raw(uid),
+                        name,
+                    }));
+                }
+                libc::EINTR => continue,
+                libc::ERANGE => {
+                    let next_len = buf.len().saturating_mul(2);
+                    if next_len > MAX_PW_BUF_SIZE || next_len <= buf.len() {
+                        return Err(io::Error::from_raw_os_error(rc));
+                    }
+                    buf.resize(next_len, 0);
+                }
+                // Some NSS modules report an unknown account as ENOENT or ESRCH instead of 0 + NULL.
+                libc::ENOENT | libc::ESRCH => return Ok(None),
+                other => return Err(io::Error::from_raw_os_error(other)),
+            }
+        }
+    }
 }
 
 /// The local machine's hostname, used to tell a *local* OSC 7 working directory (which a pane may
@@ -170,6 +300,44 @@ mod tests {
         assert!(
             tag.chars().all(|c| c.is_ascii_digit()),
             "expected a numeric uid, got {tag:?}"
+        );
+    }
+
+    #[test]
+    fn lookup_user_round_trips_current_account_and_rejects_unknown() {
+        let uid = current_user_id();
+        let account = account_of(uid).expect("current uid exists in passwd");
+        assert_eq!(account.id, uid);
+        assert!(!account.name.is_empty());
+
+        assert_eq!(
+            lookup_user(&uid.to_string()).expect("lookup by numeric uid"),
+            Some(account.clone())
+        );
+        assert_eq!(
+            lookup_user(&account.name).expect("lookup by name"),
+            Some(account.clone())
+        );
+        assert_eq!(
+            lookup_user("rozi-nonexistent-account-99999").expect("unknown name"),
+            None
+        );
+        assert_eq!(lookup_user("").expect("empty spec"), None);
+        assert_eq!(lookup_user("alice\0bob").expect("nul in spec"), None);
+        assert_eq!(
+            lookup_user("999999999999999999999999").expect("overflowing uid"),
+            None
+        );
+
+        // Force ERANGE growth from an undersized initial buffer.
+        let c_name = std::ffi::CString::new(account.name.as_str()).unwrap();
+        assert_eq!(
+            unix_impl::lookup_by_name_with_buf_len(&c_name, 8).expect("erange growth by name"),
+            Some(account.clone())
+        );
+        assert_eq!(
+            unix_impl::lookup_by_uid_with_buf_len(uid.as_raw(), 8).expect("erange growth by uid"),
+            Some(account)
         );
     }
 }

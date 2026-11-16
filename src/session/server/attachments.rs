@@ -487,7 +487,7 @@ mod tests {
         assert!(server.begin_attachment((client, 1), &begin(4)).is_err());
         server.panes.insert(7, super::super::tests::test_pane(4));
         assert!(server.begin_attachment((client, 1), &begin(4)).is_err());
-        server.client_mut(client).unwrap().read_only = true;
+        server.client_mut(client).unwrap().access = protocol::ClientAccess::owner(true);
         assert!(server.begin_attachment((client, 1), &begin(4)).is_err());
         assert!(server.attachments.pending.is_empty());
     }
@@ -531,9 +531,9 @@ mod delivery_tests {
             name: "test.txt".into(),
             size: 4,
         };
-        server.client_mut(client).unwrap().read_only = true;
+        server.client_mut(client).unwrap().access = protocol::ClientAccess::owner(true);
         assert!(server.begin_attachment((client, 2), &candidate).is_err());
-        server.client_mut(client).unwrap().read_only = false;
+        server.client_mut(client).unwrap().access = protocol::ClientAccess::owner(false);
         server.panes.get_mut(&7).unwrap().generation = 4;
         assert!(server.begin_attachment((client, 2), &candidate).is_err());
         server.panes.get_mut(&7).unwrap().generation = 3;

@@ -54,11 +54,11 @@ fn atomic_spawn_validates_authority_revision_and_document_before_starting_a_pty(
     assert!(!accepted(
         &server.handle_message(follower, original.clone())
     ));
-    server.client_mut(controller).unwrap().read_only = true;
+    server.client_mut(controller).unwrap().access = protocol::ClientAccess::owner(true);
     assert!(!accepted(
         &server.handle_message(controller, original.clone())
     ));
-    server.client_mut(controller).unwrap().read_only = false;
+    server.client_mut(controller).unwrap().access = protocol::ClientAccess::owner(false);
 
     let mut missing = original.clone();
     if let ClientMessage::SpawnPane { placement, .. } = &mut missing {
@@ -638,9 +638,11 @@ fn queued_startup_spawns_do_not_inherit_a_rejected_read_only_base() {
     startup_test(|| {
         let mut test = StartupSpawns::new(false);
         test.step();
-        test.server.client_mut(test.controller).unwrap().read_only = true;
+        test.server.client_mut(test.controller).unwrap().access =
+            protocol::ClientAccess::owner(true);
         test.step();
-        test.server.client_mut(test.controller).unwrap().read_only = false;
+        test.server.client_mut(test.controller).unwrap().access =
+            protocol::ClientAccess::owner(false);
         test.finish();
         assert_eq!(test.attempts, [(1, 0), (2, 1), (3, 1)]);
     });

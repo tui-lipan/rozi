@@ -1295,7 +1295,7 @@ mod tests {
             .iter_mut()
             .find(|conn| conn.id == client)
             .unwrap()
-            .read_only = true;
+            .access = protocol::ClientAccess::owner(true);
         tunnel(&mut server, client, 4, start(&path, None, false));
         assert_eq!(
             refusal(&server, 4),

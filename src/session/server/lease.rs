@@ -227,10 +227,7 @@ impl SessionServer {
         client_id: ClientId,
     ) -> Vec<(Target, ServerMessage)> {
         // A parked client has nothing on screen to control; it takes the lease by unparking.
-        if self.client_read_only(client_id)
-            || !self.client_attached(client_id)
-            || self.client_parked(client_id)
-        {
+        if !self.client_may_hold_lease(client_id) || self.client_parked(client_id) {
             return Vec::new();
         }
         if self.controller == Some(client_id) {
@@ -239,7 +236,7 @@ impl SessionServer {
         if self.controller.is_none() {
             return self.assign_controller(client_id, ControllerChangeReason::Granted);
         }
-        if self.allow_takeover {
+        if self.allow_takeover || (self.client_is_owner(client_id) && self.controller_is_guest()) {
             return self.assign_controller(client_id, ControllerChangeReason::Granted);
         }
         let controller = self.controller;
@@ -291,7 +288,7 @@ impl SessionServer {
             if self.controller == Some(client_id) {
                 return self.release_controller();
             }
-        } else if self.controller.is_none() && !self.client_read_only(client_id) {
+        } else if self.controller.is_none() && self.client_may_hold_lease(client_id) {
             return self.assign_controller(client_id, ControllerChangeReason::Granted);
         }
         vec![(Target::Broadcast, self.clients_changed())]
@@ -323,7 +320,7 @@ impl SessionServer {
 
     /// Hand the lease to the next client entitled to it, or leave the session uncontrolled when
     /// there is none. Used when the controller gives it up rather than leaves.
-    fn release_controller(&mut self) -> Vec<(Target, ServerMessage)> {
+    pub(super) fn release_controller(&mut self) -> Vec<(Target, ServerMessage)> {
         self.controller = self.promotion_candidate();
         self.cancel_unauthorized_drags();
         if let Some(promoted) = self.controller
@@ -353,7 +350,11 @@ impl SessionServer {
     fn promotion_candidate(&self) -> Option<ClientId> {
         self.clients
             .iter()
-            .filter(|client| client.attached && !client.read_only && !client.parked)
+            .filter(|client| {
+                client.attached
+                    && client.access.allows(protocol::Permission::Layout)
+                    && !client.parked
+            })
             .map(|client| client.id)
             .min()
     }
@@ -364,8 +365,8 @@ impl SessionServer {
         to: ClientId,
     ) -> Vec<(Target, ServerMessage)> {
         if !self.is_controller(client_id)
-            || !self.client_attached(to)
-            || self.client_read_only(to)
+            || !self.client_may_hold_lease(client_id)
+            || !self.client_may_hold_lease(to)
             || self.client_parked(to)
         {
             return Vec::new();
@@ -422,9 +423,23 @@ impl SessionServer {
     ) -> Vec<(Target, ServerMessage)> {
         if !self.is_controller(client_id)
             || self.client_read_only(client_id)
+            || !self.client_may_hold_lease(client_id)
             || target == client_id
             || !self.client_attached(target)
         {
+            return Vec::new();
+        }
+        if !self.client_is_owner(client_id) && self.client_is_owner(target) {
+            if self.client_supports_sharing(client_id) {
+                return vec![(
+                    Target::Sender,
+                    ServerMessage::Error {
+                        code: protocol::PERMISSION_DENIED_ERROR_CODE.to_string(),
+                        message: "a guest cannot evict the session owner".to_string(),
+                        peer: None,
+                    },
+                )];
+            }
             return Vec::new();
         }
         let by = self
@@ -473,7 +488,6 @@ impl SessionServer {
         self.controller == Some(client_id)
     }
 
-    #[cfg(all(test, unix))]
     pub(super) fn client(&self, id: ClientId) -> Option<&ClientConn> {
         self.clients.iter().find(|client| client.id == id)
     }
@@ -495,11 +509,48 @@ impl SessionServer {
             .any(|client| client.id == id && client.attached && client.parked)
     }
 
-    pub(super) fn client_read_only(&self, id: ClientId) -> bool {
+    pub(super) fn client_allows(&self, id: ClientId, permission: protocol::Permission) -> bool {
         self.clients
             .iter()
             .find(|client| client.id == id && client.attached)
-            .is_none_or(|client| client.read_only)
+            .is_some_and(|client| client.access.allows(permission))
+    }
+
+    pub(super) fn client_may_hold_lease(&self, id: ClientId) -> bool {
+        self.client_allows(id, protocol::Permission::Layout)
+    }
+
+    pub(super) fn client_is_owner(&self, id: ClientId) -> bool {
+        self.clients
+            .iter()
+            .find(|client| client.id == id && client.attached)
+            .is_some_and(|client| !client.access.is_guest())
+    }
+
+    pub(super) fn client_supports_sharing(&self, id: ClientId) -> bool {
+        self.clients
+            .iter()
+            .find(|client| client.id == id)
+            .is_some_and(|client| {
+                client
+                    .capabilities
+                    .supports(protocol::Capability::SessionSharing)
+            })
+    }
+
+    fn controller_is_guest(&self) -> bool {
+        let Some(controller) = self.controller else {
+            return false;
+        };
+        if let Some(client) = self.client(controller) {
+            client.access.is_guest()
+        } else {
+            self.handoff_is_guest(controller)
+        }
+    }
+
+    pub(super) fn client_read_only(&self, id: ClientId) -> bool {
+        !self.client_allows(id, protocol::Permission::Input)
     }
 
     pub(super) fn client_may_input(&self, id: ClientId) -> bool {
@@ -515,11 +566,11 @@ impl SessionServer {
             .map(|client| ClientInfo {
                 id: client.id,
                 label: client.label.clone().unwrap_or_else(|| "client".to_string()),
-                read_only: client.read_only,
+                read_only: !client.access.allows(protocol::Permission::Input),
                 requesting_control: client.requesting_control,
                 parked: client.parked,
-                role: None,
-                user: None,
+                role: Some(client.access.role),
+                user: client.guest.as_ref().map(|guest| guest.name.clone()),
             })
             .collect()
     }

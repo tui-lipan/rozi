@@ -285,7 +285,7 @@ impl SessionServer {
                 }
                 let priority = if interest.focused && self.controller == Some(client.id) {
                     3
-                } else if !client.read_only {
+                } else if client.access.allows(protocol::Permission::Input) {
                     2
                 } else {
                     1

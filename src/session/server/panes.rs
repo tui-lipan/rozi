@@ -76,18 +76,34 @@ impl SessionServer {
         };
         let listener = bound.into_listener();
         if let Err(err) = listener.set_nonblocking(true) {
+            new_endpoint.remove_stale();
             return ServerMessage::Error {
                 code: "rename-failed".to_string(),
                 message: err.to_string(),
                 peer: None,
             };
         }
+        let pending_shared = match self.shares.prepare_rebind(&name) {
+            Ok(pending) => pending,
+            Err(err) => {
+                new_endpoint.remove_stale();
+                return ServerMessage::Error {
+                    code: "rename-failed".to_string(),
+                    message: err.to_string(),
+                    peer: None,
+                };
+            }
+        };
         // Session services run from the store being moved and were started with the old name, so
         // none may run across the move, and Windows cannot move a directory one is using. They come
         // back like after a restart, which also retires what they held.
         self.deployment_worker.take();
         self.stop_automation();
         if let Err(error) = self.deployments.rename(&name) {
+            new_endpoint.remove_stale();
+            if let Some((_, shared_endpoint)) = pending_shared {
+                shared_endpoint.remove_stale();
+            }
             self.restart_deployments();
             return ServerMessage::Error {
                 code: "rename-failed".into(),
@@ -95,6 +111,7 @@ impl SessionServer {
                 peer: None,
             };
         }
+        self.shares.commit_rebind(pending_shared);
         let retired = self.endpoint.replace(new_endpoint);
         self.pending_listener = Some((listener, retired));
         let previous = std::mem::replace(&mut self.session_name, name.clone());

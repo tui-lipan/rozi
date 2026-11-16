@@ -6400,7 +6400,7 @@ fn sleep_policy_reload_uses_host_config_and_requires_writable_controller() {
         .iter_mut()
         .find(|client| client.id == controller)
         .unwrap()
-        .read_only = true;
+        .access = protocol::ClientAccess::owner(true);
     server.handle_message(controller, ClientMessage::ReloadSleepPolicy);
     assert!(server.settings.keep_awake_while_agents_work);
     server
@@ -6408,7 +6408,7 @@ fn sleep_policy_reload_uses_host_config_and_requires_writable_controller() {
         .iter_mut()
         .find(|client| client.id == controller)
         .unwrap()
-        .read_only = false;
+        .access = protocol::ClientAccess::owner(false);
     server.handle_message(controller, ClientMessage::ReloadSleepPolicy);
     assert!(!server.settings.keep_awake_while_agents_work);
     crate::config::persist_session_flag("keep_awake_while_agents_work", true).unwrap();
@@ -8196,6 +8196,7 @@ fn every_pane_child_is_marked_as_running_in_a_rozi_terminal() {
 }
 
 mod handoff;
+mod sharing;
 mod transactions;
 
 fn media_test_server() -> SessionServer {

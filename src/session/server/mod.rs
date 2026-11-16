@@ -64,6 +64,7 @@ pub(crate) use resurrect::{
 };
 mod responses;
 mod runtime;
+mod sharing;
 mod shutdown;
 mod subscriptions;
 mod waits;
@@ -278,6 +279,7 @@ pub struct SessionServer {
     undelivered_ui_events: VecDeque<events::SessionEvent>,
     /// The pane mid-spawn, which raises no runtime events until it has been announced.
     spawning_pane: Option<PaneId>,
+    shares: sharing::Shares,
 }
 
 #[derive(Clone, Debug)]
@@ -986,7 +988,11 @@ struct ClientConn {
     /// The transport is closed, but already-decoded controls may still be behind a media fence.
     transport_closed: bool,
     label: Option<String>,
-    read_only: bool,
+    access: protocol::ClientAccess,
+    guest: Option<crate::platform::user::UserAccount>,
+    /// Whether this client's `Attach` requested `read_only: true`, preserved across live role
+    /// changes so a read-only guest attach never rises above `Viewer`.
+    requested_read_only: bool,
     /// Whether this client can open the paths this server's children write, which is what decides
     /// if a pane may hand out a frame by naming a file instead of pasting the pixels into the
     /// stream. False for an SSH attach, and until this client has attached at all.
@@ -1042,7 +1048,9 @@ impl ClientConn {
             attached: false,
             transport_closed: false,
             label: None,
-            read_only: false,
+            access: protocol::ClientAccess::OWNER,
+            guest: None,
+            requested_read_only: false,
             shares_filesystem: false,
             seed: None,
             close_after_flush: false,
@@ -1861,6 +1869,7 @@ impl SessionServer {
             notifications: VecDeque::new(),
             undelivered_ui_events: VecDeque::new(),
             spawning_pane: None,
+            shares: sharing::Shares::default(),
             settings,
         }
     }
@@ -1964,6 +1973,7 @@ impl SessionServer {
     ) -> io::Result<bool> {
         let iteration_started = Instant::now();
         let mut activity = self.accept_new(listener)?;
+        activity |= self.accept_shared()?;
         // Ordinary PTY output keeps its existing precedence. Commit completed media only after
         // attachments have been handled, then begin emitting it in this same iteration. A new
         // remote reader therefore cannot slip between choosing a file reference and its emission.
@@ -2066,6 +2076,7 @@ impl SessionServer {
         }
         self.sleep_policy = power::AgentSleepPolicy::default();
         self.discard_ephemeral_logs();
+        self.shares.close_listener();
         // Retire the discovery entry while this server still owns the listener/pipe instances. A
         // replacement can then claim the name without a later post-loop unlink being able to remove
         // that replacement's endpoint.
@@ -2589,6 +2600,7 @@ pub fn run_named_session_mode_with_nonce(
         return Err(resurrect::restore_refusal(name, &err));
     }
     let result = server.run_listener(listener);
+    server.shares.close_listener();
     // A rename replaces the endpoint, so retire the current one rather than the original. Claim the
     // stale name first: a same-name replacement that won the race must not have its endpoint removed.
     if let Some(endpoint) = &server.endpoint

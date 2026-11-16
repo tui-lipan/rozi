@@ -408,7 +408,28 @@ impl SessionServer {
                 )];
             }
         };
-        if session != self.session_name {
+        let guest_id = self
+            .client(client_id)
+            .and_then(|client| client.guest.as_ref().map(|g| g.id));
+        if let Some(uid) = guest_id
+            && self.shares.grant_for(uid).is_none()
+        {
+            return vec![(
+                Target::Sender,
+                ServerMessage::Error {
+                    code: crate::session::protocol::NOT_SHARED_ERROR_CODE.to_string(),
+                    message: "this session is not shared with your account".to_string(),
+                    peer: None,
+                },
+            )];
+        }
+        let session_matches = if guest_id.is_some() {
+            crate::session::naming::SessionAddress::parse(&session)
+                .is_some_and(|address| address.name == self.session_name)
+        } else {
+            session == self.session_name
+        };
+        if !session_matches {
             return vec![(
                 Target::Sender,
                 ServerMessage::Error {
@@ -439,17 +460,33 @@ impl SessionServer {
                 },
             )];
         }
+        let negotiated = protocol::Capabilities::negotiated(capabilities.as_ref());
         let reply = if matches!(request.command, ControlCommand::Subscribe { .. }) {
             ReplyTo::StreamingHeadless {
-                capabilities: protocol::Capabilities::negotiated(capabilities.as_ref()),
+                capabilities: negotiated.clone(),
                 effective_protocol: effective,
             }
         } else {
             ReplyTo::Headless {
-                capabilities: protocol::Capabilities::negotiated(capabilities.as_ref()),
+                capabilities: negotiated.clone(),
                 effective_protocol: effective,
             }
         };
+        if matches!(
+            request.command,
+            ControlCommand::ShareGrant { .. }
+                | ControlCommand::ShareRevoke { .. }
+                | ControlCommand::ShareList
+        ) && !negotiated.supports(protocol::Capability::SessionSharing)
+        {
+            return vec![(
+                Target::Sender,
+                reply.message(ControlResponse::error_with(
+                    ControlErrorCode::Unsupported,
+                    "this client did not negotiate session-sharing",
+                )),
+            )];
+        }
         self.serve_control(client_id, &reply, request)
     }
 
@@ -489,6 +526,25 @@ impl SessionServer {
         })
     }
 
+    fn client_access_for_control(&self, client_id: ClientId) -> protocol::ClientAccess {
+        let Some(client) = self.client(client_id) else {
+            // Direct unit-test calls to `handle_session_control` without a registered `ClientConn`
+            // act as the session owner.
+            return protocol::ClientAccess::OWNER;
+        };
+        if let Some(guest) = &client.guest {
+            if client.attached {
+                client.access
+            } else if let Some(grant) = self.shares.grant_for(guest.id) {
+                protocol::ClientAccess::guest(grant.role, false)
+            } else {
+                protocol::ClientAccess::guest(protocol::SessionRole::Viewer, true)
+            }
+        } else {
+            client.access
+        }
+    }
+
     /// Serve one control request whose answer goes to `reply`.
     ///
     /// Returns the answer plus whatever the command changed for everyone else. A command that
@@ -500,6 +556,21 @@ impl SessionServer {
         reply: &ReplyTo,
         mut request: ControlRequest,
     ) -> Vec<(Target, ServerMessage)> {
+        if !matches!(request.command, ControlCommand::Unknown) {
+            let access = self.client_access_for_control(client_id);
+            if !access.allows(request.command.required_permission()) {
+                return vec![(
+                    Target::Sender,
+                    reply.message(ControlResponse::error_with(
+                        ControlErrorCode::NotPermitted,
+                        format!(
+                            "permission denied: {} role cannot run this command",
+                            access.role
+                        ),
+                    )),
+                )];
+            }
+        }
         if let Err(response) = self.authorize_session_worker(client_id, &mut request) {
             return vec![(Target::Sender, reply.message(response))];
         }
@@ -879,6 +950,9 @@ impl SessionServer {
                 title,
                 level,
             } => self.session_notify(message, title, level),
+            ControlCommand::ShareGrant { user, role } => self.share_grant(&user, role, broadcasts),
+            ControlCommand::ShareRevoke { user } => self.share_revoke(user.as_deref(), broadcasts),
+            ControlCommand::ShareList => self.share_list(),
             // Every remaining variant was refused above by `session_control_unsupported`, or is
             // held for its answer by `serve_control`, as deployments are.
             other => ControlResponse::error(

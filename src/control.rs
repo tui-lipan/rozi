@@ -160,6 +160,9 @@ impl ControlCommand {
             Self::AgentAsk {
                 follows: Some(_), ..
             } => Some(crate::session::protocol::Capability::AgentConversations),
+            Self::AgentAttach { .. } => {
+                Some(crate::session::protocol::Capability::AgentAttachments)
+            }
             Self::AgentReplyLater { .. }
             | Self::AgentAsk {
                 parent: Some(_), ..
@@ -807,6 +810,20 @@ pub enum ControlCommand {
     },
     /// Cancel a request the caller made.
     AgentCancel { id: String },
+    /// Store one chunk of a file in the session, for a request to one of its agents. `transfer`
+    /// is the caller's id for the file. The chunk at `offset` 0 starts it, each later one must
+    /// continue where the stored file ends, and `last` finishes it: the answer then carries the
+    /// file's path on the session's host. The session keeps the file until it stops.
+    AgentAttach {
+        transfer: u64,
+        name: String,
+        size: u64,
+        offset: u64,
+        /// Base64 of the bytes in this chunk.
+        data: String,
+        #[serde(default)]
+        last: bool,
+    },
     /// Report an agent's state from its own integration, for a pane.
     AgentReport {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1983,6 +2000,21 @@ pub enum ExtensionDeploymentStatus {
     Deployed,
     /// Recorded, but its files no longer verify. The reason says what changed.
     Unavailable,
+}
+
+/// The most file bytes one `agent-attach` chunk carries. Each chunk over `--remote` is an SSH
+/// round trip of its own, so chunks are large, and still well inside [`MAX_CONTROL_MESSAGE`] once
+/// encoded.
+pub const AGENT_ATTACH_CHUNK_BYTES: usize = 2 * 1024 * 1024;
+
+/// One chunk's answer to `agent-attach`: how much of the file the session holds, and once the
+/// last chunk is in, where it keeps the file.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct AgentAttachmentUpload {
+    pub received: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// One chunk's answer to `extensions-deploy`.
@@ -3332,7 +3364,8 @@ mod tests {
                 crate::session::protocol::Capability::AgentReplyLater
                 | crate::session::protocol::Capability::AgentRequestUpdates
                 | crate::session::protocol::Capability::PaneProgramTitle => "0.0.48",
-                crate::session::protocol::Capability::AgentConversations => "0.0.50",
+                crate::session::protocol::Capability::AgentConversations
+                | crate::session::protocol::Capability::AgentAttachments => "0.0.50",
                 _ => "0.0.44",
             };
             assert_eq!(cap.introduced_in(), expected, "{cap}");

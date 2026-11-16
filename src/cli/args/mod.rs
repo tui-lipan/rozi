@@ -710,6 +710,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     format: output_format,
                     await_ms,
                     require_reply,
+                    attachments,
                 } = agents::parse_agents(args)?;
                 let endpoint = control_endpoint(&cli, socket, &command)?;
                 let request = control_request(command);
@@ -734,17 +735,20 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     output_format,
                     output: None,
                 };
-                return Ok(if await_ms.is_some() || require_reply {
-                    ParsedCli::AgentAnswer(
-                        control,
-                        crate::cli::control::AnswerOptions {
-                            ask_then_await_ms: await_ms,
-                            require_reply,
-                        },
-                    )
-                } else {
-                    ParsedCli::Control(control)
-                });
+                return Ok(
+                    if await_ms.is_some() || require_reply || !attachments.is_empty() {
+                        ParsedCli::AgentAnswer(
+                            control,
+                            crate::cli::control::AnswerOptions {
+                                ask_then_await_ms: await_ms,
+                                require_reply,
+                                attachments: attachments.into_iter().map(PathBuf::from).collect(),
+                            },
+                        )
+                    } else {
+                        ParsedCli::Control(control)
+                    },
+                );
             }
             "record" => {
                 let args = iter.collect::<Vec<_>>();

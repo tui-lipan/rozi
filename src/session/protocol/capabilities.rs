@@ -61,11 +61,15 @@ pub enum Capability {
     /// The server groups agent requests into conversations: `AgentRequestInfo::conversation`,
     /// and `agent-ask` with `follows`, which joins an asker with no agent to an earlier one.
     AgentConversations,
+    /// The server stores files sent with `agent-attach`, so a request can carry them to an agent
+    /// on another host.
+    AgentAttachments,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 11] = [
+    pub const ALL: [Capability; 12] = [
+        Capability::AgentAttachments,
         Capability::AgentConversations,
         Capability::AgentReplyLater,
         Capability::AgentRequestUpdates,
@@ -93,6 +97,7 @@ impl Capability {
             Capability::AgentRequestUpdates => "agent-request-updates",
             Capability::PaneProgramTitle => "pane-program-title",
             Capability::AgentConversations => "agent-conversations",
+            Capability::AgentAttachments => "agent-attachments",
         }
     }
 
@@ -107,7 +112,7 @@ impl Capability {
             Self::DragAndDrop => "0.0.46",
             Self::AgentRequests => "0.0.47",
             Self::AgentReplyLater | Self::AgentRequestUpdates | Self::PaneProgramTitle => "0.0.48",
-            Self::AgentConversations => "0.0.50",
+            Self::AgentConversations | Self::AgentAttachments => "0.0.50",
         }
     }
 
@@ -194,6 +199,11 @@ pub const GATED_VOCABULARY: &[GatedValue] = &[
         vocabulary: "ControlRequest",
         value: "agent-reply-later",
         capability: Capability::AgentReplyLater,
+    },
+    GatedValue {
+        vocabulary: "ControlRequest",
+        value: "agent-attach",
+        capability: Capability::AgentAttachments,
     },
 ];
 

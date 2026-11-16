@@ -134,7 +134,8 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::AgentAwait { .. }
         | ControlCommand::AgentRequest { .. }
         | ControlCommand::AgentRequests { .. }
-        | ControlCommand::AgentCancel { .. } => None,
+        | ControlCommand::AgentCancel { .. }
+        | ControlCommand::AgentAttach { .. } => None,
         ControlCommand::ListAttachedPanes => Some(
             "list-panes --scope attached needs a UI; a session server knows only its own panes",
         ),
@@ -261,7 +262,8 @@ pub fn attached_control_refusal(
         | ControlCommand::AgentAwait { .. }
         | ControlCommand::AgentRequest { .. }
         | ControlCommand::AgentRequests { .. }
-        | ControlCommand::AgentCancel { .. } => Some((
+        | ControlCommand::AgentCancel { .. }
+        | ControlCommand::AgentAttach { .. } => Some((
             ControlErrorCode::Unsupported,
             "agent requests go to the calling pane's own session server, not through a UI",
         )),
@@ -554,6 +556,25 @@ impl SessionServer {
                     id,
                     *timeout_ms,
                     reply.clone(),
+                )),
+                ControlCommand::AgentAttach {
+                    transfer,
+                    name,
+                    size,
+                    offset,
+                    data,
+                    last,
+                } => Some(self.agent_attachment_chunk(
+                    client_id,
+                    reply.clone(),
+                    super::attachments::AgentAttachmentChunk {
+                        transfer: *transfer,
+                        name,
+                        size: *size,
+                        offset: *offset,
+                        data,
+                        last: *last,
+                    },
                 )),
                 ControlCommand::RecordStart { .. }
                 | ControlCommand::RecordStop { .. }

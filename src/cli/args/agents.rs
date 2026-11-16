@@ -44,7 +44,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Safely submit a prompt",
             ),
             row(
-                "ask --target <PANE> [--for <ID> | --follows <ID>] -- <TEXT>",
+                "ask --target <PANE> [--for|--follows <ID>] [--attach <FILE>] -- <TEXT>",
                 "Ask another agent; returns the request at once",
             ),
             row(
@@ -128,6 +128,10 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "    --require-reply",
                 "Exit 3 unless the agent answered with reply",
             ),
+            row(
+                "    --attach <FILE>",
+                "Send a file with the request (16 MiB, 16 files)",
+            ),
             row("    --state <STATE>", "working, blocked, idle, or done"),
             row("    --reason <TEXT>", "Why the agent is in this state"),
             row("    --native-session <ID>", "The agent's own session id"),
@@ -161,7 +165,12 @@ pub(super) struct ParsedAgents {
     /// `ask --wait` or `await` with `--require-reply`: an answer the agent did not give with
     /// `agents reply` fails the command.
     pub(super) require_reply: bool,
+    /// `ask --attach`: files to send with the request, as given.
+    pub(super) attachments: Vec<String>,
 }
+
+/// As many files as one paste can carry.
+const MAX_ATTACHMENTS: usize = 16;
 
 pub(super) fn parse_agents(mut args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
     if args.first().map(String::as_str) == Some("ask") {
@@ -178,6 +187,7 @@ pub(super) fn parse_agents(mut args: Vec<String>) -> std::result::Result<ParsedA
         format,
         await_ms: None,
         require_reply,
+        attachments: Vec::new(),
     })
 }
 
@@ -500,11 +510,20 @@ fn parse_ask(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
     let mut parent = None;
     let mut follows = None;
     let mut require_reply = false;
+    let mut attachments = Vec::new();
     let mut iter = args.into_iter();
     while let Some(argument) = iter.next() {
         match argument.as_str() {
             "--target" | "--ref" => set_target(&mut target, &argument, &mut iter)?,
             "--format" => set_format(&mut format, &mut iter, "agents ask")?,
+            "--attach" => {
+                attachments.push(super::require_value(&mut iter, "--attach requires a file")?);
+                if attachments.len() > MAX_ATTACHMENTS {
+                    return Err(format!(
+                        "agents ask takes at most {MAX_ATTACHMENTS} files with --attach"
+                    ));
+                }
+            }
             "--follows" => {
                 let id = super::require_value(&mut iter, "--follows requires a request id")?;
                 if follows.replace(id).is_some() {
@@ -568,6 +587,7 @@ fn parse_ask(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
         format,
         await_ms,
         require_reply,
+        attachments,
     })
 }
 

@@ -1718,7 +1718,7 @@ impl SessionServer {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn handle_query(
         &mut self,
         session: String,

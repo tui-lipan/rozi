@@ -59,12 +59,12 @@ impl Shares {
         ShareState { endpoint, grants }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn set_test_shared_dir(&mut self, dir: PathBuf) {
         self.test_shared_dir = Some(dir);
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn endpoint_path(&self) -> Option<&std::path::Path> {
         self.endpoint.as_ref().map(IpcEndpoint::path)
     }

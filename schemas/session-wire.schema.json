@@ -867,6 +867,24 @@
           "default": false,
           "description": "True while this client has an outstanding request for the layout-control lease that the\ncontroller has not yet granted or declined. Broadcast in the roster so every client can badge\nthe pending request; cleared when control moves to it or the controller declines.",
           "type": "boolean"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionRole"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What this client may do, as the server enforces it. `read_only` is `role == Viewer`.\nAbsent from a server without [`super::Capability::SessionSharing`]."
+        },
+        "user": {
+          "description": "The operating-system account of a client that is not the session owner's, as the server\nauthenticated it. `None` for the owner's own clients.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -3809,6 +3827,60 @@
           "required": [
             "cmd",
             "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Share this session with another operating-system account, or change the role of one it\nis already shared with. Answers with the [`ShareState`] after the change.",
+          "properties": {
+            "cmd": {
+              "const": "share-grant",
+              "type": "string"
+            },
+            "role": {
+              "$ref": "#/$defs/SessionRole"
+            },
+            "user": {
+              "description": "The account's name or numeric id on the session's host.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "user",
+            "role"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Stop sharing this session with one account, or with every account when `user` is absent,\nand disconnect its clients. Answers with the [`ShareState`] after the change.",
+          "properties": {
+            "cmd": {
+              "const": "share-revoke",
+              "type": "string"
+            },
+            "user": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Report who this session is shared with, as a [`ShareState`].",
+          "properties": {
+            "cmd": {
+              "const": "share-list",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
           ],
           "type": "object"
         },
@@ -7777,6 +7849,31 @@
       },
       "type": "object"
     },
+    "SessionRole": {
+      "description": "What a client may do in a session. Each role includes the ones before it.",
+      "oneOf": [
+        {
+          "const": "viewer",
+          "description": "Sees panes and layout. Cannot type, change the layout, or hold layout control.",
+          "type": "string"
+        },
+        {
+          "const": "editor",
+          "description": "Also types into panes. Typing runs commands as the session owner.",
+          "type": "string"
+        },
+        {
+          "const": "controller",
+          "description": "Also may hold layout control.",
+          "type": "string"
+        },
+        {
+          "const": "owner",
+          "description": "Also stops, renames, and shares the session. Only the owner's own account has this role.",
+          "type": "string"
+        }
+      ]
+    },
     "SessionSubscribeRecord": {
       "description": "Typed records streamed by a session subscription.",
       "oneOf": [
@@ -9108,7 +9205,8 @@
     "graphics-root-frame-edits",
     "pane-program-title",
     "project-summaries",
-    "runtime-metrics"
+    "runtime-metrics",
+    "session-sharing"
   ],
   "x-rozi-shared-layout-version": 4,
   "x-rozi-wire-generation": 52,

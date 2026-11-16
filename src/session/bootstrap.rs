@@ -85,6 +85,10 @@ pub(crate) fn run_attach(
 
     let read_only = request.access.is_read_only();
     let name = request.name;
+    if let Some(message) = shared_target_mode_error(&name, request.mode) {
+        link.send(Msg::SessionAttachFailed { epoch, message });
+        return;
+    }
     let proof =
         crate::session::protocol::AttachProof::default().with_handoff_token(request.handoff_token);
     if let Some(target) = request.remote {
@@ -207,14 +211,22 @@ fn attach_local(
         reconnect,
     } = policy;
 
-    let Ok(path) = super::server::session_socket_path(&name) else {
-        link.send(Msg::SessionAttachFailed {
-            epoch,
-            message: format!("Invalid session name `{name}`"),
-        });
-        return;
+    let shared_target = crate::session::naming::is_shared_target(&name);
+    let autostart = autostart && !shared_target;
+    let create_only = create_only && !shared_target;
+
+    let endpoint = match super::server::attach_endpoint(&name) {
+        Ok(endpoint) => endpoint,
+        Err(err) => {
+            let message = if err.kind() == std::io::ErrorKind::InvalidInput {
+                format!("Invalid session name `{name}`")
+            } else {
+                format!("Could not attach to `{name}`: {err}")
+            };
+            link.send(Msg::SessionAttachFailed { epoch, message });
+            return;
+        }
     };
-    let endpoint = crate::platform::ipc::IpcEndpoint::at_path(&path);
     let deadline = Instant::now() + Duration::from_secs(5);
     let reconnect_deadline = Instant::now() + LOCAL_RECONNECT_BUSY_DEADLINE;
     let mut spawned = false;
@@ -287,10 +299,17 @@ fn attach_local(
                     });
                     return;
                 }
+                if !autostart {
+                    link.send(Msg::SessionAttachFailed {
+                        epoch,
+                        message: format!("Could not attach to `{name}`: {err}"),
+                    });
+                    return;
+                }
                 if !spawned && should_autostart_session(&err) {
                     spawned = true;
-                    if path.exists() {
-                        let _ = std::fs::remove_file(&path);
+                    if endpoint.path().exists() {
+                        let _ = std::fs::remove_file(endpoint.path());
                     }
                     let exe = match std::env::current_exe() {
                         Ok(exe) => exe,
@@ -845,7 +864,11 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 read_only: clients
                     .iter()
                     .find(|client| client.id == client_id)
-                    .is_some_and(|client| client.read_only),
+                    .is_some_and(|client| {
+                        client.role.map_or(client.read_only, |role| {
+                            role == protocol::SessionRole::Viewer
+                        })
+                    }),
                 clients,
                 input_locked,
                 allow_takeover,
@@ -1059,6 +1082,30 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             {
                 Msg::SessionEvicted { epoch, message }
             }
+            ServerMessage::Error { code, message, .. }
+                if code == crate::session::protocol::PERMISSION_DENIED_ERROR_CODE =>
+            {
+                Msg::SessionError {
+                    epoch,
+                    message: plain_access_error(
+                        &message,
+                        &code,
+                        "Your role in this session does not allow that",
+                    ),
+                }
+            }
+            ServerMessage::Error { code, message, .. }
+                if code == crate::session::protocol::NOT_SHARED_ERROR_CODE =>
+            {
+                Msg::SessionError {
+                    epoch,
+                    message: plain_access_error(
+                        &message,
+                        &code,
+                        "This session is not shared with you",
+                    ),
+                }
+            }
             ServerMessage::AttachmentAck { .. } => Msg::RefreshPaintLayers,
             ServerMessage::Error { message, .. } => Msg::SessionError { epoch, message },
             ServerMessage::Renamed { session } => Msg::SessionRenamed { epoch, session },
@@ -1145,6 +1192,30 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 server_now_unix_ms,
             },
         },
+    }
+}
+
+fn plain_access_error(message: &str, code: &str, fallback: &str) -> String {
+    let trimmed = message.trim();
+    if trimmed.is_empty() || trimmed.contains(code) {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn shared_target_mode_error(name: &str, mode: crate::state::AttachMode) -> Option<String> {
+    use crate::state::AttachMode;
+
+    if crate::session::naming::is_shared_target(name)
+        && matches!(
+            mode,
+            AttachMode::Create | AttachMode::Recreate | AttachMode::JoinOrStart
+        )
+    {
+        Some(format!("Cannot start another user's session `{name}`"))
+    } else {
+        None
     }
 }
 
@@ -1275,5 +1346,48 @@ mod tests {
         ));
         finish_cancelled_remote_attach(epoch);
         assert!(!remote_attach_cancelled(epoch));
+    }
+
+    #[test]
+    fn shared_target_refuses_create_or_join_or_start_and_maps_access_errors() {
+        for mode in [
+            crate::state::AttachMode::Create,
+            crate::state::AttachMode::Recreate,
+            crate::state::AttachMode::JoinOrStart,
+        ] {
+            let err = shared_target_mode_error("alice/dev", mode)
+                .expect("guest cannot start or recreate another user's session");
+            assert!(err.contains("another user's session"), "{mode:?}: {err}");
+        }
+        assert_eq!(
+            shared_target_mode_error("alice/dev", crate::state::AttachMode::Join),
+            None
+        );
+
+        let Msg::SessionError { message, .. } = server_message_to_msg(
+            7,
+            Frame::Control(ServerMessage::Error {
+                code: super::protocol::PERMISSION_DENIED_ERROR_CODE.to_string(),
+                message: "guest lacks permission".to_string(),
+                peer: None,
+            }),
+        ) else {
+            panic!("expected SessionError");
+        };
+        assert_eq!(message, "guest lacks permission");
+        assert!(!message.contains(super::protocol::PERMISSION_DENIED_ERROR_CODE));
+
+        let Msg::SessionError { message, .. } = server_message_to_msg(
+            7,
+            Frame::Control(ServerMessage::Error {
+                code: super::protocol::NOT_SHARED_ERROR_CODE.to_string(),
+                message: String::new(),
+                peer: None,
+            }),
+        ) else {
+            panic!("expected SessionError");
+        };
+        assert!(message.contains("not shared"), "{message}");
+        assert!(!message.contains(super::protocol::NOT_SHARED_ERROR_CODE));
     }
 }

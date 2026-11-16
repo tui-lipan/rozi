@@ -247,6 +247,13 @@ pub(crate) fn run_new_detached_session_cli(
     resurrect: bool,
     remote: Option<&str>,
 ) -> Result<()> {
+    if session::naming::is_shared_target(name) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("cannot create another user's session `{name}`"),
+        )
+        .into());
+    }
     let Some(remote) = remote else {
         session::server::create_detached_session(name, resurrect)?;
         return Ok(());
@@ -264,6 +271,13 @@ pub(crate) fn run_restart_session_cli(
     resurrect: bool,
     remote: Option<&str>,
 ) -> Result<()> {
+    if session::naming::is_shared_target(name) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("cannot restart another user's session `{name}`"),
+        )
+        .into());
+    }
     let Some(remote) = remote else {
         session::server::restart_named_session(name, resurrect)?;
         return Ok(());
@@ -278,6 +292,13 @@ pub(crate) fn run_restart_session_cli(
 }
 
 pub(crate) fn run_upgrade_session_cli(name: &str, remote: Option<&str>) -> Result<()> {
+    if session::naming::is_shared_target(name) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("cannot upgrade another user's session `{name}`"),
+        )
+        .into());
+    }
     let Some(remote) = remote else {
         use session::discovery::{ReleaseOrder, SessionRelease};
         let current = env!("CARGO_PKG_VERSION");
@@ -318,6 +339,13 @@ pub(crate) fn run_upgrade_session_cli(name: &str, remote: Option<&str>) -> Resul
 }
 
 pub(crate) fn run_kill_session_cli(name: &str, remote: Option<&str>) -> Result<()> {
+    if session::naming::is_shared_target(name) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("cannot kill another user's session `{name}`"),
+        )
+        .into());
+    }
     if !session::discovery::valid_attach_target(name) {
         return Err(
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid session name").into(),

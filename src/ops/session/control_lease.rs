@@ -40,17 +40,19 @@ pub(crate) fn nudge_if_follower(ctx: &mut Context<AppRoot>) -> bool {
         .and_then(|shared| shared.controller)
         .map(|id| format!("client {id}"))
         .unwrap_or_else(|| "another client".to_string());
-    // Advertise the live request binding so the hint tracks any `[keys]` override.
-    let allow_takeover = ctx
-        .state
-        .current()
-        .shared
-        .as_ref()
-        .is_some_and(|shared| shared.allow_takeover);
-    let verb = if allow_takeover { "take" } else { "request" };
-    let how = crate::commands::command_prefix_chord(ctx, "request-control")
-        .map(|chord| format!("{chord} to {verb} control"))
-        .unwrap_or_else(|| format!("Try to {verb} control"));
+    let shared = ctx.state.current().shared.as_ref();
+    let how = if shared.is_some_and(|shared| shared.read_only) {
+        "read-only".to_string()
+    } else if shared.is_some_and(crate::state::SharedSessionState::is_editor) {
+        "shared with you as editor".to_string()
+    } else {
+        // Advertise the live request binding so the hint tracks any `[keys]` override.
+        let allow_takeover = shared.is_some_and(|shared| shared.allow_takeover);
+        let verb = if allow_takeover { "take" } else { "request" };
+        crate::commands::command_prefix_chord(ctx, "request-control")
+            .map(|chord| format!("{chord} to {verb} control"))
+            .unwrap_or_else(|| format!("Try to {verb} control"))
+    };
     crate::pane::pty_events::notify_on(
         ctx,
         crate::state::ToastChannel::LayoutControl,
@@ -78,6 +80,10 @@ pub(crate) fn request_control(ctx: &mut Context<AppRoot>) -> Update {
         .shared
         .as_ref()
         .expect("writable session checked");
+    if shared.is_editor() {
+        crate::pane::pty_events::notify_info(ctx, "shared with you as editor");
+        return Update::full();
+    }
     let already_requested = shared
         .clients
         .iter()
@@ -181,8 +187,8 @@ pub(crate) fn apply_attach_policy_if_occupied(
     let Some(shared) = ctx.state.current().shared.as_ref() else {
         return;
     };
-    // A read-only attach already said it is not here to drive the layout.
-    if shared.read_only || shared.is_controller() {
+    // A viewer or editor already cannot drive the layout.
+    if !shared.can_request_control() || shared.is_controller() {
         return;
     }
     let Some(controller) = shared.controller else {
@@ -312,6 +318,11 @@ pub(crate) fn grant_control(ctx: &mut Context<AppRoot>, index: usize) -> Update 
         nudge_if_follower(ctx);
     } else if target.read_only {
         crate::pane::pty_events::notify_info(ctx, "Read-only clients cannot control the layout");
+    } else if target
+        .role
+        .is_some_and(|role| role < crate::session::protocol::SessionRole::Controller)
+    {
+        crate::pane::pty_events::notify_info(ctx, "Editor clients cannot control the layout");
     } else if target.id != shared.client_id
         && let Some(client) = ctx.state.current().session_client.as_ref()
     {
@@ -336,7 +347,12 @@ pub(crate) fn grant_control_to_requester(ctx: &mut Context<AppRoot>) -> Update {
         .clients
         .iter()
         .filter(|client| {
-            client.requesting_control && !client.read_only && client.id != shared.client_id
+            client.requesting_control
+                && !client.read_only
+                && client
+                    .role
+                    .is_none_or(|role| role >= crate::session::protocol::SessionRole::Controller)
+                && client.id != shared.client_id
         })
         .min_by_key(|client| client.id)
         .map(|client| client.id);

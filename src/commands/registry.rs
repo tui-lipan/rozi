@@ -393,6 +393,9 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
         Action::GrantControl => shared
             .is_some_and(|shared| shared.is_controller() && shared.has_pending_control_requests()),
         Action::ApplyProfile => crate::ops::profile::can_replace_session(state),
+        Action::RenameSession | Action::KillSession | Action::RestartSession => {
+            !state.current().is_guest_session()
+        }
         Action::UpgradeSession => can_upgrade_attached_session(state),
         Action::UpdateRozi => crate::ops::update_check::update_offered_here(state),
         Action::RestartRozi => !crate::ops::self_update::in_progress(state),
@@ -411,6 +414,7 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
 pub(crate) fn can_upgrade_attached_session(state: &State) -> bool {
     state.current().session_attached
         && !state.is_ephemeral_session()
+        && !state.current().is_guest_session()
         && state
             .current()
             .session_client
@@ -423,6 +427,15 @@ pub(crate) fn can_upgrade_attached_session(state: &State) -> bool {
 /// Why `action` is disabled on the currently attached session, or `None` when the session supports
 /// it (or no session is attached).
 pub(crate) fn action_disabled_reason(action: Action, state: &State) -> Option<String> {
+    if action == Action::RequestControl
+        && state
+            .current()
+            .shared
+            .as_ref()
+            .is_some_and(crate::state::SharedSessionState::is_editor)
+    {
+        return Some("shared with you as editor".to_string());
+    }
     action.disabled_reason_for_capabilities(
         state
             .current()

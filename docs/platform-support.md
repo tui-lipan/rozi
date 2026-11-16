@@ -55,9 +55,11 @@ See [Remote sessions](remote.md) for differences between local and SSH-attached 
 
 Set `ROZI_CONFIG` to use a different configuration file on any platform.
 
-rozi restricts local session data and the local connections between clients and session servers to
-the current operating system user. Remote sessions use SSH authentication; rozi does not expose
-local sessions over the network.
+rozi keeps local session data and private connections between clients and session servers restricted
+to the owning operating-system user. On Linux and macOS, the session owner can share a named
+session with selected local accounts via `rozi sessions share`; cross-user session sharing is
+unsupported on Windows. Remote sessions use SSH authentication; rozi does not expose local sessions
+over the network.
 
 ## Shell integration
 

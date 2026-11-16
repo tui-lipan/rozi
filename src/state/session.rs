@@ -509,6 +509,8 @@ pub struct SharedSessionState {
     /// Whether writable followers may immediately take the layout-control lease.
     pub allow_takeover: bool,
     pub read_only: bool,
+    /// This client's server-enforced role (`None` on servers predating `SessionSharing`).
+    pub role: Option<crate::session::protocol::SessionRole>,
     /// The controller's canonical pane canvas in cells (excluding the workbar). Followers letterbox
     /// to this; `None` until the first layout with a canvas is seen.
     pub canonical_canvas: Option<(u16, u16)>,
@@ -540,6 +542,7 @@ impl SharedSessionState {
             input_locked: false,
             allow_takeover: false,
             read_only: false,
+            role: None,
             canonical_canvas: None,
             last_committed_layout: None,
             orphan_output: OrphanOutputStore::default(),
@@ -554,6 +557,43 @@ impl SharedSessionState {
     /// True when this client currently holds the layout-control lease.
     pub fn is_controller(&self) -> bool {
         self.controller == Some(self.client_id)
+    }
+
+    /// This client's own entry in the session roster, when the server included it.
+    pub fn me(&self) -> Option<&crate::session::protocol::ClientInfo> {
+        self.clients
+            .iter()
+            .find(|client| client.id == self.client_id)
+    }
+
+    /// Replace the roster and mirror this client's role and read-only standing from it.
+    pub fn sync_roster(
+        &mut self,
+        clients: Vec<crate::session::protocol::ClientInfo>,
+        input_locked: bool,
+        allow_takeover: bool,
+    ) {
+        self.clients = clients;
+        self.input_locked = input_locked;
+        self.allow_takeover = allow_takeover;
+        if let Some(me) = self.me().cloned() {
+            self.role = me.role;
+            self.read_only = me.role.map_or(me.read_only, |role| {
+                role == crate::session::protocol::SessionRole::Viewer
+            });
+        }
+    }
+
+    pub fn is_editor(&self) -> bool {
+        self.role == Some(crate::session::protocol::SessionRole::Editor)
+    }
+
+    pub fn is_guest(&self) -> bool {
+        self.me().is_some_and(|client| client.user.is_some())
+    }
+
+    pub fn can_request_control(&self) -> bool {
+        !self.read_only && !self.is_editor()
     }
 
     /// How many attached clients are actually using the session, ignoring the ones parked in the

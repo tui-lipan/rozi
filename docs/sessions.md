@@ -35,7 +35,11 @@ rozi sessions new api --cwd ~/src/api  # first pane starts in ~/src/api
 rozi sessions new scratch --detach    # start in the background, without a UI
 rozi sessions new tests --detach --no-resurrect  # ... and never restore it
 rozi sessions new scratch --detach --remote workbox  # ... on another machine
+rozi sessions attach alice/dev       # attach to a session shared by another local user
 rozi sessions list
+rozi sessions share dev --user bob --role editor
+rozi sessions shares dev              # list accounts a session is shared with
+rozi sessions unshare dev --user bob  # or --all
 rozi sessions restart dev             # restart a running session, ending its programs
 rozi sessions upgrade dev             # restart it on this release from its snapshot
 rozi sessions kill dev

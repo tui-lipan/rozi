@@ -250,6 +250,7 @@ pub(crate) fn attached(
         .take()
         .expect("pending attach checked above");
     let reconnect = pending.request.is_reconnect();
+    let requested_read_only = pending.request.access.is_read_only();
     let Some(client) = pending.client else {
         return Update::none();
     };
@@ -272,7 +273,7 @@ pub(crate) fn attached(
     ctx.state.current_mut().origin = origin;
     ctx.state.current_mut().connection = crate::state::ConnectionState::Connected;
     ctx.state.current_mut().remote_session_lost = false;
-    ctx.state.current_mut().reconnect_read_only = read_only;
+    ctx.state.current_mut().reconnect_read_only = requested_read_only;
     ctx.state.current_mut().session_attached = true;
     // Working somewhere sets the scope you come back to: killing this session leaves the launcher
     // pointed at the same machine rather than silently back on this one.
@@ -291,10 +292,9 @@ pub(crate) fn attached(
     shared.layout_rev = layout_rev;
     shared.assumed_rev = layout_rev;
     shared.controller = controller;
-    shared.clients = clients;
-    shared.input_locked = input_locked;
-    shared.allow_takeover = allow_takeover;
     shared.read_only = read_only;
+    shared.sync_roster(clients, input_locked, allow_takeover);
+    let effective_read_only = shared.read_only;
     shared.pane_scrollback = panes
         .iter()
         .map(|pane| ((pane.pane_id, pane.generation), pane.scrollback))
@@ -312,7 +312,7 @@ pub(crate) fn attached(
                     "controller",
                     controller.map(|id| id.to_string()).unwrap_or_default(),
                 ),
-                ("read_only", read_only.to_string()),
+                ("read_only", effective_read_only.to_string()),
             ],
         ),
     );
@@ -540,17 +540,19 @@ pub(crate) fn error(ctx: &mut Context<AppRoot>, epoch: u64, message: String) -> 
 pub(crate) fn renamed(ctx: &mut Context<AppRoot>, epoch: u64, session: String) -> Update {
     if epoch != ctx.state.runtime_epoch {
         if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
-            attachment.session_name = Some(session);
+            let qualified = attachment
+                .session_name
+                .as_deref()
+                .map(|current| crate::session::naming::with_owner_of(current, &session))
+                .unwrap_or(session);
+            attachment.session_name = Some(qualified);
             ctx.state.sidebar.invalidate_sessions();
         }
         return Update::none();
     }
-    let previous = ctx
-        .state
-        .current_mut()
-        .session_name
-        .replace(session.clone())
-        .unwrap_or_default();
+    let previous = ctx.state.current().session_name.clone().unwrap_or_default();
+    let session = crate::session::naming::with_owner_of(&previous, &session);
+    ctx.state.current_mut().session_name = Some(session.clone());
     // The picker a rename was raised from reopened before the server confirmed it, so its row still
     // carries the old name; relabel it now rather than on the next discovery sweep.
     if let Some(row) = crate::ops::session::discovery::attachment_session_row(ctx.state.current()) {

@@ -191,6 +191,18 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "Stop a session and all of its panes",
             ),
             row(
+                "sessions share <NAME> --user <USER>",
+                "Share a session with another OS user",
+            ),
+            row(
+                "sessions unshare <NAME> (--user <U>|--all)",
+                "Revoke session sharing for users",
+            ),
+            row(
+                "sessions shares <NAME> [--format json]",
+                "List who a session is shared with",
+            ),
+            row(
                 "worktrees list|create|open|remove",
                 "Manage Git checkouts and their sessions",
             ),

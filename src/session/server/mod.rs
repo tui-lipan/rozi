@@ -2497,6 +2497,27 @@ pub fn session_endpoint(name: &str) -> io::Result<IpcEndpoint> {
     ))
 }
 
+/// Resolve an attach target (`name` or `owner/name`) to its IPC endpoint.
+///
+/// Bare targets route to the owner's private runtime directory through [`session_endpoint`].
+/// Qualified `owner/name` targets resolve the owner account and verify its shared directory before
+/// deriving the socket path.
+pub fn attach_endpoint(target: &str) -> io::Result<IpcEndpoint> {
+    let address = crate::session::naming::SessionAddress::parse(target)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid session name"))?;
+    let Some(owner) = address.owner.as_deref() else {
+        return session_endpoint(&address.name);
+    };
+    let account = crate::platform::user::lookup_user(owner)?.ok_or_else(|| {
+        io::Error::new(io::ErrorKind::NotFound, format!("unknown user `{owner}`"))
+    })?;
+    let shared_dir = crate::platform::paths::verified_shared_dir(account.id)?;
+    Ok(EndpointRegistry::shared_session_endpoint(
+        &shared_dir,
+        &address.name,
+    ))
+}
+
 pub fn bind_session_socket(name: &str) -> io::Result<(IpcListener, IpcEndpoint)> {
     let endpoint = session_endpoint(name)?;
     let bound = endpoint.bind()?;

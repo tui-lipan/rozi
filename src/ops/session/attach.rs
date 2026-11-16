@@ -578,6 +578,14 @@ pub(crate) fn park_current_and_install(
 /// and does not auto-attach elsewhere: the client lands on the session picker when another choice
 /// remains, otherwise the sessionless launcher.
 pub(crate) fn kill_current_session(ctx: &mut Context<AppRoot>) -> Update {
+    if ctx.state.current().is_guest_session() {
+        crate::pane::pty_events::notify_error(
+            ctx,
+            "Kill failed",
+            "Only the session owner can kill this session",
+        );
+        return Update::full();
+    }
     let killed_identity = ctx
         .state
         .current()
@@ -613,6 +621,14 @@ fn end_server_for_restart(client: &crate::session::client::SessionClient, epheme
 /// Shut the current session's server down and immediately recreate it, keeping the client attached
 /// to the replacement. Distinct from kill (which leaves the client sessionless).
 pub(crate) fn restart_current_session(ctx: &mut Context<AppRoot>) -> Update {
+    if ctx.state.current().is_guest_session() {
+        crate::pane::pty_events::notify_error(
+            ctx,
+            "Restart failed",
+            "Only the session owner can restart this session",
+        );
+        return Update::full();
+    }
     let Some(name) = ctx.state.current().session_name.clone() else {
         crate::pane::pty_events::notify_info(ctx, "Not attached to a session");
         return Update::full();
@@ -642,6 +658,14 @@ pub(crate) fn restart_current_session(ctx: &mut Context<AppRoot>) -> Update {
 /// re-attach to the restored session.
 pub(crate) fn upgrade_current_session(ctx: &mut Context<AppRoot>) -> Update {
     if !crate::commands::can_upgrade_attached_session(&ctx.state) {
+        return Update::full();
+    }
+    if ctx.state.current().is_guest_session() {
+        crate::pane::pty_events::notify_error(
+            ctx,
+            "Upgrade failed",
+            "Only the session owner can upgrade this session",
+        );
         return Update::full();
     }
     let Some(name) = ctx.state.current().session_name.clone() else {
@@ -864,11 +888,19 @@ fn attach_or_create_by_name(
     autostart: bool,
     seed_default: bool,
 ) -> Update {
-    if !crate::session::discovery::valid_attach_target(&name) {
+    let Some(address) = crate::session::naming::SessionAddress::parse(&name) else {
         crate::pane::pty_events::notify_error(
             ctx,
             "Invalid session name",
             "Use letters, numbers, _ or -",
+        );
+        return Update::full();
+    };
+    if address.is_shared() && (autostart || seed_default) {
+        crate::pane::pty_events::notify_error(
+            ctx,
+            "Attach failed",
+            format!("Cannot start another user's session `{name}`"),
         );
         return Update::full();
     }

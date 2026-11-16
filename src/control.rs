@@ -3391,6 +3391,7 @@ mod tests {
                 crate::session::protocol::Capability::AgentReplyLater
                 | crate::session::protocol::Capability::AgentRequestUpdates
                 | crate::session::protocol::Capability::PaneProgramTitle => "0.0.48",
+                crate::session::protocol::Capability::SessionSharing => "0.0.50",
                 _ => "0.0.44",
             };
             assert_eq!(cap.introduced_in(), expected, "{cap}");

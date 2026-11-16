@@ -300,8 +300,8 @@ rozi agents ask --target <PANE_ID> --wait --timeout 30m --format text -- 'Review
   replacement agent in the pane must not receive it, or for an agent that is not on screen.
 - `ask`, `reply`, and `await` go to the session of the pane you run them in. For another session
   pass `--session <NAME>`, and for another host `--remote <HOST> --session <NAME>`. The request
-  then has no asker there: it carries your agent, pane, and session (and your host, for
-  `--remote`) as a label, and the other agent sees it as asked from outside its session.
+  then has no asker there: it carries your agent and pane, a named session, and your host for
+  `--remote` as a label, and the other agent sees it as asked from outside its session.
 - Run `ask --wait` as a **background command** when your harness has them. Your turn can end, the
   command exits with the answer as its output, and you are notified then. Ask several agents at
   once with one background command each. Keep `--format text`: without it, captured output is JSON.

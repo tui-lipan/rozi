@@ -1661,7 +1661,7 @@ fn format_agent_request_line(data: Option<&serde_json::Value>, styles: OutputSty
     // An asker outside the session has no pane here; it may have said who it is.
     let asker = pane("from").unwrap_or_else(|| {
         value_string(data, "from_label")
-            .map_or_else(|| "-".to_string(), |label| format!("\"{label}\" (outside)"))
+            .map_or_else(|| "-".to_string(), |label| format!("{label}, outside"))
     });
     let state = value_string(data, "state").unwrap_or("unknown");
     let tone = match state {

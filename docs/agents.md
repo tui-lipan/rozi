@@ -484,14 +484,14 @@ the requests to or from you without their text, which `agents request <ID>` show
 
 These commands always go to the session server of the pane they run in; from outside rozi, pass
 `--session`, or `--remote <HOST> --session <NAME>` for another host. Such a request has no asker in
-that session. It names the caller's agent, pane, and session, plus this machine's hostname when it
-goes to another host, and is shown as asked from outside. It starts its own conversation unless
-`--follows <ID>` continues the one an earlier request of the caller's is in. A prompt is limited to 64 KiB, an agent to 16 queued
-requests, a chain to 8 levels and 64 requests, and a session to 1024 live requests. A request
-counts as live until it is resolved and its delivery turn has ended. Replies whose delivery turns
-have not ended share a 16 MiB storage budget, including their prompts. A reply that exceeds the
-remaining budget is refused with `conflict`; the request remains unanswered. Requests do not
-survive a session restart.
+that session. It names the caller's agent and pane, its session unless that is temporary, and this
+machine's hostname when it goes to another host, such as `Claude Code (30 · dev@laptop), outside`.
+It starts its own conversation unless `--follows <ID>` continues the one an earlier request of the
+caller's is in. A prompt is limited to 64 KiB, an agent to 16 queued requests, a chain to 8 levels
+and 64 requests, and a session to 1024 live requests. A request counts as live until it is resolved
+and its delivery turn has ended. Replies whose delivery turns have not ended share a 16 MiB storage
+budget, including their prompts. A reply that exceeds the remaining budget is refused with
+`conflict`; the request remains unanswered. Requests do not survive a session restart.
 
 ### Watch agents talk
 

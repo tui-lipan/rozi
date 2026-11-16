@@ -711,28 +711,54 @@ fn label_outside_asker(request: &mut control::ControlRequest, remote: bool) {
         return;
     }
     let context = super::context::verified_caller_context(request).ok();
-    let who = context.as_ref().and_then(|context| {
-        let pane = context.pane.as_ref()?.pane_id;
-        let session = context
-            .session
-            .as_ref()
-            .map(|session| format!(" of session {}", session.name))
-            .unwrap_or_default();
-        Some(match &context.agent {
-            Some(agent) => format!("{} in pane {pane}{session}", agent.label),
-            None => format!("pane {pane}{session}"),
-        })
-    });
     let host = remote.then(crate::platform::user::hostname).flatten();
-    let label = match (who, host) {
-        (Some(who), Some(host)) => format!("{who} on {host}"),
-        (Some(who), None) => who,
-        (None, Some(host)) => format!("rozi CLI on {host}"),
-        (None, None) => return,
+    let Some(label) = outside_asker_label(
+        context
+            .as_ref()
+            .and_then(|context| context.agent.as_ref())
+            .map(|agent| agent.label.as_str()),
+        context
+            .as_ref()
+            .and_then(|context| context.pane.as_ref())
+            .map(|pane| pane.pane_id),
+        context
+            .as_ref()
+            .and_then(|context| context.session.as_ref())
+            .map(|session| session.name.as_str()),
+        host.as_deref(),
+    ) else {
+        return;
     };
     if let control::ControlCommand::AgentAsk { asker_label, .. } = &mut request.command {
         *asker_label = Some(label);
     }
+}
+
+/// How an outside asker names itself, the way a pane's agent is named here: its agent and pane,
+/// then its session when it has a name worth reading and the host when it is another one, such
+/// as `Claude Code (30 · dev@workbox)`. `None` when there is nothing to say.
+fn outside_asker_label(
+    agent: Option<&str>,
+    pane: Option<crate::pane::id::PaneId>,
+    session: Option<&str>,
+    host: Option<&str>,
+) -> Option<String> {
+    let session = session.filter(|name| !crate::session::naming::is_ephemeral_session_name(name));
+    let place = match (session, host) {
+        (Some(session), host) => Some(crate::view::vocabulary::session_at(session, host)),
+        (None, host) => host.map(str::to_string),
+    };
+    let name = match (agent, pane) {
+        (Some(agent), _) => agent,
+        (None, Some(_)) => "Pane",
+        (None, None) => crate::view::agent_requests::OUTSIDE,
+    };
+    let detail: Vec<String> = pane
+        .map(|pane| pane.to_string())
+        .into_iter()
+        .chain(place)
+        .collect();
+    (!detail.is_empty()).then(|| format!("{name} ({})", detail.join(" · ")))
 }
 
 /// Ask a named session server directly, with no UI in the picture.
@@ -1199,6 +1225,30 @@ pub(super) fn read_socket_line(reader: &mut impl BufRead) -> std::io::Result<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_outside_asker_names_its_pane_and_only_a_session_or_host_worth_reading() {
+        let ephemeral = "eph-2de7b16aa9a97145b168a3f1";
+        assert!(crate::session::naming::is_ephemeral_session_name(ephemeral));
+        let label = |agent, pane, session, host| outside_asker_label(agent, pane, session, host);
+        assert_eq!(
+            label(Some("Claude Code"), Some(30), Some(ephemeral), None).as_deref(),
+            Some("Claude Code (30)")
+        );
+        assert_eq!(
+            label(Some("Claude Code"), Some(30), Some("dev"), Some("workbox")).as_deref(),
+            Some("Claude Code (30 · dev@workbox)")
+        );
+        assert_eq!(
+            label(None, Some(4), Some(ephemeral), Some("workbox")).as_deref(),
+            Some("Pane (4 · workbox)")
+        );
+        assert_eq!(
+            label(None, None, None, Some("workbox")).as_deref(),
+            Some("rozi CLI (workbox)")
+        );
+        assert_eq!(label(None, None, None, None), None);
+    }
 
     #[test]
     fn an_await_that_times_out_after_an_ask_keeps_the_request() {

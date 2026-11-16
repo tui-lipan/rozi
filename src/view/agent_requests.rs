@@ -153,7 +153,7 @@ pub(crate) fn agent_name(
         // An outside asker's own description, marked so it never passes for an agent here.
         return recorded.map_or_else(
             || OUTSIDE.to_string(),
-            |label| format!("{label} {OUTSIDE_MARK}"),
+            |label| format!("{label}{OUTSIDE_MARK}"),
         );
     };
     let label = recorded.map(str::to_string).or_else(|| {
@@ -174,7 +174,7 @@ pub(crate) fn agent_name(
 pub(crate) const OUTSIDE: &str = "rozi CLI";
 
 /// After the name an asker outside this session gave itself.
-const OUTSIDE_MARK: &str = "(outside)";
+const OUTSIDE_MARK: &str = ", outside";
 
 /// `requests` in list order: each conversation together, the one with the latest exchange first.
 /// A conversation reads as one tree: its first exchange on top, then everything after it in the

@@ -130,7 +130,7 @@ const SHARED_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Connections the shared endpoint takes in one pump, so a connect flood cannot stall the session.
 const MAX_SHARED_ACCEPTS_PER_PUMP: usize = 32;
 /// Connections one granted account may hold at once.
-const MAX_CLIENTS_PER_GUEST: usize = 16;
+const MAX_CLIENTS_PER_GUEST: usize = 8;
 /// Connections from accounts without a grant that may wait to hear they are refused.
 const MAX_UNSHARED_PEERS: usize = 4;
 

@@ -1009,8 +1009,9 @@ fn shared_endpoint_bounds_connections_and_closes_silent_ones() {
     assert!(strangers.len() < 64);
     assert!(server.shared_peer_has_room(bob_uid()));
 
-    // A connection that never speaks is closed once its handshake window passes; one that has
-    // spoken is not.
+    // A connection that never makes a request is closed once its handshake window passes, even if
+    // it sends other frames; one that has attached is not.
+    server.process_client_frame(strangers[0].0, Frame::PresentationAcks(Vec::new()));
     let (bob, _stream) = attach_guest(&mut server, bob_uid(), "alice/dev", false);
     server.expire_shared_connections(Instant::now() + Duration::from_secs(60));
     assert!(server.client(bob).is_some());
@@ -1018,4 +1019,51 @@ fn shared_endpoint_bounds_connections_and_closes_silent_ones() {
         assert!(server.client(*stranger).is_none());
     }
     assert!(server.shared_peer_has_room(charlie_uid()));
+}
+
+#[test]
+fn an_answer_held_across_a_downgrade_is_authorized_again_before_it_goes() {
+    use crate::control::{AgentTarget, AgentWaitCondition};
+    use crate::session::protocol::{AgentIdentity, DetectedAgent, DetectedAgentState};
+
+    let (mut server, _dir) = shared_test_server("dev");
+    let mut pane = test_pane(7);
+    pane.runtime.detected_agent = Some(DetectedAgent {
+        agent: AgentIdentity::new("claude", "Claude Code").into(),
+        state: DetectedAgentState::Working,
+    });
+    pane.agent.sync_references(&pane.runtime);
+    server.panes.insert(3, pane);
+    grant_user(&mut server, bob_uid(), "bob", SessionRole::Editor);
+
+    let (bob, _stream) = add_guest_client(&mut server, bob_uid());
+    send_frame(
+        &mut server,
+        bob,
+        ClientMessage::SessionControl {
+            capabilities: Some(Capabilities::current()),
+            session: "alice/dev".into(),
+            protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: PROTOCOL_VERSION,
+            request: control_req(ControlCommand::AgentWait {
+                target: AgentTarget::Pane(3),
+                until: AgentWaitCondition::Idle,
+                timeout_ms: None,
+            }),
+        },
+    );
+    assert!(outbox_controls(&server, bob).is_empty(), "the wait is held");
+
+    grant_user(&mut server, bob_uid(), "bob", SessionRole::Viewer);
+    let pane = server.panes.get_mut(&3).unwrap();
+    pane.runtime.detected_agent.as_mut().unwrap().state = DetectedAgentState::Idle;
+    pane.agent.sync_references(&pane.runtime);
+    server.resolve_agent_waits();
+
+    let controls = outbox_controls(&server, bob);
+    let [ServerMessage::SessionControlResult { response, .. }] = controls.as_slice() else {
+        panic!("{controls:?}");
+    };
+    assert_eq!(response.code, Some(ControlErrorCode::NotPermitted));
+    assert!(response.data.is_none());
 }

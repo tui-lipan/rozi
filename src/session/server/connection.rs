@@ -290,7 +290,15 @@ impl SessionServer {
     }
 
     pub(super) fn process_client_frame(&mut self, id: ClientId, frame: Frame<ClientMessage>) {
-        if let Some(client) = self.client_mut(id) {
+        // Only a request that opens a conversation ends the handshake window; anything else from a
+        // client that has not made one would otherwise keep a shared slot forever.
+        if let Frame::Control(
+            ClientMessage::Attach { .. }
+            | ClientMessage::Query { .. }
+            | ClientMessage::SessionControl { .. },
+        ) = &frame
+            && let Some(client) = self.client_mut(id)
+        {
             client.handshake_deadline = None;
         }
         match frame {

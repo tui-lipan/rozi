@@ -715,5 +715,13 @@ mod tests {
         assert_eq!(bare, super::server::session_endpoint("own-dev").unwrap());
         assert!(super::server::attach_endpoint("alice/bad name").is_err());
         assert!(super::server::attach_endpoint("alice/dev").is_err());
+
+        #[cfg(unix)]
+        {
+            let me = crate::platform::user::current_user_id();
+            let own = format!("{}/dev", me.as_raw());
+            let err = super::server::attach_endpoint(&own).unwrap_err();
+            assert!(err.to_string().contains("attach to `dev`"), "{err}");
+        }
     }
 }

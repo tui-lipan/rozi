@@ -2522,6 +2522,13 @@ pub fn attach_endpoint(target: &str) -> io::Result<IpcEndpoint> {
     let account = crate::platform::user::lookup_user(owner)?.ok_or_else(|| {
         io::Error::new(io::ErrorKind::NotFound, format!("unknown user `{owner}`"))
     })?;
+    if account.id == crate::platform::user::current_user_id() {
+        // The session's server knows its owner only by the bare name.
+        return Err(io::Error::other(format!(
+            "this is your own session; attach to `{}`",
+            address.name
+        )));
+    }
     let shared_dir = crate::platform::paths::verified_shared_dir(account.id).map_err(|err| {
         if err.kind() == io::ErrorKind::NotFound {
             // The owner shares nothing right now.

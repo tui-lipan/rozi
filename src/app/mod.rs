@@ -63,6 +63,9 @@ pub struct AppRoot {
     welcome: bool,
     event_hub: events::EventHub,
     render_host_terminal_color_generation: Cell<u64>,
+    /// Whether the DevTools App tab republish timer runs. Armed from `view()` once DevTools shows,
+    /// and stopped by the first tick that finds it hidden.
+    pub(crate) devtools_metrics_ticking: Cell<bool>,
     /// Where a relaunch leaves the build to hand the terminal to, for the runner to find once the
     /// UI is gone.
     handover: state::HandoverSlot,
@@ -99,6 +102,7 @@ impl Default for AppRoot {
             welcome: false,
             event_hub: events::EventHub::default(),
             render_host_terminal_color_generation: Cell::new(0),
+            devtools_metrics_ticking: Cell::new(false),
             handover: state::HandoverSlot::default(),
             finds_binaries: false,
         }
@@ -148,6 +152,7 @@ impl AppRoot {
             welcome,
             event_hub: events::EventHub::default(),
             render_host_terminal_color_generation: Cell::new(0),
+            devtools_metrics_ticking: Cell::new(false),
             handover: state::HandoverSlot::default(),
             finds_binaries: true,
         }
@@ -481,6 +486,9 @@ impl Component for AppRoot {
         }
         if ctx.devtools_visible() {
             ctx.set_devtools_metrics(|| ctx.state.current().runtime_metrics().devtools_rows());
+            if !self.devtools_metrics_ticking.replace(true) {
+                ctx.link().send(Msg::DevtoolsMetricsTick);
+            }
         }
         view::render(ctx)
     }

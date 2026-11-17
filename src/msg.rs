@@ -978,9 +978,13 @@ pub enum Msg {
     },
     /// A person chose a deployed action from the palette.
     RunPaletteAction(String),
+    /// The session server answered a runtime metrics request.
     SessionRuntimeMetrics {
         epoch: u64,
     },
+    /// Republish the DevTools App tab while DevTools is open, so its rows keep moving when pane
+    /// output is all that happens and no app view runs.
+    DevtoolsMetricsTick,
     /// A server message this build does not know. The session stays attached and nothing changes.
     SessionIgnored,
     /// Trailing-edge flush of debounced controller pane resizes (see `pty_events::handle_pane_resize`).

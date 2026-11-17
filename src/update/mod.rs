@@ -71,6 +71,8 @@ fn post_update_kind(msg: &Msg) -> PostUpdateKind {
         msg,
         Msg::TerminalPresented(_)
             | Msg::SessionIgnored
+            | Msg::SessionRuntimeMetrics { .. }
+            | Msg::DevtoolsMetricsTick
             | Msg::UiRecordingFrame(_)
             | Msg::UiRecordingFlush { .. }
             | Msg::UiRecordingPoll { .. }
@@ -945,8 +947,12 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::CaptureWaitTick => crate::ops::capture_wait::tick(ctx),
         Msg::SessionIgnored => Update::none(),
         Msg::SessionRuntimeMetrics { epoch } => {
-            runtime_metrics_update(epoch, ctx.state.runtime_epoch, ctx.devtools_visible())
+            if publishes_runtime_metrics(epoch, ctx.state.runtime_epoch, ctx.devtools_visible()) {
+                publish_devtools_metrics(ctx);
+            }
+            Update::none()
         }
+        Msg::DevtoolsMetricsTick => devtools_metrics_tick(_app, ctx),
         Msg::FlushPaneResizes { epoch, generation } => {
             session::flush_pane_resizes(ctx, epoch, generation)
         }
@@ -1392,12 +1398,32 @@ fn post_update_sync(
     update
 }
 
-fn runtime_metrics_update(epoch: u64, current_epoch: u64, devtools_visible: bool) -> Update {
-    if epoch == current_epoch && devtools_visible {
-        Update::full()
-    } else {
-        Update::none()
+/// A parked attachment's server answers too; only the one on screen feeds DevTools.
+fn publishes_runtime_metrics(epoch: u64, current_epoch: u64, devtools_visible: bool) -> bool {
+    epoch == current_epoch && devtools_visible
+}
+
+/// How often an open DevTools App tab is republished, and the server asked for fresh numbers.
+const DEVTOOLS_METRICS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Publishing never draws an app frame: DevTools rebuilds only its own panel to show the rows.
+fn publish_devtools_metrics(ctx: &Context<AppRoot>) {
+    ctx.set_devtools_metrics(|| ctx.state.current().runtime_metrics().devtools_rows());
+}
+
+fn devtools_metrics_tick(app: &AppRoot, ctx: &mut Context<AppRoot>) -> Update {
+    if !ctx.devtools_visible() {
+        app.devtools_metrics_ticking.set(false);
+        return Update::none();
     }
+    publish_devtools_metrics(ctx);
+    if let Some(client) = &ctx.state.current().session_client {
+        client.request_runtime_metrics();
+    }
+    Update::command_only(Command::after(
+        DEVTOOLS_METRICS_INTERVAL,
+        |link: CommandLink<Msg>| link.send(Msg::DevtoolsMetricsTick),
+    ))
 }
 
 #[cfg(test)]
@@ -1467,21 +1493,24 @@ mod tests {
     }
 
     #[test]
-    fn runtime_metrics_redraw_current_but_not_parked_visible_attachment() {
+    fn runtime_metrics_publish_for_current_but_not_parked_visible_attachment() {
         let current_epoch = 7;
         let parked_epoch = 6;
-        assert_eq!(
-            runtime_metrics_update(current_epoch, current_epoch, true).level(),
-            UpdateLevel::Full
-        );
-        assert_eq!(
-            runtime_metrics_update(parked_epoch, current_epoch, true).level(),
-            UpdateLevel::None
-        );
-        assert_eq!(
-            runtime_metrics_update(current_epoch, current_epoch, false).level(),
-            UpdateLevel::None
-        );
+        assert!(publishes_runtime_metrics(
+            current_epoch,
+            current_epoch,
+            true
+        ));
+        assert!(!publishes_runtime_metrics(
+            parked_epoch,
+            current_epoch,
+            true
+        ));
+        assert!(!publishes_runtime_metrics(
+            current_epoch,
+            current_epoch,
+            false
+        ));
     }
 
     #[test]

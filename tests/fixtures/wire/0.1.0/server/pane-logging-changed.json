@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "error": "example",
+  "generation": 1,
+  "local": false,
+  "pane_id": 1,
+  "path": "example",
+  "type": "pane-logging-changed"
+}

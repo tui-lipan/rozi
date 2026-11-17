@@ -1,0 +1,22 @@
+{
+  "generation": 1,
+  "initial": false,
+  "local": false,
+  "pane_id": 1,
+  "snapshot": {
+    "revision": 3,
+    "records": [
+      {
+        "id": "build",
+        "state": "working",
+        "app": "cargo",
+        "kind": null,
+        "title": "Build",
+        "msg": "compiling",
+        "progress": 40,
+        "updated": 12
+      }
+    ]
+  },
+  "type": "program-status-changed"
+}

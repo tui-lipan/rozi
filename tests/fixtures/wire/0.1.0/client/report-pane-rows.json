@@ -1,0 +1,44 @@
+{
+  "generation": 1,
+  "kind": "agent",
+  "local": false,
+  "pane_id": 1,
+  "publisher": "example",
+  "rows": [
+    {
+      "active": false,
+      "cwd": "example",
+      "id": "example",
+      "kind": "agent",
+      "live_session": "example",
+      "native_session": "example",
+      "project": {
+        "branch": "example",
+        "repository": "example",
+        "root": "example"
+      },
+      "publisher": "example",
+      "reason": "example",
+      "reported": false,
+      "status": "example",
+      "title": "example",
+      "work_started_at": 1
+    }
+  ],
+  "type": "report-pane-rows",
+  "epoch": 2,
+  "responses": [
+    {
+      "id": "example",
+      "seq": 1,
+      "response": {
+        "text": "Fixed the failing test.",
+        "source": "native-hook",
+        "fidelity": "semantic",
+        "complete": true,
+        "truncated": false,
+        "turn_id": "turn-1"
+      }
+    }
+  ]
+}

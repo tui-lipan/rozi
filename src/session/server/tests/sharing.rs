@@ -898,3 +898,65 @@ fn attached_control_share_grant_succeeds_for_owner_and_refuses_guest_controller(
     ));
     assert!(server.shares.grant_for(charlie).is_none());
 }
+
+#[test]
+fn editor_downgraded_mid_upload_gets_the_refusal_as_an_attachment_ack() {
+    use crate::session::protocol::AttachmentOperation;
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    let (mut server, _dir) = shared_test_server("dev");
+    let pty = TerminalPty::spawn(
+        TerminalPtyConfig::new("/bin/sh").arg("-c").arg("cat"),
+        |_| {},
+    )
+    .unwrap();
+    let mut pane = test_pane(2);
+    pane.pty = Some(pty);
+    server.panes.insert(1, pane);
+    grant_user(&mut server, bob_uid(), "bob", SessionRole::Editor);
+    let (bob, _stream) = attach_guest(&mut server, bob_uid(), "alice/dev", false);
+
+    send_frame(
+        &mut server,
+        bob,
+        ClientMessage::Attachment {
+            transfer_id: 1,
+            operation: AttachmentOperation::Begin {
+                pane_id: 1,
+                generation: 2,
+                local: false,
+                name: "notes.txt".into(),
+                size: 4,
+            },
+        },
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.attachments.is_busy((bob, 1)) {
+        assert!(Instant::now() < deadline);
+        server.poll_attachment_work();
+        std::thread::yield_now();
+    }
+    assert!(server.attachments.has_pending());
+
+    grant_user(&mut server, bob_uid(), "bob", SessionRole::Viewer);
+    clear_outboxes(&mut server, &[bob]);
+    send_frame(
+        &mut server,
+        bob,
+        ClientMessage::Attachment {
+            transfer_id: 1,
+            operation: AttachmentOperation::Chunk {
+                data: STANDARD.encode(b"data"),
+            },
+        },
+    );
+    assert!(matches!(
+        outbox_controls(&server, bob).as_slice(),
+        [ServerMessage::AttachmentAck {
+            transfer_id: 1,
+            error: Some(_),
+        }]
+    ));
+    assert!(!server.attachments.has_pending());
+    server.panes[&1].pty.as_ref().unwrap().kill().unwrap();
+}

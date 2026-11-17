@@ -1825,6 +1825,7 @@ fn refused_by_its_handler(message: &ClientMessage) -> bool {
             | ClientMessage::ReportAgent { .. }
             | ClientMessage::SpawnPane { .. }
             | ClientMessage::MarkedInput { .. }
+            | ClientMessage::Attachment { .. }
     )
 }
 

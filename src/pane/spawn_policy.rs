@@ -110,41 +110,28 @@ pub(crate) enum SpawnOrigin<'a> {
     Headless,
 }
 
-/// The `ROZI_*` values a command is given about what it was opened for: the link, file, or row, and
-/// the pane and session it came from. Every other `ROZI_*` name describes where a process runs.
-const ROZI_ARGUMENT_VARIABLES: &[&str] = &[
+/// The values rozi gives a command about what it was opened for: the link, file, or position a hint
+/// named, the row activated, and the pane and session it came from.
+const GUEST_SPAWN_ARGUMENT_VARIABLES: &[&str] = &[
     "ROZI_FILE",
     "ROZI_URL",
+    "ROZI_HINT",
+    "ROZI_LINE",
+    "ROZI_COLUMN",
     "ROZI_ROW",
+    "ROZI_ROW_ID",
     "ROZI_SOURCE_PANE",
     "ROZI_SOURCE_SESSION",
     "ROZI_REMOTE_HOST",
 ];
 
-/// Variables that set up the process rather than tell the command something: the terminal, the
-/// desktop, the SSH connection, and shell integration.
-const EXECUTION_VARIABLES: &[&str] = &[
-    "SSH_CONNECTION",
-    "TERM",
-    "TERM_PROGRAM",
-    "TERM_PROGRAM_VERSION",
-    "ZDOTDIR",
-    "XDG_DATA_DIRS",
-    "PROMPT",
-];
-
-/// The part of a guest's per-spawn environment that crosses into a pane running as the owner: the
-/// values its command is given. A guest names what to run and with what; the owner's session decides
-/// how it runs, so a guest cannot point the pane at its own `rozi`, UI, extension, or desktop.
+/// The part of a guest's per-spawn environment that crosses into a pane running as the owner. A
+/// guest chooses the command and the data rozi passes it; the owner's session sets everything else
+/// about how it runs. Any other variable can change that - `PATH`, `LD_PRELOAD`, a display, rozi's
+/// own socket or binary - so only these named values cross.
 pub(crate) fn guest_spawn_values(env: Vec<(String, String)>) -> Vec<(String, String)> {
     env.into_iter()
-        .filter(|(name, _)| {
-            let rozi_owned =
-                name.starts_with("ROZI") && !ROZI_ARGUMENT_VARIABLES.contains(&name.as_str());
-            !rozi_owned
-                && !EXECUTION_VARIABLES.contains(&name.as_str())
-                && !crate::platform::environment::DESKTOP_VARIABLES.contains(&name.as_str())
-        })
+        .filter(|(name, _)| GUEST_SPAWN_ARGUMENT_VARIABLES.contains(&name.as_str()))
         .collect()
 }
 

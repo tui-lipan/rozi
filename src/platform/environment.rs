@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Desktop/session variables that are safe and useful to inherit from the client creating a pane.
-pub(crate) const DESKTOP_VARIABLES: &[&str] = &[
+const DESKTOP_VARIABLES: &[&str] = &[
     "DISPLAY",
     "WAYLAND_DISPLAY",
     "XDG_RUNTIME_DIR",

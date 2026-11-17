@@ -131,7 +131,9 @@ impl ControlCommand {
             // Files for an `agent-ask`, under the same random transfer ids the asker holds.
             | Self::AgentAttach { .. }
             | Self::AgentAttachCancel { .. }
-            | Self::Notify { .. } => Permission::Input,
+            | Self::Notify { .. }
+            // A pane's own rows, as `agents report` writes its state.
+            | Self::Publish { .. } => Permission::Input,
             Self::AgentResponse { .. }
             | Self::AgentWait { .. }
             | Self::AgentAwait { .. }
@@ -169,7 +171,6 @@ impl ControlCommand {
             | Self::SwitchWorkspace { .. }
             | Self::MoveToWorkspace { .. }
             | Self::Popup { .. }
-            | Self::Publish { .. }
             | Self::SidebarPublish { .. }
             | Self::CommandVisibility { .. }
             | Self::RecordUiStart { .. }
@@ -222,7 +223,6 @@ impl ControlCommand {
             | Self::SwitchWorkspace { .. }
             | Self::MoveToWorkspace { .. }
             | Self::Popup { .. }
-            | Self::Publish { .. }
             | Self::SidebarPublish { .. }
             | Self::Subscribe { .. }
             | Self::PaneLogging { .. }
@@ -265,6 +265,7 @@ impl ControlCommand {
             Self::ShareGrant { .. } | Self::ShareRevoke { .. } | Self::ShareList => {
                 Some(crate::session::protocol::Capability::SessionSharing)
             }
+            Self::Publish { .. } => Some(crate::session::protocol::Capability::SessionPublish),
             Self::Unknown => {
                 debug_assert!(false, "an unknown control command must never be sent");
                 None
@@ -3505,6 +3506,7 @@ mod tests {
                 | crate::session::protocol::Capability::AgentRequestUpdates
                 | crate::session::protocol::Capability::PaneProgramTitle => "0.0.48",
                 crate::session::protocol::Capability::SessionSharing
+                | crate::session::protocol::Capability::SessionPublish
                 | crate::session::protocol::Capability::AgentConversations
                 | crate::session::protocol::Capability::AgentAttachments => "0.0.50",
                 _ => "0.0.44",

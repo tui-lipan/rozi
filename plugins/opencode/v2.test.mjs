@@ -204,6 +204,17 @@ test("publisher launches the matching CLI, hydrates families, coalesces and acti
   assert.equal(b.writes.length, count)
 })
 
+test("publisher starts in a pane with no UI and falls back to rozi on PATH", async (t) => {
+  const f = fixture()
+  const b = bridge()
+  const headless = { ROZI: "1", ROZI_PANE: "7", ROZI_SESSION_INSTANCE: "server-instance" }
+  const stop = startPublisher(f.context, { env: headless, launch: b.launch, interval: 10000 })
+  t.after(stop)
+  await tick()
+  assert.equal(b.launches[0][0], "rozi")
+  assert.deepEqual(b.launches[0][1], ["publish", "--kind", "agent", "--name", "opencode"])
+})
+
 test("slow bridge writes keep only the latest pending snapshot", async (t) => {
   const f = fixture()
   const b = bridge({ slow: true })
@@ -230,7 +241,7 @@ test("bridge failure stops publication silently", () => {
 })
 
 test("publisher is inert outside a fully identified rozi pane", () => {
-  for (const key of Object.keys(env)) {
+  for (const key of ["ROZI", "ROZI_PANE", "ROZI_SESSION_INSTANCE"]) {
     const b = bridge()
     const incomplete = { ...env }
     delete incomplete[key]

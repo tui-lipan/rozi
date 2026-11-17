@@ -29,26 +29,9 @@ pub(crate) struct PublishOpen {
     pub worker: Option<crate::control::WorkerId>,
 }
 
-/// Longest `--name` a publisher may give itself.
-const MAX_PUBLISHER_NAME: usize = 64;
-
-/// Whether `name` is an acceptable publisher name: the same alphabet as extension ids.
-pub(crate) fn publisher_name_is_valid(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= MAX_PUBLISHER_NAME
-        && name.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
-        })
-}
-
-/// The stable identity a publisher has within its pane. See [`PublisherIdentity`].
-pub(crate) fn publisher_id(extension: Option<&str>, name: Option<&str>) -> String {
-    match (extension, name) {
-        (Some(extension), None) => extension.to_string(),
-        (Some(extension), Some(name)) => format!("{extension}.{name}"),
-        (None, name) => format!("publish:{}", name.unwrap_or("default")),
-    }
-}
+pub(crate) use crate::session::protocol::{
+    MAX_PUBLISHER_NAME, publisher_id, publisher_name_is_valid,
+};
 
 /// Register a newly opened stream, replacing any stream the same publisher had open in that pane.
 ///
@@ -655,6 +638,12 @@ pub(crate) fn request_activation(state: &mut crate::state::State, pane_id: PaneI
         return;
     };
     let local = crate::pane::lifecycle::pane_is_local(state, pane_id);
+    if owner == crate::session::protocol::SESSION_PUBLISHER_NAMESPACE {
+        if !local {
+            activate_session_published_row(state, pane_id, row);
+        }
+        return;
+    }
     let origin = if local {
         // A scratch or popup pane is this client's alone, on whichever connection it used.
         PublishOrigin::Local
@@ -690,6 +679,36 @@ pub(crate) fn request_activation(state: &mut crate::state::State, pane_id: PaneI
     if stream.sender.try_send(line).is_err() {
         drop_stream(state, &key);
     }
+}
+
+/// Pass the activation of a row the session server publishes itself to that server, which holds the
+/// publisher's stream. A client that may not type has nothing to pass: the server would refuse it.
+fn activate_session_published_row(state: &crate::state::State, pane_id: PaneId, row: &RowKey) {
+    let attachment = state.current();
+    if attachment.reconnect_read_only
+        || attachment
+            .shared
+            .as_ref()
+            .is_some_and(|shared| shared.read_only)
+    {
+        return;
+    }
+    let Some(client) = attachment
+        .session_client
+        .as_ref()
+        .filter(|client| client.supports(crate::session::protocol::Capability::SessionPublish))
+    else {
+        return;
+    };
+    let Some(pane) = attachment
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.panes.iter())
+        .find(|pane| pane.id == pane_id && !pane.closing)
+    else {
+        return;
+    };
+    client.activate_published_row(pane_id, pane.pty_generation, row.clone());
 }
 
 #[cfg(test)]

@@ -153,7 +153,7 @@ pub fn run_remote_control(session: &str) -> Result<Option<ControlResponse>, Stri
 }
 
 fn run_remote_subscription(session: &str, request: ControlRequest) -> Result<(), String> {
-    let (mut stream, response) = crate::session::headless::run_session_subscribe(session, request)
+    let (mut stream, response) = crate::session::headless::open_session_stream(session, request)
         .map_err(|err| err.to_string())?;
     let mut stdout = std::io::stdout().lock();
     let answer = serde_json::to_string(&response).map_err(|err| err.to_string())?;

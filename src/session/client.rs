@@ -1032,6 +1032,15 @@ impl SessionClient {
         self.send_control(ClientMessage::ReloadAgents);
     }
 
+    /// Ask the session-held publisher of `row` in a shared pane to bring it on screen.
+    pub fn activate_published_row(&self, pane_id: PaneId, generation: u64, row: protocol::RowKey) {
+        self.send_control(ClientMessage::ActivatePublishedRow {
+            pane_id,
+            generation,
+            row,
+        });
+    }
+
     /// Replace one publisher's rows in a pane; an empty list withdraws them.
     #[allow(clippy::too_many_arguments)]
     pub fn report_pane_rows(

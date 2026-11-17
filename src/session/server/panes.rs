@@ -231,6 +231,17 @@ impl SessionServer {
             owner.is_none().then_some(&self.instance_id),
         );
         crate::platform::environment::fill_host_desktop_environment(&mut request.env);
+        // A program in a pane runs `rozi` through `ROZI_BIN`. A UI on this machine names its own;
+        // a pane with none - a guest's, a restored or headless one, one on a remote session - gets
+        // this server's, the owner's own binary on this host. `ROZI_SOCKET` stays unset there: the
+        // pane has no UI, and `rozi` reaches its session by `ROZI_SESSION_INSTANCE` instead.
+        if !request.env.iter().any(|(key, _)| key == "ROZI_BIN")
+            && let Some(path) = crate::platform::paths::current_binary()
+        {
+            request
+                .env
+                .push(("ROZI_BIN".to_string(), path.display().to_string()));
+        }
         let effective_cwd = effective_spawn_cwd(request.cwd.as_deref());
         // Built per attempt rather than once, because a native agent resume that cannot start gets
         // a second one - the interactive shell - from the same directory and environment.
@@ -656,7 +667,12 @@ impl SessionServer {
                             && (pane.agent_resume.is_some()
                                 || (pane.keep_open && pane.launch.is_some()));
                         if !keep_open {
-                            pane.exited = Some(code);
+                            if owner.is_none() {
+                                self.retire_session_publishers(id);
+                            }
+                            if let Some(pane) = self.pane_mut(owner, id) {
+                                pane.exited = Some(code);
+                            }
                         }
                         self.send_outbound(
                             owner,

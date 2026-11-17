@@ -374,6 +374,7 @@ impl SessionServer {
             && !self.holds_invocation_reply(id)
             && !self.holds_attachment_reply(id)
             && !self.is_session_subscriber(id)
+            && !self.session_publishers.holds(id)
         {
             self.set_close_after_flush(id);
         }
@@ -431,7 +432,10 @@ impl SessionServer {
             return true;
         }
 
-        if !self.client_attached(id) {
+        // A session `publish` stream is a headless connection that keeps talking after its request.
+        let publishing = matches!(message, ClientMessage::PublishRows { .. })
+            && self.session_publishers.holds(id);
+        if !self.client_attached(id) && !publishing {
             self.enqueue(
                 id,
                 Target::Sender,
@@ -842,6 +846,17 @@ impl SessionServer {
                 }
                 Vec::new()
             }
+            ClientMessage::PublishRows { rows, responses } => {
+                self.session_publisher_rows(client_id, rows, responses)
+            }
+            ClientMessage::ActivatePublishedRow {
+                pane_id,
+                generation,
+                row,
+            } => {
+                self.activate_published_row(client_id, pane_id, generation, row);
+                Vec::new()
+            }
             ClientMessage::ReportPaneRows {
                 epoch,
                 responses,
@@ -1049,6 +1064,7 @@ impl SessionServer {
                         let _ = pty.kill();
                     }
                     if owner.is_none() {
+                        self.retire_session_publishers(pane_id);
                         self.mark_dirty();
                     }
                 }

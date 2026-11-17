@@ -44,8 +44,9 @@ instead of adding an unlinked snippet.
   session server stamps `ROZI_TERMINAL` and the `TERM_PROGRAM` pair in its own version
   (`pty_config`), and its pane screens answer XTVERSION as `rozi <version>`
   (`pane::new_terminal_screen`); a pane's environment may still override the pair. Remote panes suppress
-  local `ROZI_SOCKET` and `ROZI_BIN`, and so does a pane spawned headlessly through
-  `rozi --session <NAME> split` or restored by resurrection, which has no UI to name.
+  the local `ROZI_SOCKET`, and so does a pane spawned headlessly through
+  `rozi --session <NAME> split` or restored by resurrection, which has no UI to name. The session
+  server fills `ROZI_BIN` with its own executable whenever the client did not supply one.
 - `agents report`/`release` with no `--target`, `--socket`, `--session`, or `ROZI_SOCKET` go to the
   pane's own session server, found by matching `ROZI_SESSION_INSTANCE` against the `instance` each
   server reports in `SessionInfo`. The request keeps `source_session`, and a session endpoint

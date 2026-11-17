@@ -1224,7 +1224,6 @@ impl SessionServer {
                     .to_string(),
             ));
         }
-        super::responses::validate_published(&publisher, &rows)?;
         // The identity is the client's own; qualified by the client, it never meets another
         // client's publisher of the same name. See [`protocol::qualified_publisher`].
         let publisher = PanePublisher {
@@ -1233,7 +1232,29 @@ impl SessionServer {
             id: protocol::qualified_publisher(client_id, &publisher.id),
             kind: publisher.kind,
         };
-        let owner = local.then_some(client_id);
+        self.apply_pane_rows(
+            client_id,
+            local.then_some(client_id),
+            pane_id,
+            generation,
+            publisher,
+            rows,
+        )
+    }
+
+    /// Replace one publisher's rows in a pane, for a publisher already qualified by the namespace
+    /// it publishes in: an attached client's id, or [`protocol::SESSION_PUBLISHER_NAMESPACE`] for a
+    /// stream the server holds itself. `owner` addresses a client's own local pane.
+    pub(super) fn apply_pane_rows(
+        &mut self,
+        namespace: ClientId,
+        owner: Option<ClientId>,
+        pane_id: PaneId,
+        generation: u64,
+        publisher: PanePublisher,
+        rows: Vec<protocol::PublishedRow>,
+    ) -> std::result::Result<Option<ServerMessage>, (&'static str, String)> {
+        super::responses::validate_published(&publisher, &rows)?;
         let session_instance = self.instance_id.clone();
         let Some(pane) = self.pane_mut(owner, pane_id) else {
             return Err(("pane-not-found", format!("pane {pane_id} not found")));
@@ -1265,7 +1286,7 @@ impl SessionServer {
             .filter(|row| {
                 row.publisher != publisher.id
                     && protocol::publisher_owner(&row.publisher)
-                        .is_some_and(|(owner, _)| owner == client_id)
+                        .is_some_and(|(owner, _)| owner == namespace)
             })
             .map(|row| row.publisher.as_str())
             .collect::<HashSet<_>>()

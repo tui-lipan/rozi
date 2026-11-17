@@ -128,6 +128,7 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::ExtensionsStatus
         | ControlCommand::Notify { .. }
         | ControlCommand::Subscribe { .. }
+        | ControlCommand::Publish { .. }
         | ControlCommand::AgentAsk { .. }
         | ControlCommand::AgentReply { .. }
         | ControlCommand::AgentReplyLater { .. }
@@ -175,9 +176,6 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         ControlCommand::Prompt { .. } => {
             Some("prompt opens a modal in a UI; a session server cannot show one")
         }
-        ControlCommand::Publish { .. } => Some(
-            "publish belongs to the pane that publishes; run it inside the pane, which reaches its own session",
-        ),
         ControlCommand::SidebarPublish { .. } => {
             Some("sidebar tabs belong to a UI; a session server draws no sidebar")
         }
@@ -488,7 +486,10 @@ impl SessionServer {
         }
         let negotiated = protocol::Capabilities::negotiated(capabilities.as_ref());
         let permission = request.command.required_permission();
-        let reply = if matches!(request.command, ControlCommand::Subscribe { .. }) {
+        let reply = if matches!(
+            request.command,
+            ControlCommand::Subscribe { .. } | ControlCommand::Publish { .. }
+        ) {
             ReplyTo::StreamingHeadless {
                 capabilities: negotiated.clone(),
                 effective_protocol: effective,
@@ -693,6 +694,9 @@ impl SessionServer {
                 | ControlCommand::ExtensionsStatus) => {
                     Some(self.submit_deployment(client_id, reply.clone(), command.clone()))
                 }
+                ControlCommand::Publish { .. } => Some(Some(
+                    self.open_session_publisher(client_id, &request, reply),
+                )),
                 ControlCommand::Subscribe {
                     events,
                     snapshot,
@@ -1344,6 +1348,7 @@ impl SessionServer {
         {
             let _ = pty.kill();
         }
+        self.retire_session_publishers(target);
         self.mark_dirty();
         self.resolve_agent_waits();
 
@@ -5507,10 +5512,6 @@ mod tests {
             ControlCommand::CommandVisibility {
                 command: "my-extension.choose".to_string(),
                 visible: false,
-            },
-            ControlCommand::Publish {
-                kind: Default::default(),
-                name: None,
             },
             ControlCommand::CaptureUi {
                 render: crate::control::CaptureRender::Png,

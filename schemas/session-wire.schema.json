@@ -2284,6 +2284,61 @@
           "type": "object"
         },
         {
+          "description": "One row update from a `publish` stream the session server holds, on the connection that\nopened it with [`ClientMessage::SessionControl`]. The stream already names its pane,\ngeneration, and publisher, so the update carries only what changed.",
+          "properties": {
+            "responses": {
+              "items": {
+                "$ref": "#/$defs/PublishedAgentResponse"
+              },
+              "type": "array"
+            },
+            "rows": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/PublishedRow"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "publish-rows",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Ask the publisher of `row`, a stream the session server holds, to bring it on screen.",
+          "properties": {
+            "generation": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pane_id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "row": {
+              "$ref": "#/$defs/RowKey"
+            },
+            "type": {
+              "const": "activate-published-row",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "pane_id",
+            "generation",
+            "row"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Any `type` this build does not know: a request from a newer peer that skipped the send gate.\n\nDecoded so the connection survives, answered with\n[`super::UNSUPPORTED_MESSAGE_ERROR_CODE`], and never sent.",
           "properties": {
             "type": {
@@ -7791,6 +7846,23 @@
           "type": "object"
         },
         {
+          "description": "A row a user activated, for the `publish` stream the session server holds for its\npublisher. Written to the publisher as `{\"activate\": row}`.",
+          "properties": {
+            "row": {
+              "type": "string"
+            },
+            "type": {
+              "const": "publish-activation",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "row"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Any `type` this build does not know: a message from a newer server that skipped the send\ngate. Decoded so the connection survives, logged once, ignored, and never sent.",
           "properties": {
             "type": {
@@ -9346,6 +9418,7 @@
     "pane-program-title",
     "project-summaries",
     "runtime-metrics",
+    "session-publish",
     "session-sharing"
   ],
   "x-rozi-shared-layout-version": 4,

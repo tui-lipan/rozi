@@ -69,11 +69,17 @@ pub enum Capability {
     /// [`super::SessionRole`] in the roster, and refuses a request a client's access does not cover
     /// with [`super::PERMISSION_DENIED_ERROR_CODE`].
     SessionSharing,
+    /// The server holds `publish` streams for panes that have no UI to publish through: it serves
+    /// the `publish` control command on a session connection, takes
+    /// [`super::ClientMessage::PublishRows`] on it, and forwards
+    /// [`super::ClientMessage::ActivatePublishedRow`] to it as
+    /// [`super::ServerMessage::PublishActivation`].
+    SessionPublish,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 13] = [
+    pub const ALL: [Capability; 14] = [
         Capability::AgentAttachments,
         Capability::AgentConversations,
         Capability::AgentReplyLater,
@@ -86,6 +92,7 @@ impl Capability {
         Capability::PaneProgramTitle,
         Capability::ProjectSummaries,
         Capability::RuntimeMetrics,
+        Capability::SessionPublish,
         Capability::SessionSharing,
     ];
 
@@ -103,6 +110,7 @@ impl Capability {
             Capability::AgentRequestUpdates => "agent-request-updates",
             Capability::PaneProgramTitle => "pane-program-title",
             Capability::SessionSharing => "session-sharing",
+            Capability::SessionPublish => "session-publish",
             Capability::AgentConversations => "agent-conversations",
             Capability::AgentAttachments => "agent-attachments",
         }
@@ -119,7 +127,10 @@ impl Capability {
             Self::DragAndDrop => "0.0.46",
             Self::AgentRequests => "0.0.47",
             Self::AgentReplyLater | Self::AgentRequestUpdates | Self::PaneProgramTitle => "0.0.48",
-            Self::AgentConversations | Self::AgentAttachments | Self::SessionSharing => "0.0.50",
+            Self::AgentConversations
+            | Self::AgentAttachments
+            | Self::SessionSharing
+            | Self::SessionPublish => "0.0.50",
         }
     }
 

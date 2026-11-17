@@ -875,13 +875,14 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 origin,
                 handoff_claimed,
             },
-            // Neither reaches an attached client: a probe and a headless control request each
-            // answer their own short-lived connection. Arriving here means the server answered
-            // something this client never asked, which is a broken attach rather than a message
-            // to act on.
+            // None reaches an attached client: a probe, a headless control request, and a session
+            // `publish` stream each answer their own connection. Arriving here means the server
+            // answered something this client never asked, which is a broken attach rather than a
+            // message to act on.
             ServerMessage::SessionInfo { .. }
             | ServerMessage::SessionControlResult { .. }
-            | ServerMessage::SessionSubscribeRecord { .. } => Msg::SessionError {
+            | ServerMessage::SessionSubscribeRecord { .. }
+            | ServerMessage::PublishActivation { .. } => Msg::SessionError {
                 epoch,
                 message: String::new(),
             },

@@ -8200,6 +8200,7 @@ fn every_pane_child_is_marked_as_running_in_a_rozi_terminal() {
 }
 
 mod handoff;
+mod publish;
 mod sharing;
 mod transactions;
 

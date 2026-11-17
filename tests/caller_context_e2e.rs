@@ -652,10 +652,14 @@ fn server_panes_never_inherit_the_starting_panes_rozi_environment() {
             "{key} leaked into the pane"
         );
     }
-    // A headless pane has no UI, so it names none rather than the one that started its server.
+    // A headless pane has no UI, so it names none rather than the one that started its server. Its
+    // `rozi` is the server's own.
+    assert_eq!(
+        env.get("ROZI_BIN").map(std::path::PathBuf::from),
+        Some(std::path::PathBuf::from(env!("CARGO_BIN_EXE_rozi")))
+    );
     for key in [
         "ROZI_SOCKET",
-        "ROZI_BIN",
         "ROZI_EXTENSION",
         "ROZI_EXTENSION_CREDENTIAL",
         "ROZI_SHELL_INTEGRATION_LOADED",
@@ -1244,4 +1248,136 @@ fn here_explains_authority_held_by_an_attachment_without_a_local_ui() {
             .len(),
         1
     );
+}
+
+/// A pane no UI serves - a guest's, a restored or headless one - publishes to its own session:
+/// `rozi publish` finds it by `ROZI_SESSION_INSTANCE`, its rows reach the session, an attached
+/// client's activation reaches the publisher, and closing the stream withdraws them.
+#[cfg(unix)]
+#[test]
+fn a_pane_with_no_ui_publishes_to_its_session_and_hears_activations() {
+    use std::io::{BufRead, Write};
+    use std::time::{Duration, Instant};
+
+    use rozi::session::protocol::{
+        Capabilities, ClientMessage, Frame, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, RowKey,
+        ServerMessage,
+    };
+
+    let _discovery = DISCOVERY_UIS.lock().unwrap();
+    rozi::test_support::isolate_user_dirs();
+    let server = spawn_listener(ServerSettings::default());
+    let spawned = data(
+        cli()
+            .args([
+                "--session",
+                server.session(),
+                "split",
+                "--argv",
+                "sleep",
+                "60",
+            ])
+            .output()
+            .unwrap(),
+    );
+    let pane = spawned["id"].as_u64().unwrap();
+    let pane_info = |server: &crate::common::ListenerGuard| {
+        let panes = run_session_control(server.session(), request(ControlCommand::ListPanes))
+            .unwrap()
+            .data
+            .unwrap();
+        panes
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|info| info["id"].as_u64() == Some(pane))
+            .cloned()
+            .unwrap()
+    };
+    let reference = pane_info(&server)["reference"].clone();
+    let instance = reference["session_instance"].as_str().unwrap().to_string();
+    let generation = reference["generation"].as_u64().unwrap();
+
+    // A UI named with `--socket` is the only endpoint: one that does not answer is an error, never
+    // a reason to publish somewhere else.
+    let named = cli()
+        .env("ROZI_PANE", pane.to_string())
+        .env("ROZI_SESSION_INSTANCE", &instance)
+        .args(["--socket", "/nonexistent/rozi.sock", "publish"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(named.status.code(), Some(2), "{named:?}");
+
+    // The UI the pane inherited is gone, as it is for a restored pane: the session takes over.
+    let mut publisher = cli()
+        .env("ROZI_PANE", pane.to_string())
+        .env("ROZI_SESSION_INSTANCE", &instance)
+        .env("ROZI_SOCKET", "/nonexistent/rozi.sock")
+        .args(["publish", "--kind", "agent", "--name", "jobs"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let mut rows_in = publisher.stdin.take().unwrap();
+    writeln!(
+        rows_in,
+        r#"{{"rows":[{{"id":"job-1","title":"Build","status":"working","active":false}}]}}"#
+    )
+    .unwrap();
+    let listed = |server: &crate::common::ListenerGuard| {
+        run_session_control(server.session(), request(ControlCommand::AgentsList))
+            .unwrap()
+            .data
+            .unwrap()
+            .to_string()
+            .contains("job-1")
+    };
+    let deadline = Instant::now() + common::io_timeout();
+    while !listed(&server) {
+        assert!(
+            Instant::now() < deadline,
+            "the publisher's rows never reached the session"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let mut client = common::TestConnection::connect(server.endpoint());
+    client.write_control(&ClientMessage::Attach {
+        capabilities: Some(Capabilities::current()),
+        session: server.session().to_string(),
+        protocol_version: PROTOCOL_VERSION,
+        min_protocol_version: MIN_SUPPORTED_PROTOCOL,
+        label: "activator".into(),
+        read_only: false,
+        shares_filesystem: true,
+        expected_server_nonce: None,
+        handoff_token: None,
+    });
+    common::read_until(&mut client, |frame| {
+        matches!(frame, Frame::Control(ServerMessage::Attached { .. }))
+    });
+    client.write_control(&ClientMessage::ActivatePublishedRow {
+        pane_id: pane as u32,
+        generation,
+        row: RowKey::new("0/publish:jobs", "job-1"),
+    });
+    let mut activations = std::io::BufReader::new(publisher.stdout.take().unwrap());
+    let mut line = String::new();
+    activations.read_line(&mut line).unwrap();
+    assert_eq!(line.trim(), r#"{"activate":"job-1"}"#);
+
+    // The publisher goes away; its rows go with it.
+    drop(rows_in);
+    assert!(publisher.wait().unwrap().success());
+    let deadline = Instant::now() + common::io_timeout();
+    while listed(&server) {
+        client.drain_available();
+        assert!(
+            Instant::now() < deadline,
+            "the publisher's rows outlived it"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }

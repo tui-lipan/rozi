@@ -219,8 +219,10 @@ lock is on. Typing runs commands as the session owner's account, so an `editor` 
 guest has that account's access to the machine. A writable client on the owner's own account can
 also stop the session, even when another client controls the layout and even with input lock on.
 
-A `viewer` cannot type, but sees everything the panes show. Do not share a session whose screen
-shows secrets the viewer should not read.
+A `viewer` cannot type, but sees everything the panes show, including scrollback, and what rozi
+knows about each pane: its working directory and project, the command it runs, and the state of
+any agent in it. A viewer can list agent requests but cannot read their prompts or answers. Do not
+share a session whose panes show secrets the viewer should not read.
 
 Immediate takeover suits sessions where every client is yours. Turn it off when sharing with other
 people: taking control changes the terminal size and can make another person's full-screen program

@@ -126,6 +126,9 @@ pub enum Permission {
     Admin,
     /// Read the owner's files outside a pane: the file tree, changed files, worktrees.
     HostFiles,
+    /// Read what agents were asked and what they answered. Neither has to reach a pane, so a guest
+    /// who may only see panes does not read them.
+    AgentContent,
 }
 
 /// A client's standing with a session, as its server holds it.
@@ -170,6 +173,9 @@ impl ClientAccess {
             // Sharing a machine does not make the owner's files the guest's to read, and a
             // read-only attach by the owner still browses its own files.
             Permission::HostFiles => self.origin == ClientOrigin::Owner,
+            Permission::AgentContent => {
+                self.origin == ClientOrigin::Owner || self.allows(Permission::Input)
+            }
         }
     }
 

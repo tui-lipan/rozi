@@ -110,9 +110,6 @@ impl ControlCommand {
             | Self::AgentsList
             | Self::AgentGet { .. }
             | Self::AgentRead { .. }
-            | Self::AgentResponse { .. }
-            | Self::AgentWait { .. }
-            | Self::AgentRequest { .. }
             | Self::AgentRequests { .. }
             | Self::Metrics
             | Self::CapturePane { .. }
@@ -136,6 +133,9 @@ impl ControlCommand {
             | Self::AgentAttach { .. }
             | Self::AgentAttachCancel { .. }
             | Self::Notify { .. } => Permission::Input,
+            Self::AgentResponse { .. } | Self::AgentWait { .. } | Self::AgentRequest { .. } => {
+                Permission::AgentContent
+            }
             Self::LayoutSet { .. }
             | Self::PaneSet { .. }
             | Self::PaneMove { .. }

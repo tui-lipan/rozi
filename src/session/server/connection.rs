@@ -361,6 +361,7 @@ impl SessionServer {
             && !self.holds_recording_reply(id)
             && !self.holds_deployment_reply(id)
             && !self.holds_invocation_reply(id)
+            && !self.holds_attachment_reply(id)
             && !self.is_session_subscriber(id)
         {
             self.set_close_after_flush(id);

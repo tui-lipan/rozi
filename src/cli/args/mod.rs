@@ -267,8 +267,8 @@ pub(crate) enum ParsedCli {
     /// relaunch passes it, and always alone.
     ResumeHandoff(String),
     Control(ControlCli),
-    /// `agents ask --wait`: ask, then await the request for this many milliseconds.
-    AskAndAwait(ControlCli, u64),
+    /// `agents ask --wait`, or `agents await --require-reply`: collect a request's answer.
+    AgentAnswer(ControlCli, crate::cli::control::AnswerOptions),
     Publish(PublishCli),
     Subscribe(SubscribeCli),
     Pick(PickCli),
@@ -709,6 +709,8 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     command,
                     format: output_format,
                     await_ms,
+                    require_reply,
+                    attachments,
                 } = agents::parse_agents(args)?;
                 let endpoint = control_endpoint(&cli, socket, &command)?;
                 let request = control_request(command);
@@ -733,10 +735,20 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     output_format,
                     output: None,
                 };
-                return Ok(match await_ms {
-                    Some(timeout_ms) => ParsedCli::AskAndAwait(control, timeout_ms),
-                    None => ParsedCli::Control(control),
-                });
+                return Ok(
+                    if await_ms.is_some() || require_reply || !attachments.is_empty() {
+                        ParsedCli::AgentAnswer(
+                            control,
+                            crate::cli::control::AnswerOptions {
+                                ask_then_await_ms: await_ms,
+                                require_reply,
+                                attachments: attachments.into_iter().map(PathBuf::from).collect(),
+                            },
+                        )
+                    } else {
+                        ParsedCli::Control(control)
+                    },
+                );
             }
             "record" => {
                 let args = iter.collect::<Vec<_>>();

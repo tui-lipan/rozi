@@ -58,6 +58,12 @@ pub enum Capability {
     /// [`super::PaneMeta::program_title`] carries the program's own title, so a client can tell it
     /// from a name the user gave the pane. Without it, `title` is the only title there is.
     PaneProgramTitle,
+    /// The server groups agent requests into conversations: `AgentRequestInfo::conversation`,
+    /// and `agent-ask` with `follows`, which joins an asker with no agent to an earlier one.
+    AgentConversations,
+    /// The server stores files sent with `agent-attach`, so a request can carry them to an agent
+    /// on another host.
+    AgentAttachments,
     /// The server shares its session with other operating-system accounts: it serves the
     /// `share-grant`, `share-revoke`, and `share-list` control commands, reports each client's
     /// [`super::SessionRole`] in the roster, and refuses a request a client's access does not cover
@@ -67,7 +73,9 @@ pub enum Capability {
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 11] = [
+    pub const ALL: [Capability; 13] = [
+        Capability::AgentAttachments,
+        Capability::AgentConversations,
         Capability::AgentReplyLater,
         Capability::AgentRequestUpdates,
         Capability::AgentRequests,
@@ -95,6 +103,8 @@ impl Capability {
             Capability::AgentRequestUpdates => "agent-request-updates",
             Capability::PaneProgramTitle => "pane-program-title",
             Capability::SessionSharing => "session-sharing",
+            Capability::AgentConversations => "agent-conversations",
+            Capability::AgentAttachments => "agent-attachments",
         }
     }
 
@@ -109,7 +119,7 @@ impl Capability {
             Self::DragAndDrop => "0.0.46",
             Self::AgentRequests => "0.0.47",
             Self::AgentReplyLater | Self::AgentRequestUpdates | Self::PaneProgramTitle => "0.0.48",
-            Self::SessionSharing => "0.0.50",
+            Self::AgentConversations | Self::AgentAttachments | Self::SessionSharing => "0.0.50",
         }
     }
 
@@ -196,6 +206,16 @@ pub const GATED_VOCABULARY: &[GatedValue] = &[
         vocabulary: "ControlRequest",
         value: "agent-reply-later",
         capability: Capability::AgentReplyLater,
+    },
+    GatedValue {
+        vocabulary: "ControlRequest",
+        value: "agent-attach",
+        capability: Capability::AgentAttachments,
+    },
+    GatedValue {
+        vocabulary: "ControlRequest",
+        value: "agent-attach-cancel",
+        capability: Capability::AgentAttachments,
     },
     session_sharing_command("share-grant"),
     session_sharing_command("share-revoke"),

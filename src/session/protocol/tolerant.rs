@@ -29,6 +29,16 @@ where
     Ok(T::deserialize(&value).unwrap_or_else(|_| T::unknown(value.as_str())))
 }
 
+/// [`deserialize`] for an optional field: absent or `null` stays `None`.
+pub fn deserialize_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: DeserializeOwned + UnknownValue,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.map(|value| T::deserialize(&value).unwrap_or_else(|_| T::unknown(value.as_str()))))
+}
+
 impl UnknownValue for super::AgentState {
     /// The rule a custom status already follows: a state Rozi has no word for is a run still
     /// going, never a stop it cannot vouch for.

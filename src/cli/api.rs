@@ -52,6 +52,7 @@ const REPLY_PAYLOADS: &[(&str, &[&str])] = &[
     ("agent-ask", &["AgentRequestInfo"]),
     ("agent-await", &["AgentRequestInfo"]),
     ("agent-cancel", &["AgentRequestInfo"]),
+    ("agent-attach", &["AgentAttachmentUpload"]),
     ("agent-get", &["AgentInfo"]),
     ("agent-reply", &["AgentRequestInfo"]),
     ("agent-reply-later", &["AgentRequestInfo"]),
@@ -107,6 +108,7 @@ const REPLY_PAYLOADS: &[(&str, &[&str])] = &[
 /// Commands that answer with no named payload. Listed so that a new command has to choose.
 #[cfg(test)]
 const NO_REPLY_PAYLOAD: &[&str] = &[
+    "agent-attach-cancel",
     "agent-go",
     "agent-release",
     "agent-report",

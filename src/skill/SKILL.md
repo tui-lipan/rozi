@@ -248,7 +248,7 @@ rozi agents list --format json
 rozi agents get --target <PANE_ID> --format json
 rozi agents read --target <PANE_ID> --scrollback 200
 rozi agents wait --target <PANE_ID> --until quiescent --timeout 2m
-rozi agents ask --ref '<JSON>' --wait --timeout 30m --format text -- 'Fix the failing test and tell me the cause'
+rozi agents ask --target <PANE_ID> --wait --timeout 30m --format text -- 'Fix the failing test and tell me the cause'
 rozi --here agents prompt --ref '<JSON>' --wait turn --timeout 10m '/compact'
 rozi agents response --target <PANE_ID> --format json
 rozi --session dev agents wait --target <PANE_ID> --until quiescent --timeout 2m
@@ -293,17 +293,37 @@ chrome and older output included. Treat it as terminal content, not an assistant
 interrupting it, and its answer is the agent's own reply text:
 
 ```bash
-rozi agents ask --ref '<JSON>' --wait --timeout 30m --format text -- 'Review the parser changes in src/parse.rs'
+rozi agents ask --target <PANE_ID> --wait --timeout 30m --format text -- 'Review the parser changes in src/parse.rs'
 ```
 
-- `ask`, `reply`, and `await` go to the session of the pane you run them in. From outside Rozi,
-  pass `--session <NAME>`; the request then has no asker. Take the target's `ref` from
-  `rozi agents list --format json`.
+- `--target <PANE_ID>` asks the agent on screen in that pane. Pass `--ref` instead when a
+  replacement agent in the pane must not receive it, or for an agent that is not on screen.
+- `ask`, `reply`, and `await` go to the session of the pane you run them in. For another session
+  pass `--session <NAME>`, and for another host `--remote <HOST> --session <NAME>`. The request
+  then has no asker there: it carries your agent and pane, a named session, and your host for
+  `--remote` as a label, and the other agent sees it as asked from outside its session.
 - Run `ask --wait` as a **background command** when your harness has them. Your turn can end, the
   command exits with the answer as its output, and you are notified then. Ask several agents at
   once with one background command each. Keep `--format text`: without it, captured output is JSON.
-- If the wait fails, the error names the request id: `rozi agents await` it, do not ask again.
-  For long work, await again after a timeout rather than giving `--timeout` a huge value.
+- **Follow-ups.** Ask the same agent again to continue: it is the same conversation and the agent
+  keeps its context. Requests between the same two agents share a `conversation`, which the
+  Agent conversations view draws as one thread. From another session or host, pass
+  `--follows <ID>` with your earlier request's id to join its conversation.
+- **Files.** `--attach <FILE>` (repeatable, up to 16 files of 16 MiB) sends a screenshot, log, or
+  any other file with the request; the other agent gets their paths after your text. With
+  `--remote`, Rozi copies them to that host first. Do not paste your own local paths into the
+  text for an agent on another host: they do not exist there.
+- `ask --wait` prints `asked <ID>` on stderr at once, and after the answer a `note:` line when it
+  is not a reply; a harness that merges stderr shows both around the answer. If the wait fails, `rozi agents await <ID>`,
+  do not ask again. For long work, await again after a timeout rather than giving `--timeout` a
+  huge value.
+- **Is it a real reply?** With `--format text`, stdout is only the answer. When the agent's turn
+  ended without `agents reply`, the answer is its last message or its screen, and stderr says
+  `note: not a reply …`.
+  Add `--require-reply` to make that exit 3. In JSON, `response.source` is `agent-cli` for a reply;
+  `agents requests --format json` lists each request's `response_source` without the text, and
+  `agents request <ID> --format json` shows one in full: `prompt`, `state`, and `response` with
+  `text`, `source`, `complete`, and `truncated`.
 - The other agent replies by running `rozi agents reply`, which connects to Rozi's local socket.
   Codex's `workspace-write` sandbox counts that as network and denies it, leaving you a
   `source: "terminal"` answer: its screen, not its reply. Start Codex with
@@ -315,17 +335,19 @@ rozi agents ask --ref '<JSON>' --wait --timeout 30m --format text -- 'Review the
 - `agents prompt` types exact text, such as a slash command, and its `--result` falls back to the
   terminal. Use it when the input itself matters, not to collect an answer.
 
-**Answering.** A request that arrives in your own prompt starts with `Request <id>` and ends by
-naming the reply command. Pipe the whole answer to it; the reply text is all the asker receives:
+**Answering.** A request that arrives in your own prompt starts with `Request <id> from <asker>`,
+and `following <id>` when it continues a conversation, and ends by naming the reply command. Pipe
+the whole answer to it; the reply text is all the asker receives. With `--format text`,
+`reply` prints one line instead of the request as JSON:
 
 ```bash
-rozi agents reply <ID> --stdin <<'EOF'
+rozi agents reply <ID> --format text --stdin <<'EOF'
 The parser is fine; the lexer drops a trailing newline in src/lex.rs.
 EOF
 ```
 
 - To answer after your turn ends, such as when a background command finishes, run
-  `rozi agents reply <ID> --later` before the turn ends, then `reply` when you have the answer.
+  `rozi agents reply <ID> --format text --later` before the turn ends, then `reply` when you have the answer.
   Otherwise the end of your turn answers the request with your terminal. You can take other
   requests meanwhile. While you owe more than one request, an `ask` you make for one of them
   needs `--for <ID>`.

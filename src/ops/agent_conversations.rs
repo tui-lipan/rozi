@@ -56,7 +56,7 @@ pub(crate) fn open_chain(ctx: &mut Context<AppRoot>, id: String) -> Update {
     let root = crate::view::agent_requests::requests(&ctx.state)
         .iter()
         .find(|request| request.id == id)
-        .map(|request| request.root.clone());
+        .map(|request| request.conversation().to_string());
     let Some(view) = ctx.state.agent_conversations.as_mut() else {
         return Update::none();
     };

@@ -70,6 +70,7 @@ pub fn bundle() -> Value {
     add::<crate::control::AgentResponse>(&mut generator, &mut roots);
     add::<crate::control::AgentWaitResult>(&mut generator, &mut roots);
     add::<crate::control::AgentRequestInfo>(&mut generator, &mut roots);
+    add::<crate::control::AgentAttachmentUpload>(&mut generator, &mut roots);
     add::<crate::control::AgentRequestList>(&mut generator, &mut roots);
     add::<crate::control::SessionMetricsReport>(&mut generator, &mut roots);
     add::<crate::control::RecordingInfo>(&mut generator, &mut roots);

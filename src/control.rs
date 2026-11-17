@@ -132,6 +132,9 @@ impl ControlCommand {
             | Self::AgentReplyLater { .. }
             | Self::AgentAwait { .. }
             | Self::AgentCancel { .. }
+            // Files for an `agent-ask`, under the same random transfer ids the asker holds.
+            | Self::AgentAttach { .. }
+            | Self::AgentAttachCancel { .. }
             | Self::Notify { .. } => Permission::Input,
             Self::LayoutSet { .. }
             | Self::PaneSet { .. }
@@ -240,6 +243,15 @@ impl ControlCommand {
             | Self::RecordUiMark { .. }
             | Self::Pick { .. }
             | Self::Prompt { .. } => None,
+            Self::AgentAsk {
+                follows: Some(_), ..
+            } => Some(crate::session::protocol::Capability::AgentConversations),
+            Self::AgentAttach { .. } | Self::AgentAttachCancel { .. } => {
+                Some(crate::session::protocol::Capability::AgentAttachments)
+            }
+            Self::AgentAsk { attachments, .. } if !attachments.is_empty() => {
+                Some(crate::session::protocol::Capability::AgentAttachments)
+            }
             Self::AgentReplyLater { .. }
             | Self::AgentAsk {
                 parent: Some(_), ..
@@ -885,6 +897,19 @@ pub enum ControlCommand {
         prompt: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent: Option<String>,
+        /// An earlier request whose conversation this one continues, for an asker the session
+        /// cannot place in one itself: a person, a script, or a caller on another host.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        follows: Option<String>,
+        /// Who is asking, as the caller describes itself, when it is not an agent of this
+        /// session. Shown only, and always marked as coming from outside the session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        asker_label: Option<String>,
+        /// Files uploaded with `agent-attach`, by transfer id, that go with this request. The
+        /// session lists their paths after the prompt and keeps them once the request exists; a
+        /// refused ask leaves them unclaimed.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<u64>,
     },
     /// Answer a request sent to the calling agent.
     AgentReply { id: String, text: String },
@@ -906,6 +931,23 @@ pub enum ControlCommand {
     },
     /// Cancel a request the caller made.
     AgentCancel { id: String },
+    /// Store one chunk of a file in the session, for a request to one of its agents. `transfer`
+    /// is the caller's id for the file. The chunk at `offset` 0 starts it, each later one must
+    /// continue where the stored file ends, and `last` finishes it. A finished file waits for an
+    /// `agent-ask` that names it in `attachments`, which keeps it until the session stops;
+    /// one no request claims is deleted after a while.
+    AgentAttach {
+        transfer: u64,
+        name: String,
+        size: u64,
+        offset: u64,
+        /// Base64 of the bytes in this chunk.
+        data: String,
+        #[serde(default)]
+        last: bool,
+    },
+    /// Drop uploads no request claimed, finished or not, so a failed ask frees their space at once.
+    AgentAttachCancel { transfers: Vec<u64> },
     /// Share this session with another operating-system account, or change the role of one it
     /// is already shared with. Answers with the [`ShareState`] after the change.
     ShareGrant {
@@ -2099,6 +2141,21 @@ pub enum ExtensionDeploymentStatus {
     Unavailable,
 }
 
+/// The most file bytes one `agent-attach` chunk carries. Each chunk over `--remote` is an SSH
+/// round trip of its own, so chunks are large, and still well inside [`MAX_CONTROL_MESSAGE`] once
+/// encoded.
+pub const AGENT_ATTACH_CHUNK_BYTES: usize = 2 * 1024 * 1024;
+
+/// One chunk's answer to `agent-attach`: how much of the file the session holds, and once the
+/// last chunk is in, where it keeps the file.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct AgentAttachmentUpload {
+    pub received: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
 /// One chunk's answer to `extensions-deploy`.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
@@ -2746,6 +2803,13 @@ pub enum AgentResponseSource {
     AgentCli,
 }
 
+impl AgentResponseSource {
+    /// Whether the text was read off the agent's screen, rather than given as a message.
+    pub fn is_screen(self) -> bool {
+        matches!(self, Self::Terminal | Self::AlternateScreenHistory)
+    }
+}
+
 /// Where an agent request is.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -2776,6 +2840,11 @@ pub struct AgentRequestInfo {
     /// The request the asking agent was answering when it asked this one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
+    /// The back-and-forth this request belongs to, named by its first request: every exchange
+    /// between the same two agents in the same native conversations, with what each one asked
+    /// on its behalf. Absent from servers that predate conversations; read it as `root` then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<String>,
     /// The asking agent, absent when the caller was not an agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<crate::session::protocol::AgentRef>,
@@ -2810,6 +2879,8 @@ pub struct AgentRequestSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<crate::session::protocol::AgentRef>,
     pub to: crate::session::protocol::AgentRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2819,8 +2890,34 @@ pub struct AgentRequestSummary {
     pub state: AgentRequestState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Where the answer came from, so a list shows a terminal fallback without reading each one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::session::protocol::tolerant::deserialize_option"
+    )]
+    #[cfg_attr(feature = "schema-gen", schemars(with = "Option<AgentResponseSource>"))]
+    pub response_source: Option<AgentResponseSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_complete: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_truncated: Option<bool>,
     pub created_at_unix_ms: u64,
     pub updated_at_unix_ms: u64,
+}
+
+impl AgentRequestInfo {
+    /// The conversation this request belongs to; a request from an older server is its chain's.
+    pub fn conversation(&self) -> &str {
+        self.conversation.as_deref().unwrap_or(&self.root)
+    }
+}
+
+impl AgentRequestSummary {
+    /// The conversation this request belongs to; a request from an older server is its chain's.
+    pub fn conversation(&self) -> &str {
+        self.conversation.as_deref().unwrap_or(&self.root)
+    }
 }
 
 impl From<&AgentRequestInfo> for AgentRequestSummary {
@@ -2829,12 +2926,25 @@ impl From<&AgentRequestInfo> for AgentRequestSummary {
             id: request.id.clone(),
             root: request.root.clone(),
             parent: request.parent.clone(),
+            conversation: request.conversation.clone(),
             from: request.from.clone(),
             to: request.to.clone(),
             from_label: request.from_label.clone(),
             to_label: request.to_label.clone(),
             state: request.state,
             reason: request.reason.clone(),
+            response_source: request
+                .response
+                .as_ref()
+                .map(|response| response.content.source),
+            response_complete: request
+                .response
+                .as_ref()
+                .map(|response| response.content.complete),
+            response_truncated: request
+                .response
+                .as_ref()
+                .map(|response| response.content.truncated),
             created_at_unix_ms: request.created_at_unix_ms,
             updated_at_unix_ms: request.updated_at_unix_ms,
         }
@@ -3375,6 +3485,9 @@ mod tests {
             target: AgentTarget::Pane(3),
             prompt: "why?".into(),
             parent: parent.map(Into::into),
+            follows: None,
+            asker_label: None,
+            attachments: Vec::new(),
         };
         assert_eq!(
             ask(None).required_session_capability(),
@@ -3391,7 +3504,9 @@ mod tests {
                 crate::session::protocol::Capability::AgentReplyLater
                 | crate::session::protocol::Capability::AgentRequestUpdates
                 | crate::session::protocol::Capability::PaneProgramTitle => "0.0.48",
-                crate::session::protocol::Capability::SessionSharing => "0.0.50",
+                crate::session::protocol::Capability::SessionSharing
+                | crate::session::protocol::Capability::AgentConversations
+                | crate::session::protocol::Capability::AgentAttachments => "0.0.50",
                 _ => "0.0.44",
             };
             assert_eq!(cap.introduced_in(), expected, "{cap}");

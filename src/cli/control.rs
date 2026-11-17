@@ -1367,10 +1367,16 @@ fn report_control(
     }
     exit_on_failure(&value);
     if human_output {
-        print!(
-            "{}",
+        let text = crate::cli::output::format_share_control_text(
+            &command.request.command,
+            Some(&command.endpoint),
+            &value,
+            OutputStyles::detect(),
+        )
+        .unwrap_or_else(|| {
             format_control_text(&command.request.command, &value, OutputStyles::detect())
-        );
+        });
+        print!("{text}");
         if matches!(
             command.request.command,
             control::ControlCommand::AgentAwait { .. }

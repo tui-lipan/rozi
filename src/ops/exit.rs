@@ -394,6 +394,14 @@ pub(crate) fn kill_session_with_confirmation(
         crate::pane::pty_events::notify_info(ctx, "Not attached to a session");
         return Update::full();
     }
+    if ctx.state.current().is_guest_session() {
+        crate::pane::pty_events::notify_error(
+            ctx,
+            "Kill failed",
+            "Only the session owner can kill this session",
+        );
+        return Update::full();
+    }
     if !ctx.state.is_controller() {
         crate::ops::session::nudge_if_follower(ctx);
         return Update::full();
@@ -431,6 +439,14 @@ pub(crate) fn restart_session_with_confirmation(
 ) -> Update {
     if !ctx.state.current().session_attached {
         crate::pane::pty_events::notify_info(ctx, "Not attached to a session");
+        return Update::full();
+    }
+    if ctx.state.current().is_guest_session() {
+        crate::pane::pty_events::notify_error(
+            ctx,
+            "Restart failed",
+            "Only the session owner can restart this session",
+        );
         return Update::full();
     }
     if !ctx.state.is_controller() {
@@ -472,6 +488,14 @@ pub(crate) fn upgrade_session_with_confirmation(
 ) -> Update {
     if !ctx.state.current().session_attached {
         crate::pane::pty_events::notify_info(ctx, "Not attached to a session");
+        return Update::full();
+    }
+    if ctx.state.current().is_guest_session() {
+        crate::pane::pty_events::notify_error(
+            ctx,
+            "Upgrade failed",
+            "Only the session owner can upgrade this session",
+        );
         return Update::full();
     }
     if !ctx.state.is_controller() {
@@ -557,6 +581,8 @@ mod tests {
             read_only: false,
             requesting_control: false,
             parked: false,
+            role: None,
+            user: None,
         }];
         state.current_mut().shared = Some(shared);
         backend
@@ -588,6 +614,8 @@ mod tests {
                 read_only: false,
                 requesting_control: false,
                 parked: false,
+                role: None,
+                user: None,
             }];
             shared.last_committed_layout = None;
             state.current_mut().shared = Some(shared);
@@ -697,6 +725,8 @@ mod tests {
                     read_only: false,
                     requesting_control: false,
                     parked: false,
+                    role: None,
+                    user: None,
                 }];
                 state.current_mut().shared = Some(shared);
             }

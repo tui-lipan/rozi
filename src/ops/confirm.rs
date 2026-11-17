@@ -58,6 +58,9 @@ fn clear_all(ctx: &mut Context<AppRoot>) -> Update {
     if let Some(collaboration) = ctx.state.collaboration.as_mut() {
         cleared |= collaboration.pending_kick.take().is_some();
     }
+    if let Some(sharing) = ctx.state.sharing.as_mut() {
+        cleared |= sharing.pending_revoke.take().is_some();
+    }
     if let Some(extensions) = ctx.state.extensions.as_mut() {
         cleared |= extensions.pending_remove.take().is_some();
     }

@@ -136,7 +136,10 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::AgentRequests { .. }
         | ControlCommand::AgentCancel { .. }
         | ControlCommand::AgentAttach { .. }
-        | ControlCommand::AgentAttachCancel { .. } => None,
+        | ControlCommand::AgentAttachCancel { .. }
+        | ControlCommand::ShareGrant { .. }
+        | ControlCommand::ShareRevoke { .. }
+        | ControlCommand::ShareList => None,
         ControlCommand::ListAttachedPanes => Some(
             "list-panes --scope attached needs a UI; a session server knows only its own panes",
         ),
@@ -255,6 +258,11 @@ pub fn attached_control_refusal(
         ControlCommand::RecordStart { .. }
         | ControlCommand::RecordStop { .. }
         | ControlCommand::RecordMark { .. } => None,
+        // Share management stays gated on `ControlCommand::required_permission() == Admin` in
+        // `serve_control`, so only the session owner's non-read-only client passes.
+        ControlCommand::ShareGrant { .. }
+        | ControlCommand::ShareRevoke { .. }
+        | ControlCommand::ShareList => None,
         // The server derives who asks or answers from the calling pane, which a UI cannot vouch
         // for; the CLI sends these to the pane's own session.
         ControlCommand::AgentAsk { .. }
@@ -285,15 +293,20 @@ pub(super) enum ReplyTo {
     Headless {
         capabilities: Capabilities,
         effective_protocol: u32,
+        permission: crate::session::protocol::Permission,
     },
     /// A streaming headless connection (such as [`ControlCommand::Subscribe`]), kept open across
     /// multiple frames.
     StreamingHeadless {
         capabilities: Capabilities,
         effective_protocol: u32,
+        permission: crate::session::protocol::Permission,
     },
     /// An attached client's [`ClientMessage::AttachedControl`]; the connection carries on.
-    Attached { request_id: u64 },
+    Attached {
+        request_id: u64,
+        permission: crate::session::protocol::Permission,
+    },
 }
 
 impl ReplyTo {
@@ -326,16 +339,18 @@ impl ReplyTo {
             Self::Headless {
                 capabilities,
                 effective_protocol,
+                ..
             }
             | Self::StreamingHeadless {
                 capabilities,
                 effective_protocol,
+                ..
             } => ServerMessage::SessionControlResult {
                 capabilities: Some(capabilities.clone()),
                 effective_protocol: *effective_protocol,
                 response,
             },
-            Self::Attached { request_id } => ServerMessage::AttachedControlResult {
+            Self::Attached { request_id, .. } => ServerMessage::AttachedControlResult {
                 request_id: *request_id,
                 response,
             },
@@ -347,7 +362,17 @@ impl ReplyTo {
     pub(super) fn hold_id(&self) -> u64 {
         match self {
             Self::Headless { .. } | Self::StreamingHeadless { .. } => 0,
-            Self::Attached { request_id } => *request_id,
+            Self::Attached { request_id, .. } => *request_id,
+        }
+    }
+
+    /// What the request this answers needed. An answer held across a role change is authorized
+    /// again against it before it goes; see [`SessionServer::answer_held`].
+    pub(super) fn permission(&self) -> crate::session::protocol::Permission {
+        match self {
+            Self::Headless { permission, .. }
+            | Self::StreamingHeadless { permission, .. }
+            | Self::Attached { permission, .. } => *permission,
         }
     }
 
@@ -409,7 +434,28 @@ impl SessionServer {
                 )];
             }
         };
-        if session != self.session_name {
+        let guest_id = self
+            .client(client_id)
+            .and_then(|client| client.guest.as_ref().map(|g| g.id));
+        if let Some(uid) = guest_id
+            && self.shares.grant_for(uid).is_none()
+        {
+            return vec![(
+                Target::Sender,
+                ServerMessage::Error {
+                    code: crate::session::protocol::NOT_SHARED_ERROR_CODE.to_string(),
+                    message: "this session is not shared with your account".to_string(),
+                    peer: None,
+                },
+            )];
+        }
+        let session_matches = if guest_id.is_some() {
+            crate::session::naming::SessionAddress::parse(&session)
+                .is_some_and(|address| address.name == self.session_name)
+        } else {
+            session == self.session_name
+        };
+        if !session_matches {
             return vec![(
                 Target::Sender,
                 ServerMessage::Error {
@@ -440,17 +486,36 @@ impl SessionServer {
                 },
             )];
         }
+        let negotiated = protocol::Capabilities::negotiated(capabilities.as_ref());
+        let permission = request.command.required_permission();
         let reply = if matches!(request.command, ControlCommand::Subscribe { .. }) {
             ReplyTo::StreamingHeadless {
-                capabilities: protocol::Capabilities::negotiated(capabilities.as_ref()),
+                capabilities: negotiated.clone(),
                 effective_protocol: effective,
+                permission,
             }
         } else {
             ReplyTo::Headless {
-                capabilities: protocol::Capabilities::negotiated(capabilities.as_ref()),
+                capabilities: negotiated.clone(),
                 effective_protocol: effective,
+                permission,
             }
         };
+        if matches!(
+            request.command,
+            ControlCommand::ShareGrant { .. }
+                | ControlCommand::ShareRevoke { .. }
+                | ControlCommand::ShareList
+        ) && !negotiated.supports(protocol::Capability::SessionSharing)
+        {
+            return vec![(
+                Target::Sender,
+                reply.message(ControlResponse::error_with(
+                    ControlErrorCode::Unsupported,
+                    "this client did not negotiate session-sharing",
+                )),
+            )];
+        }
         self.serve_control(client_id, &reply, request)
     }
 
@@ -464,7 +529,10 @@ impl SessionServer {
         request_id: u64,
         request: ControlRequest,
     ) -> Vec<(Target, ServerMessage)> {
-        let reply = ReplyTo::Attached { request_id };
+        let reply = ReplyTo::Attached {
+            request_id,
+            permission: request.command.required_permission(),
+        };
         let read_only = self.client_read_only(client_id);
         if let Some((code, reason)) = attached_control_refusal(&request.command, read_only) {
             return vec![(
@@ -490,6 +558,25 @@ impl SessionServer {
         })
     }
 
+    fn client_access_for_control(&self, client_id: ClientId) -> protocol::ClientAccess {
+        let Some(client) = self.client(client_id) else {
+            // Direct unit-test calls to `handle_session_control` without a registered `ClientConn`
+            // act as the session owner.
+            return protocol::ClientAccess::OWNER;
+        };
+        if let Some(guest) = &client.guest {
+            if client.attached {
+                client.access
+            } else if let Some(grant) = self.shares.grant_for(guest.id) {
+                protocol::ClientAccess::guest(grant.role, false)
+            } else {
+                protocol::ClientAccess::guest(protocol::SessionRole::Viewer, true)
+            }
+        } else {
+            client.access
+        }
+    }
+
     /// Serve one control request whose answer goes to `reply`.
     ///
     /// Returns the answer plus whatever the command changed for everyone else. A command that
@@ -501,6 +588,21 @@ impl SessionServer {
         reply: &ReplyTo,
         mut request: ControlRequest,
     ) -> Vec<(Target, ServerMessage)> {
+        if !matches!(request.command, ControlCommand::Unknown) {
+            let access = self.client_access_for_control(client_id);
+            if !access.allows(request.command.required_permission()) {
+                return vec![(
+                    Target::Sender,
+                    reply.message(ControlResponse::error_with(
+                        ControlErrorCode::NotPermitted,
+                        format!(
+                            "permission denied: {} role cannot run this command",
+                            access.role
+                        ),
+                    )),
+                )];
+            }
+        }
         if let Err(response) = self.authorize_session_worker(client_id, &mut request) {
             return vec![(Target::Sender, reply.message(response))];
         }
@@ -623,12 +725,24 @@ impl SessionServer {
     }
 
     /// Send `response` to a reply held since its request, closing a headless connection behind it.
+    ///
+    /// The client's access is checked again first: a guest whose role shrank while the answer was
+    /// held gets a refusal instead of what its old role could read.
     pub(super) fn answer_held(
         &mut self,
         client_id: ClientId,
         reply: &ReplyTo,
-        response: ControlResponse,
+        mut response: ControlResponse,
     ) {
+        if !self
+            .client_access_for_control(client_id)
+            .allows(reply.permission())
+        {
+            response = ControlResponse::error_with(
+                ControlErrorCode::NotPermitted,
+                "permission denied: this client's role changed while the request was waiting",
+            );
+        }
         self.enqueue(client_id, Target::Sender, reply.message(response));
         if reply.closes() {
             self.set_close_after_flush(client_id);
@@ -918,6 +1032,9 @@ impl SessionServer {
                 title,
                 level,
             } => self.session_notify(message, title, level),
+            ControlCommand::ShareGrant { user, role } => self.share_grant(&user, role, broadcasts),
+            ControlCommand::ShareRevoke { user } => self.share_revoke(user.as_deref(), broadcasts),
+            ControlCommand::ShareList => self.share_list(),
             // Every remaining variant was refused above by `session_control_unsupported`, or is
             // held for its answer by `serve_control`, as deployments are.
             other => ControlResponse::error(
@@ -2382,8 +2499,12 @@ mod tests {
         let headless = ReplyTo::Headless {
             capabilities: Capabilities::current(),
             effective_protocol: PROTOCOL_VERSION,
+            permission: crate::session::protocol::Permission::View,
         };
-        let attached = ReplyTo::Attached { request_id: 7 };
+        let attached = ReplyTo::Attached {
+            request_id: 7,
+            permission: crate::session::protocol::Permission::View,
+        };
         for to in [headless, attached] {
             let reply = |response| match to.message(response) {
                 ServerMessage::SessionControlResult { response, .. } => response,
@@ -2510,7 +2631,10 @@ mod tests {
     #[test]
     fn deployment_writes_require_a_writable_named_session() {
         let mut temporary = SessionServer::new_named("eph-deployment");
-        let reply = ReplyTo::Attached { request_id: 1 };
+        let reply = ReplyTo::Attached {
+            request_id: 1,
+            permission: crate::session::protocol::Permission::View,
+        };
         let response = temporary
             .submit_deployment(1, reply, ControlCommand::ExtensionsStatus)
             .unwrap();
@@ -3473,6 +3597,7 @@ mod tests {
                     ReplyTo::Headless {
                         capabilities: protocol::Capabilities::default(),
                         effective_protocol: PROTOCOL_VERSION,
+                        permission: crate::session::protocol::Permission::View,
                     },
                 )
                 .unwrap();
@@ -4049,6 +4174,7 @@ mod tests {
                 ReplyTo::Headless {
                     capabilities: protocol::Capabilities::default(),
                     effective_protocol: PROTOCOL_VERSION,
+                    permission: crate::session::protocol::Permission::View,
                 },
             )
             .unwrap();
@@ -4180,6 +4306,7 @@ mod tests {
                     ReplyTo::Headless {
                         capabilities: protocol::Capabilities::default(),
                         effective_protocol: PROTOCOL_VERSION,
+                        permission: crate::session::protocol::Permission::View,
                     },
                 )
                 .unwrap();

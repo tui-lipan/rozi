@@ -121,20 +121,20 @@ pub(crate) fn clients_changed(
             .get_mut(&epoch)
             .and_then(|attachment| attachment.shared.as_mut())
         {
-            shared.clients = clients;
-            shared.input_locked = input_locked;
-            shared.allow_takeover = allow_takeover;
+            shared.sync_roster(clients, input_locked, allow_takeover);
         }
         return Update::none();
     }
     // The lock state lives in the workbar chip (`CTRL LOCK` / `FOLLOW LOCK`), which flips with this
     // assignment, so the transition needs no separate announcement.
     if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
-        shared.clients = clients;
-        shared.input_locked = input_locked;
-        shared.allow_takeover = allow_takeover;
+        shared.sync_roster(clients, input_locked, allow_takeover);
+        if !shared.can_request_control() {
+            ctx.state.follow_prompt = None;
+        }
     }
     ctx.state.commands_dirty = true;
+    crate::ops::sharing::refresh_if_open(ctx);
     Update::full()
 }
 

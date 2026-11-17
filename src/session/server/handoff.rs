@@ -34,6 +34,7 @@ pub(super) const MAX_HANDOFF_HOLD: Duration = Duration::from_secs(30 * 60);
 pub(super) struct Reservation {
     token: String,
     client: ClientId,
+    guest: Option<crate::platform::user::UserId>,
     label: Option<String>,
     issued: Instant,
     /// How long the replacement has to claim the slot once the client has left.
@@ -74,6 +75,7 @@ impl Reservation {
 pub(super) struct Claimed {
     pub(super) parked: bool,
     pub(super) held_lease: bool,
+    pub(super) lease_released: Vec<ServerMessage>,
 }
 
 #[derive(Default)]
@@ -122,11 +124,11 @@ impl SessionServer {
                 },
             )]
         };
-        let Some(label) = self
+        let Some((label, guest)) = self
             .clients
             .iter()
             .find(|client| client.id == client_id && client.attached)
-            .map(|client| client.label.clone())
+            .map(|client| (client.label.clone(), client.guest.as_ref().map(|g| g.id)))
         else {
             return refused("only an attached client can reserve its slot");
         };
@@ -142,6 +144,7 @@ impl SessionServer {
         self.handoffs.held.push(Reservation {
             token: token.clone(),
             client: client_id,
+            guest,
             label,
             issued: Instant::now(),
             hold,
@@ -246,12 +249,17 @@ impl SessionServer {
     /// leaving yet - its close is still unread - is removed first, so its slot passes over whole.
     pub(super) fn claim_handoff(&mut self, claimer: ClientId, token: &str) -> Option<Claimed> {
         let now = Instant::now();
+        let claimer_guest = self
+            .client(claimer)
+            .and_then(|client| client.guest.as_ref().map(|g| g.id));
         // Only an armed reservation can be claimed: until the client said it is going, it may
         // still stay.
-        let index =
-            self.handoffs.held.iter().position(|held| {
-                held.token == token && held.client != claimer && held.is_armed()
-            })?;
+        let index = self.handoffs.held.iter().position(|held| {
+            held.token == token
+                && held.client != claimer
+                && held.guest == claimer_guest
+                && held.is_armed()
+        })?;
         if self.handoffs.held[index].expired(now) {
             let expired = self.handoffs.held.remove(index);
             self.release_reservation(expired);
@@ -264,13 +272,59 @@ impl SessionServer {
         let index = self.handoffs.position_for_client(reserving)?;
         let reservation = self.handoffs.held.remove(index);
         let departure = reservation.departure?;
+        let mut lease_released = Vec::new();
         if departure.held_lease && self.controller == Some(reserving) {
-            self.controller = Some(claimer);
+            if self.client_may_hold_lease(claimer) && !departure.parked {
+                self.controller = Some(claimer);
+            } else {
+                lease_released = self.release_departed_lease(ControllerChangeReason::Released);
+            }
         }
         Some(Claimed {
             parked: departure.parked,
             held_lease: departure.held_lease,
+            lease_released,
         })
+    }
+
+    pub(super) fn handoff_is_guest(&self, client: ClientId) -> bool {
+        self.handoffs
+            .held
+            .iter()
+            .any(|held| held.client == client && held.guest.is_some())
+    }
+
+    pub(super) fn release_revoked_handoffs(
+        &mut self,
+        revoked: &[crate::platform::user::UserId],
+        broadcasts: &mut Vec<(Target, ServerMessage)>,
+    ) {
+        if revoked.is_empty() {
+            return;
+        }
+        let (drop_held, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.handoffs.held)
+            .into_iter()
+            .partition(|held| held.guest.is_some_and(|uid| revoked.contains(&uid)));
+        self.handoffs.held = keep;
+        for reservation in drop_held {
+            if reservation.departure.is_none() {
+                continue;
+            }
+            let count = self.client_roster().len().to_string();
+            self.record_session_event(
+                events::EventKind::ClientLeft,
+                vec![
+                    ("client_id", reservation.client.to_string()),
+                    ("client_name", reservation.label.unwrap_or_default()),
+                    ("count", count),
+                ],
+            );
+            if self.controller == Some(reservation.client) {
+                for message in self.release_departed_lease(ControllerChangeReason::Released) {
+                    broadcasts.push((Target::Broadcast, message));
+                }
+            }
+        }
     }
 
     /// Drop reservations whose time ran out. A client that already left is now treated as having

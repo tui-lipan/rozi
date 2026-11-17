@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 
 use crate::platform::ipc::IpcConnection;
 use crate::platform::server_lifecycle;
-use crate::session::discovery;
 use crate::session::server;
 
 use super::preamble::{RemotePreamble, write_preamble};
@@ -19,14 +18,20 @@ use super::preamble::{RemotePreamble, write_preamble};
 /// EOF (a blocked `stdin.read` on this side cannot otherwise notice). When stdin closes first,
 /// the socket is dropped and the stdout pump joins normally.
 pub fn run_remote_serve(name: &str, autostart: bool) -> io::Result<()> {
-    if !discovery::valid_attach_target(name) {
+    let Some(address) = crate::session::naming::SessionAddress::parse(name) else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("invalid session name `{name}`"),
         ));
+    };
+    if address.is_shared() && autostart {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("cannot start another user's session `{name}`"),
+        ));
     }
 
-    let endpoint = server::session_endpoint(name)?;
+    let endpoint = server::attach_endpoint(name)?;
     let (mut socket, server_nonce) = if autostart {
         connect_or_autostart(name)?
     } else {

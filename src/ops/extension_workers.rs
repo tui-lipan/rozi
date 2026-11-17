@@ -213,6 +213,11 @@ pub(crate) fn gate(command: &ControlCommand) -> Gate {
         | ControlCommand::AgentAttachCancel { .. } => {
             Gate::Denied("agent requests belong to the session server a pane runs in")
         }
+        ControlCommand::ShareGrant { .. }
+        | ControlCommand::ShareRevoke { .. }
+        | ControlCommand::ShareList => {
+            Gate::Denied("only the session owner decides who a session is shared with")
+        }
         ControlCommand::AgentReport { .. } | ControlCommand::AgentRelease { .. } => {
             Gate::Denied("agent reports come from the pane an agent runs in")
         }

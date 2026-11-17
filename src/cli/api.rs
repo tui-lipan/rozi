@@ -99,6 +99,9 @@ const REPLY_PAYLOADS: &[(&str, &[&str])] = &[
     ("record-ui-stop", &["UiRecordingStopped"]),
     ("send-keys", &["PaneCapture"]),
     ("send-text", &["PaneCapture"]),
+    ("share-grant", &["ShareState"]),
+    ("share-list", &["ShareState"]),
+    ("share-revoke", &["ShareState"]),
     ("subscribe", &["SessionSubscribeRecord", "WireEvent"]),
 ];
 

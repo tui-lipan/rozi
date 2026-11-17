@@ -47,14 +47,30 @@ impl IpcEndpoint {
     /// Bind a listener at this endpoint. A stale socket file left behind by a crashed process (no
     /// live listener answers it) is replaced; a live one causes a normal `AddrInUse` bind error.
     pub fn bind(&self) -> io::Result<BoundEndpoint> {
+        self.bind_with_mode(0o600)
+    }
+
+    /// Bind a listener that accounts other than the owner may connect to.
+    ///
+    /// The socket's file mode admits everyone; what a peer may do is decided from
+    /// [`IpcConnection::peer_user`] after it connects. Only ever bound inside
+    /// [`crate::platform::paths::ensure_own_shared_dir`].
+    pub fn bind_shared(&self) -> io::Result<BoundEndpoint> {
+        self.bind_with_mode(0o666)
+    }
+
+    fn bind_with_mode(&self, mode: u32) -> io::Result<BoundEndpoint> {
+        use std::os::unix::fs::PermissionsExt;
+
         if self.path.exists() && !self.is_live() {
             let _ = std::fs::remove_file(&self.path);
         }
         let listener = UnixListener::bind(&self.path)?;
-        #[cfg(unix)]
+        if let Err(err) =
+            std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(mode))
         {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600));
+            let _ = std::fs::remove_file(&self.path);
+            return Err(err);
         }
         Ok(BoundEndpoint {
             listener: IpcListener(listener),
@@ -183,6 +199,15 @@ impl IpcConnection {
         }
     }
 
+    /// The account the connecting process runs as, read from the kernel. `None` for
+    /// [`Self::Piped`] and on any failure, which callers treat as an unidentified peer.
+    pub fn peer_user(&self) -> Option<crate::platform::user::UserId> {
+        match self {
+            Self::Local(stream) => peer_user(stream),
+            Self::Piped(_) => None,
+        }
+    }
+
     pub fn shutdown(&self, how: std::net::Shutdown) -> io::Result<()> {
         match self {
             Self::Local(stream) => stream.shutdown(how),
@@ -263,6 +288,62 @@ fn peer_pid(_stream: &UnixStream) -> Option<u32> {
     None
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn peer_user(stream: &UnixStream) -> Option<crate::platform::user::UserId> {
+    use std::os::fd::AsRawFd;
+    let mut cred = libc::ucred {
+        pid: 0,
+        uid: libc::uid_t::MAX,
+        gid: libc::gid_t::MAX,
+    };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let ret = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut cred as *mut libc::ucred).cast::<libc::c_void>(),
+            &mut len,
+        )
+    };
+    #[allow(clippy::unnecessary_cast)]
+    let uid = cred.uid as u32;
+    (ret == 0 && len as usize == std::mem::size_of::<libc::ucred>() && cred.uid != libc::uid_t::MAX)
+        .then_some(crate::platform::user::UserId::from_raw(uid))
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly",
+))]
+fn peer_user(stream: &UnixStream) -> Option<crate::platform::user::UserId> {
+    use std::os::fd::AsRawFd;
+    let mut euid: libc::uid_t = libc::uid_t::MAX;
+    let mut egid: libc::gid_t = libc::gid_t::MAX;
+    let ret = unsafe { libc::getpeereid(stream.as_raw_fd(), &mut euid, &mut egid) };
+    #[allow(clippy::unnecessary_cast)]
+    let uid = euid as u32;
+    (ret == 0 && euid != libc::uid_t::MAX).then_some(crate::platform::user::UserId::from_raw(uid))
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly",
+)))]
+fn peer_user(_stream: &UnixStream) -> Option<crate::platform::user::UserId> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,5 +411,47 @@ mod tests {
         let (a, _b) = UnixStream::pair().expect("socket pair");
         let conn = IpcConnection::Local(a);
         assert_eq!(conn.peer_pid(), Some(std::process::id()));
+    }
+
+    #[test]
+    fn bind_shared_sets_mode_0666_keeps_live_socket_and_reports_peer_user() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let endpoint = temp_endpoint("shared");
+        let _ = std::fs::remove_file(endpoint.path());
+        let bound = endpoint.bind_shared().expect("bind_shared");
+        let mode = std::fs::metadata(endpoint.path())
+            .expect("socket metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o666);
+
+        let err = match endpoint.bind_shared() {
+            Ok(_) => panic!("rebinding a live shared socket must fail"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), io::ErrorKind::AddrInUse);
+
+        let listener = bound.into_listener();
+        let client = endpoint.connect().expect("connect");
+        let server = listener.accept().expect("accept");
+        let expected_uid = Some(crate::platform::user::current_user_id());
+        assert_eq!(server.peer_user(), expected_uid);
+        assert_eq!(client.peer_user(), expected_uid);
+
+        drop(client);
+        drop(server);
+        drop(listener);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while endpoint.is_live() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!endpoint.is_live());
+
+        let rebound = endpoint.bind_shared().expect("rebind over stale shared");
+        drop(rebound);
+        let _ = std::fs::remove_file(endpoint.path());
     }
 }

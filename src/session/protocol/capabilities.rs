@@ -64,11 +64,16 @@ pub enum Capability {
     /// The server stores files sent with `agent-attach`, so a request can carry them to an agent
     /// on another host.
     AgentAttachments,
+    /// The server shares its session with other operating-system accounts: it serves the
+    /// `share-grant`, `share-revoke`, and `share-list` control commands, reports each client's
+    /// [`super::SessionRole`] in the roster, and refuses a request a client's access does not cover
+    /// with [`super::PERMISSION_DENIED_ERROR_CODE`].
+    SessionSharing,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 12] = [
+    pub const ALL: [Capability; 13] = [
         Capability::AgentAttachments,
         Capability::AgentConversations,
         Capability::AgentReplyLater,
@@ -81,6 +86,7 @@ impl Capability {
         Capability::PaneProgramTitle,
         Capability::ProjectSummaries,
         Capability::RuntimeMetrics,
+        Capability::SessionSharing,
     ];
 
     /// The name this capability travels under.
@@ -96,6 +102,7 @@ impl Capability {
             Capability::AgentReplyLater => "agent-reply-later",
             Capability::AgentRequestUpdates => "agent-request-updates",
             Capability::PaneProgramTitle => "pane-program-title",
+            Capability::SessionSharing => "session-sharing",
             Capability::AgentConversations => "agent-conversations",
             Capability::AgentAttachments => "agent-attachments",
         }
@@ -112,7 +119,7 @@ impl Capability {
             Self::DragAndDrop => "0.0.46",
             Self::AgentRequests => "0.0.47",
             Self::AgentReplyLater | Self::AgentRequestUpdates | Self::PaneProgramTitle => "0.0.48",
-            Self::AgentConversations | Self::AgentAttachments => "0.0.50",
+            Self::AgentConversations | Self::AgentAttachments | Self::SessionSharing => "0.0.50",
         }
     }
 
@@ -210,7 +217,19 @@ pub const GATED_VOCABULARY: &[GatedValue] = &[
         value: "agent-attach-cancel",
         capability: Capability::AgentAttachments,
     },
+    session_sharing_command("share-grant"),
+    session_sharing_command("share-revoke"),
+    session_sharing_command("share-list"),
 ];
+
+/// A control command a session server serves only with [`Capability::SessionSharing`].
+const fn session_sharing_command(value: &'static str) -> GatedValue {
+    GatedValue {
+        vocabulary: "ControlRequest",
+        value,
+        capability: Capability::SessionSharing,
+    }
+}
 
 /// A control command a session server serves only with [`Capability::AgentRequests`].
 const fn agent_request_command(value: &'static str) -> GatedValue {

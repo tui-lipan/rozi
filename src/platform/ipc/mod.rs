@@ -123,6 +123,12 @@ impl EndpointRegistry {
         IpcEndpoint::at_path(runtime_dir.join(format!("session-{name}.sock")))
     }
 
+    /// The endpoint a session shared with other accounts listens on, inside the owner's shared
+    /// directory ([`crate::platform::paths::ensure_own_shared_dir`]).
+    pub fn shared_session_endpoint(shared_dir: &Path, name: &str) -> IpcEndpoint {
+        IpcEndpoint::at_path(shared_dir.join(format!("session-{name}.sock")))
+    }
+
     /// Every session endpoint discoverable in `runtime_dir`, alongside the session name decoded
     /// from its file name. Does not probe liveness itself - a stale entry with no listener behind
     /// it is still returned; callers (`session::discovery`) query the protocol handshake to tell.

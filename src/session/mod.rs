@@ -700,4 +700,28 @@ mod tests {
         assert_eq!(parsed[0].to_spec(), "workbox");
         assert_eq!(parsed[1].to_spec(), "ssh://workbox");
     }
+
+    #[test]
+    fn shared_targets_never_persist_to_last_session_and_attach_endpoint_keeps_bare_separate() {
+        crate::test_support::isolate_user_dirs();
+        let _persist = crate::test_support::lock_persisted_state();
+        let _restore = crate::test_support::preserve_persisted_state();
+
+        record_last_session(None, "own-dev");
+        record_last_session(None, "alice/dev");
+        assert_eq!(read_last_session(None).as_deref(), Some("own-dev"));
+
+        let bare = super::server::attach_endpoint("own-dev").expect("bare endpoint");
+        assert_eq!(bare, super::server::session_endpoint("own-dev").unwrap());
+        assert!(super::server::attach_endpoint("alice/bad name").is_err());
+        assert!(super::server::attach_endpoint("alice/dev").is_err());
+
+        #[cfg(unix)]
+        {
+            let me = crate::platform::user::current_user_id();
+            let own = format!("{}/dev", me.as_raw());
+            let err = super::server::attach_endpoint(&own).unwrap_err();
+            assert!(err.to_string().contains("attach to `dev`"), "{err}");
+        }
+    }
 }

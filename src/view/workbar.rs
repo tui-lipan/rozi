@@ -1869,6 +1869,8 @@ mod tests {
             read_only: false,
             requesting_control: false,
             parked: false,
+            role: None,
+            user: None,
         }];
         state.current_mut().shared = Some(shared);
         assert!(collaboration_status(&state, &theme).is_none());
@@ -1880,6 +1882,8 @@ mod tests {
             read_only: false,
             requesting_control: false,
             parked: false,
+            role: None,
+            user: None,
         });
         assert_eq!(collaboration_status(&state, &theme).unwrap().0, " CTRL ");
         state.current_mut().shared.as_mut().unwrap().input_locked = true;

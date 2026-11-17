@@ -118,9 +118,12 @@ fn collaborator_rows(
             grantable: !shared.read_only
                 && shared.is_controller()
                 && !client.read_only
+                && client
+                    .role
+                    .is_none_or(|role| role >= crate::session::protocol::SessionRole::Controller)
                 && !client.parked,
             requesting: client.requesting_control,
-            kickable: can_evict,
+            kickable: can_evict || shared.can_remove(client),
         };
         rows.push(
             SearchItem::new(client_tag(&client.label, client.id), item).description(
@@ -135,21 +138,25 @@ fn collaborator_rows(
 fn collaborator_markers(
     shared: &crate::state::SharedSessionState,
     client: &crate::session::protocol::ClientInfo,
-) -> Vec<&'static str> {
+) -> Vec<String> {
     let mut markers = Vec::new();
     if Some(client.id) == shared.controller {
-        markers.push("ctrl");
+        markers.push("ctrl".to_string());
     }
-    if client.read_only {
-        markers.push("ro");
+    // A guest's label is its account, so its role is the only thing left to say. The owner's own
+    // clients are all owners: for them only a read-only attach is worth a token.
+    match client.role.filter(|_| client.user.is_some()) {
+        Some(role) => markers.push(role.as_str().to_string()),
+        None if client.read_only => markers.push("ro".to_string()),
+        None => {}
     }
     // A parked client is connected but not here: it holds no control and is not competing
     // for the session, which is worth flagging rather than listing it like an active viewer.
     if client.parked {
-        markers.push("parked");
+        markers.push("parked".to_string());
     }
     if client.requesting_control && Some(client.id) != shared.controller {
-        markers.push("wants ctrl");
+        markers.push("wants ctrl".to_string());
     }
     markers
 }
@@ -193,20 +200,26 @@ fn client_tag(label: &str, id: crate::layout::shared::ClientId) -> String {
 
 /// This client's own row of the roster, for the dialog's right header: `razuer #2077 · ctrl`.
 fn self_tag(shared: &crate::state::SharedSessionState) -> String {
-    let label = shared
-        .clients
-        .iter()
-        .find(|client| client.id == shared.client_id)
+    let me = shared.me();
+    let label = me
         .map(|client| client_tag(&client.label, client.id))
         .unwrap_or_else(|| format!("#{}", shared.client_id));
-    let role = if shared.read_only {
-        "ro"
-    } else if shared.is_controller() {
-        "ctrl"
+    let mut markers = Vec::new();
+    let guest_role = shared.role.filter(|_| shared.is_guest());
+    if shared.is_controller() {
+        markers.push("ctrl");
+    } else if shared.read_only {
+        // A guest viewer's role says it already.
+        if guest_role.is_none() {
+            markers.push("ro");
+        }
     } else {
-        "follow"
-    };
-    format!("{label} · {role}")
+        markers.push("follow");
+    }
+    if let Some(role) = guest_role {
+        markers.push(role.as_str());
+    }
+    format!("{label} · {}", markers.join(" · "))
 }
 
 /// The choice offered when an attach lands on a session another client is driving.

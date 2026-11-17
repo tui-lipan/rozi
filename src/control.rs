@@ -95,6 +95,92 @@ pub struct ControlRequest {
 }
 
 impl ControlCommand {
+    /// What a client of a session server must be allowed before the server runs this command for
+    /// it. See [`crate::session::protocol::Permission`].
+    ///
+    /// The match is exhaustive on purpose: a new command does not compile until its author decides
+    /// who may run it. A command a session server never serves is the owner's, so that serving it
+    /// one day does not open it to guests by default.
+    pub fn required_permission(&self) -> crate::session::protocol::Permission {
+        use crate::session::protocol::Permission;
+        match self {
+            Self::Context
+            | Self::ListPanes
+            | Self::LayoutGet { .. }
+            | Self::AgentsList
+            | Self::AgentGet { .. }
+            | Self::AgentRead { .. }
+            | Self::AgentRequests { .. }
+            | Self::Metrics
+            | Self::CapturePane { .. }
+            | Self::ActionsList
+            | Self::InvocationList
+            | Self::ExtensionsStatus
+            | Self::RecordList
+            | Self::Subscribe { .. } => Permission::View,
+            Self::SendText { .. }
+            | Self::SendKeys { .. }
+            | Self::SetStatus { .. }
+            | Self::AgentPrompt { .. }
+            | Self::AgentReport { .. }
+            | Self::AgentRelease { .. }
+            | Self::AgentAsk { .. }
+            | Self::AgentReply { .. }
+            | Self::AgentReplyLater { .. }
+            | Self::AgentCancel { .. }
+            // Files for an `agent-ask`, under the same random transfer ids the asker holds.
+            | Self::AgentAttach { .. }
+            | Self::AgentAttachCancel { .. }
+            | Self::Notify { .. } => Permission::Input,
+            Self::AgentResponse { .. }
+            | Self::AgentWait { .. }
+            | Self::AgentAwait { .. }
+            | Self::AgentRequest { .. } => Permission::AgentContent,
+            Self::LayoutSet { .. }
+            | Self::PaneSet { .. }
+            | Self::PaneMove { .. }
+            | Self::PaneSwap { .. }
+            | Self::PaneClose { .. }
+            | Self::NewPane { .. } => Permission::Layout,
+            // Run the owner's automation, or write the owner's files outside a pane.
+            Self::Invoke { .. }
+            | Self::InvocationCancel { .. }
+            | Self::ExtensionsDeploy { .. }
+            | Self::ExtensionsUndeploy { .. }
+            | Self::PaneLogging { .. }
+            | Self::RecordStart { .. }
+            | Self::RecordStop { .. }
+            | Self::RecordMark { .. }
+            | Self::ShareGrant { .. }
+            | Self::ShareRevoke { .. }
+            | Self::ShareList
+            // Served by a UI, never by a session server.
+            | Self::ListAttachedPanes
+            | Self::PaneReveal { .. }
+            | Self::AgentsOverview
+            | Self::AgentGo { .. }
+            | Self::ExtensionRuntimeStatus
+            | Self::PortsList
+            | Self::PortsForward { .. }
+            | Self::PortsClose { .. }
+            | Self::Focus { .. }
+            | Self::RunAction { .. }
+            | Self::CaptureUi { .. }
+            | Self::SwitchWorkspace { .. }
+            | Self::MoveToWorkspace { .. }
+            | Self::Popup { .. }
+            | Self::Publish { .. }
+            | Self::SidebarPublish { .. }
+            | Self::CommandVisibility { .. }
+            | Self::RecordUiStart { .. }
+            | Self::RecordUiStop
+            | Self::RecordUiMark { .. }
+            | Self::Pick { .. }
+            | Self::Prompt { .. }
+            | Self::Unknown => Permission::Admin,
+        }
+    }
+
     /// Optional session behavior needed before this command may be sent.
     /// Every generation-52 command is baseline. New commands must make this choice explicitly.
     pub fn required_session_capability(&self) -> Option<crate::session::protocol::Capability> {
@@ -176,6 +262,9 @@ impl ControlCommand {
             | Self::AgentRequest { .. }
             | Self::AgentRequests { .. }
             | Self::AgentCancel { .. } => Some(crate::session::protocol::Capability::AgentRequests),
+            Self::ShareGrant { .. } | Self::ShareRevoke { .. } | Self::ShareList => {
+                Some(crate::session::protocol::Capability::SessionSharing)
+            }
             Self::Unknown => {
                 debug_assert!(false, "an unknown control command must never be sent");
                 None
@@ -412,6 +501,30 @@ impl CaptureScrollback {
             .map(Self::Lines)
             .map_err(|_| "--scrollback requires a line count or `full`".to_string())
     }
+}
+
+/// Who a session is shared with: the `data` of `share-grant`, `share-revoke`, and `share-list`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct ShareState {
+    /// The endpoint other accounts connect to, absent while the session is shared with no one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub grants: Vec<ShareGrantInfo>,
+}
+
+/// One account a session is shared with.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct ShareGrantInfo {
+    /// The account's name on the session's host.
+    pub user: String,
+    /// The account's numeric id on the session's host.
+    pub uid: u32,
+    pub role: crate::session::protocol::SessionRole,
+    /// How many of this account's clients are attached now.
+    pub connected: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -835,6 +948,21 @@ pub enum ControlCommand {
     },
     /// Drop uploads no request claimed, finished or not, so a failed ask frees their space at once.
     AgentAttachCancel { transfers: Vec<u64> },
+    /// Share this session with another operating-system account, or change the role of one it
+    /// is already shared with. Answers with the [`ShareState`] after the change.
+    ShareGrant {
+        /// The account's name or numeric id on the session's host.
+        user: String,
+        role: crate::session::protocol::SessionRole,
+    },
+    /// Stop sharing this session with one account, or with every account when `user` is absent,
+    /// and disconnect its clients. Answers with the [`ShareState`] after the change.
+    ShareRevoke {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        user: Option<String>,
+    },
+    /// Report who this session is shared with, as a [`ShareState`].
+    ShareList,
     /// Report an agent's state from its own integration, for a pane.
     AgentReport {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3376,7 +3504,8 @@ mod tests {
                 crate::session::protocol::Capability::AgentReplyLater
                 | crate::session::protocol::Capability::AgentRequestUpdates
                 | crate::session::protocol::Capability::PaneProgramTitle => "0.0.48",
-                crate::session::protocol::Capability::AgentConversations
+                crate::session::protocol::Capability::SessionSharing
+                | crate::session::protocol::Capability::AgentConversations
                 | crate::session::protocol::Capability::AgentAttachments => "0.0.50",
                 _ => "0.0.44",
             };

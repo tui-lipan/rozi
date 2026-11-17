@@ -54,6 +54,9 @@ pub enum SessionControlError {
 impl std::fmt::Display for SessionControlError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::NoSuchSession(name) if crate::session::naming::is_shared_target(name) => {
+                write!(f, "no session `{name}` is running and shared with you")
+            }
             Self::NoSuchSession(name) => write!(
                 f,
                 "no running session named `{name}` (run `rozi sessions list`)"
@@ -70,6 +73,28 @@ impl std::fmt::Display for SessionControlError {
                 "session `{session}` runs an incompatible rozi version ({message}); {}",
                 crate::session::discovery::incompatible_session_advice(session)
             ),
+            Self::Refused {
+                session,
+                code,
+                message,
+            } if code == protocol::NOT_SHARED_ERROR_CODE => {
+                if message.trim().is_empty() || message.contains(code) {
+                    write!(f, "session `{session}` is not shared with you")
+                } else {
+                    write!(f, "{message}")
+                }
+            }
+            Self::Refused {
+                session,
+                code,
+                message,
+            } if code == protocol::PERMISSION_DENIED_ERROR_CODE => {
+                if message.trim().is_empty() || message.contains(code) {
+                    write!(f, "permission denied for session `{session}`")
+                } else {
+                    write!(f, "{message}")
+                }
+            }
             Self::Refused { code, message, .. } => write!(f, "{code}: {message}"),
         }
     }
@@ -96,13 +121,18 @@ impl SessionControlConnection {
         name: &str,
         offered: protocol::Capabilities,
     ) -> Result<Self, SessionControlError> {
-        if !crate::session::discovery::valid_attach_target(name) {
+        if crate::session::naming::SessionAddress::parse(name).is_none() {
             return Err(SessionControlError::Transport(
                 "invalid session name".into(),
             ));
         }
-        let endpoint = crate::session::server::session_endpoint(name)
-            .map_err(|err| SessionControlError::Transport(err.to_string()))?;
+        let endpoint = crate::session::server::attach_endpoint(name).map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                SessionControlError::NoSuchSession(name.into())
+            } else {
+                SessionControlError::Transport(err.to_string())
+            }
+        })?;
         if !endpoint.is_live() {
             return Err(SessionControlError::NoSuchSession(name.into()));
         }
@@ -665,5 +695,52 @@ mod tests {
             "{error}"
         );
         assert!(error.to_string().contains("rozi sessions list"), "{error}");
+    }
+
+    #[test]
+    fn shared_access_protocol_errors_render_plain_wording_without_codes() {
+        let not_shared = SessionControlError::Refused {
+            session: "alice/dev".to_string(),
+            code: crate::session::protocol::NOT_SHARED_ERROR_CODE.to_string(),
+            message: String::new(),
+        };
+        assert!(
+            not_shared.to_string().contains("not shared"),
+            "{not_shared}"
+        );
+        assert!(
+            !not_shared
+                .to_string()
+                .contains(crate::session::protocol::NOT_SHARED_ERROR_CODE)
+        );
+
+        let denied = SessionControlError::Refused {
+            session: "alice/dev".to_string(),
+            code: crate::session::protocol::PERMISSION_DENIED_ERROR_CODE.to_string(),
+            message: "share role is viewer".to_string(),
+        };
+        assert!(
+            denied.to_string().contains("share role is viewer"),
+            "{denied}"
+        );
+        assert!(
+            !denied
+                .to_string()
+                .contains(crate::session::protocol::PERMISSION_DENIED_ERROR_CODE)
+        );
+
+        let err = run_session_control(
+            "alice/dev",
+            ControlRequest {
+                command: crate::control::ControlCommand::ListPanes,
+                source_pane: None,
+                source_session: None,
+                extension: None,
+                caller_context: None,
+                credential: None,
+            },
+        )
+        .expect_err("shared dir stub is unsupported or unshared");
+        assert_ne!(err.to_string(), "invalid session name");
     }
 }

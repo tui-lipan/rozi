@@ -4400,3 +4400,150 @@ fn deployed_actions_reach_the_palette_only_for_a_client_that_may_call_them() {
         assert!(backend.state().current().session_actions.is_empty());
     });
 }
+
+#[test]
+fn guest_role_mirrors_roster_live_and_renamed_keeps_owner_prefix() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let (client, _outbound) = SessionClient::test_channel();
+        let epoch = backend.state().runtime_epoch;
+        {
+            let state = backend.state_mut();
+            let current = state.current_mut();
+            current.session_name = Some("alice/old".into());
+            let mut pending = crate::state::PendingSessionAttach::new(
+                epoch,
+                crate::state::AttachRequest::new("alice/old", crate::state::AttachMode::Join),
+            );
+            pending.client = Some(client);
+            current.pending_session_attach = Some(pending);
+        }
+
+        let owner_client = crate::session::protocol::ClientInfo {
+            id: 1,
+            label: "alice".into(),
+            read_only: false,
+            requesting_control: false,
+            parked: false,
+            role: Some(crate::session::protocol::SessionRole::Owner),
+            user: None,
+        };
+        let editor_self = crate::session::protocol::ClientInfo {
+            id: 2,
+            label: "bob".into(),
+            read_only: false,
+            requesting_control: false,
+            parked: false,
+            role: Some(crate::session::protocol::SessionRole::Editor),
+            user: Some("bob".into()),
+        };
+
+        backend
+            .dispatch(Msg::SessionAttached {
+                epoch,
+                session_instance: crate::session::protocol::SessionInstanceId::for_test("shared"),
+                session: "alice/old".into(),
+                client_id: 2,
+                panes: Vec::new(),
+                layout_rev: 0,
+                layout: None,
+                controller: Some(1),
+                clients: vec![owner_client.clone(), editor_self],
+                input_locked: false,
+                allow_takeover: true,
+                read_only: false,
+                origin: crate::session::origin::SessionOrigin::default(),
+                handoff_claimed: None,
+            })
+            .expect("attach as editor");
+
+        let shared = backend.state().current().shared.as_ref().unwrap();
+        assert_eq!(
+            shared.role,
+            Some(crate::session::protocol::SessionRole::Editor)
+        );
+        assert!(!shared.read_only);
+        assert!(!shared.can_request_control());
+        assert_eq!(
+            crate::commands::action_disabled_reason(
+                crate::input::Action::RequestControl,
+                backend.state(),
+            ),
+            Some("needs the controller role".to_string())
+        );
+
+        // Live downgrade to Viewer flips read_only without reattaching.
+        backend
+            .dispatch(Msg::SessionClientsChanged {
+                epoch,
+                clients: vec![
+                    owner_client.clone(),
+                    crate::session::protocol::ClientInfo {
+                        id: 2,
+                        label: "bob".into(),
+                        read_only: true,
+                        requesting_control: false,
+                        parked: false,
+                        role: Some(crate::session::protocol::SessionRole::Viewer),
+                        user: Some("bob".into()),
+                    },
+                ],
+                input_locked: false,
+                allow_takeover: true,
+            })
+            .expect("downgrade to viewer");
+        let shared = backend.state().current().shared.as_ref().unwrap();
+        assert_eq!(
+            shared.role,
+            Some(crate::session::protocol::SessionRole::Viewer)
+        );
+        assert!(shared.read_only);
+
+        // Live upgrade to Controller restores write access and control requests.
+        backend
+            .dispatch(Msg::SessionClientsChanged {
+                epoch,
+                clients: vec![
+                    owner_client,
+                    crate::session::protocol::ClientInfo {
+                        id: 2,
+                        label: "bob".into(),
+                        read_only: false,
+                        requesting_control: false,
+                        parked: false,
+                        role: Some(crate::session::protocol::SessionRole::Controller),
+                        user: Some("bob".into()),
+                    },
+                ],
+                input_locked: false,
+                allow_takeover: true,
+            })
+            .expect("upgrade to controller");
+        let shared = backend.state().current().shared.as_ref().unwrap();
+        assert_eq!(
+            shared.role,
+            Some(crate::session::protocol::SessionRole::Controller)
+        );
+        assert!(!shared.read_only);
+        assert!(shared.can_request_control());
+        assert_eq!(
+            crate::commands::action_disabled_reason(
+                crate::input::Action::RequestControl,
+                backend.state(),
+            ),
+            None
+        );
+
+        // Server rename broadcasts the bare name; guest client preserves the owner prefix.
+        backend
+            .dispatch(Msg::SessionRenamed {
+                epoch,
+                session: "newname".into(),
+            })
+            .expect("rename");
+        assert_eq!(
+            backend.state().current().session_name.as_deref(),
+            Some("alice/newname")
+        );
+    });
+}

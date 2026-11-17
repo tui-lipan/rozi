@@ -389,6 +389,7 @@ pub struct State {
     /// Client-global SSH port forwards, independent of session attachments.
     pub ports: PortForwardRuntimeState,
     pub collaboration: Option<CollaborationState>,
+    pub sharing: Option<SharingState>,
     /// Raised when an attach lands on a session another client is actively controlling, so
     /// following is something the user chooses rather than something that happens to them.
     pub follow_prompt: Option<FollowPromptState>,
@@ -603,6 +604,8 @@ pub enum AttachedReply {
     Action(RecordingAction),
     /// A deployed action run from the palette, answered on screen.
     PaletteAction(String),
+    /// A sharing-picker request, answered into the open Sharing picker.
+    Sharing(SharingRequestKind),
 }
 
 /// The default single-pane attachment a fresh launch, a fresh ephemeral session, or a killed
@@ -792,6 +795,7 @@ impl State {
             ports: PortForwardRuntimeState::default(),
             ports_overlay: None,
             collaboration: None,
+            sharing: None,
             follow_prompt: None,
             askpass: None,
             askpass_history: AskpassHistory::default(),
@@ -1400,6 +1404,7 @@ impl State {
             (self.show_release_notes, "release-notes"),
             (self.follow_prompt.is_some(), "follow-prompt"),
             (self.collaboration.is_some(), "collaboration"),
+            (self.sharing.is_some(), "sharing"),
             (self.agent_picker.is_some(), "agent-picker"),
             (self.agent_conversations.is_some(), "agent-conversations"),
             (

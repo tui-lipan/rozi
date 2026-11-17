@@ -67,6 +67,10 @@ pub(crate) fn request_ports_overlay_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::ports_overlay_key());
 }
 
+pub(crate) fn request_sharing_focus(ctx: &mut Context<AppRoot>) {
+    focus_key(ctx, view::sharing_key());
+}
+
 pub(crate) fn request_port_form_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::port_form_input_key());
 }

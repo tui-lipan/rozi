@@ -10,6 +10,103 @@ pub const EPHEMERAL_SESSION_PREFIX: &str = "eph-";
 /// sharing one host's sessions do not pick the same name.
 const CLIENT_ID_HEX_LEN: usize = 24;
 
+/// The longest account name accepted as a session owner. Linux caps login names at 32 bytes;
+/// other systems allow more.
+const MAX_OWNER_LEN: usize = 64;
+
+/// Where a session lives among the accounts of one machine.
+///
+/// A bare `dev` is a session of the account running this process. `alice/dev` is the session
+/// `dev` that the account `alice` shares. The qualified form is an attach target only: it names
+/// someone else's session, so it is never created, renamed to, restarted, or saved from here.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SessionAddress {
+    /// The owning account's name or numeric id, `None` for one's own session.
+    pub owner: Option<String>,
+    /// The name the session's own server knows it by.
+    pub name: String,
+}
+
+impl SessionAddress {
+    /// Split an attach target into owner and session name, or `None` when it is not one.
+    ///
+    /// Both halves are restricted to characters that cannot leave a path component, so neither
+    /// can change which directory or socket a target resolves to.
+    pub fn parse(target: &str) -> Option<Self> {
+        let (owner, name) = match target.split_once('/') {
+            Some((owner, name)) => (Some(owner), name),
+            None => (None, target),
+        };
+        if !valid_bare_name(name) || !owner.is_none_or(valid_owner) {
+            return None;
+        }
+        Some(Self {
+            owner: owner.map(str::to_string),
+            name: name.to_string(),
+        })
+    }
+
+    /// Whether this is another account's session.
+    pub fn is_shared(&self) -> bool {
+        self.owner.is_some()
+    }
+}
+
+impl std::fmt::Display for SessionAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.owner {
+            Some(owner) => write!(f, "{owner}/{}", self.name),
+            None => f.write_str(&self.name),
+        }
+    }
+}
+
+/// Whether `target` names another account's session (`owner/name`).
+pub fn is_shared_target(target: &str) -> bool {
+    SessionAddress::parse(target).is_some_and(|address| address.is_shared())
+}
+
+/// What to say when nothing answers at `target`. A guest cannot tell a session that is not
+/// running from one that is not shared with it, and is not meant to.
+pub fn not_running_message(target: &str) -> String {
+    if is_shared_target(target) {
+        format!("Session `{target}` is not running or not shared with you")
+    } else {
+        format!("Session `{target}` is not running")
+    }
+}
+
+/// The owner prefix of `target` applied to `name`: what a guest calls a session after its owner
+/// renamed it. A bare target leaves `name` as it is.
+pub fn with_owner_of(target: &str, name: &str) -> String {
+    match SessionAddress::parse(target).and_then(|address| address.owner) {
+        Some(owner) => format!("{owner}/{name}"),
+        None => name.to_string(),
+    }
+}
+
+/// The longest session name, in bytes. See [`crate::session::discovery::MAX_SESSION_NAME_LEN`],
+/// which re-exports it, for why it is bounded.
+pub const MAX_SESSION_NAME_LEN: usize = 64;
+
+pub(crate) fn valid_bare_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_SESSION_NAME_LEN
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
+
+fn valid_owner(owner: &str) -> bool {
+    !owner.is_empty()
+        && owner.len() <= MAX_OWNER_LEN
+        && owner
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+        // `.` and `..` are path components, and a leading `-` reads as an option.
+        && !owner.starts_with(['.', '-'])
+}
+
 /// Whether `name` denotes an auto-managed ephemeral session.
 pub fn is_ephemeral_session_name(name: &str) -> bool {
     name.starts_with(EPHEMERAL_SESSION_PREFIX)
@@ -66,6 +163,41 @@ pub fn remote_ephemeral_session_name() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_address_cannot_name_a_path() {
+        assert_eq!(
+            SessionAddress::parse("alice/dev"),
+            Some(SessionAddress {
+                owner: Some("alice".to_string()),
+                name: "dev".to_string(),
+            })
+        );
+        assert_eq!(SessionAddress::parse("dev").unwrap().owner, None);
+        assert_eq!(
+            SessionAddress::parse("1001/dev").unwrap().to_string(),
+            "1001/dev"
+        );
+        for target in [
+            "",
+            "/dev",
+            "alice/",
+            "../dev",
+            "./dev",
+            "alice/../dev",
+            "a/b/c",
+            "alice/de v",
+            "al ice/dev",
+            "-rf/dev",
+            "alice\\dev",
+            "alice/dev.sock",
+            "alice\0/dev",
+        ] {
+            assert_eq!(SessionAddress::parse(target), None, "{target:?}");
+        }
+        assert_eq!(with_owner_of("alice/dev", "api"), "alice/api");
+        assert_eq!(with_owner_of("dev", "api"), "api");
+    }
 
     #[test]
     fn temporary_names_are_valid_attach_targets_independent_of_the_pid() {

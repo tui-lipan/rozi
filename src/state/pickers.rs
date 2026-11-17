@@ -839,6 +839,48 @@ impl Default for CollaborationState {
     }
 }
 
+/// Which sharing-picker request is awaiting its [`crate::control::ShareState`] reply.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SharingRequestKind {
+    List,
+    GrantFromQuery,
+    CycleRole,
+    Revoke,
+}
+
+/// The open *Sharing* dialog: OS accounts granted access to this session and their roles.
+pub struct SharingState {
+    pub query: String,
+    /// Bumped whenever [`Self::query`] is cleared programmatically so `SearchPalette` resets its
+    /// internal input state to match.
+    pub query_epoch: u64,
+    pub grants: Vec<crate::control::ShareGrantInfo>,
+    pub loading: bool,
+    pub selected_uid: Option<u32>,
+    /// Account awaiting a second `Ctrl+K` press to revoke its grant, keyed by uid so a live
+    /// refresh cannot shift the arming onto a different account.
+    pub pending_revoke: Option<u32>,
+}
+
+impl SharingState {
+    pub fn new() -> Self {
+        Self {
+            query: String::new(),
+            query_epoch: 0,
+            grants: Vec::new(),
+            loading: true,
+            selected_uid: None,
+            pending_revoke: None,
+        }
+    }
+}
+
+impl Default for SharingState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// What the user can do about attaching to a session another client is actively driving.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FollowChoice {

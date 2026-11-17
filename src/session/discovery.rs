@@ -162,17 +162,17 @@ pub enum SessionSource {
 /// bind failed with - so the bound is stated here, where a name is admitted, rather than discovered
 /// at the socket. 64 is far past any name a person types and still leaves the runtime directory
 /// room to move (see [`crate::platform::paths::fallback_runtime_dir_path`]).
-pub const MAX_SESSION_NAME_LEN: usize = 64;
+pub use crate::session::naming::MAX_SESSION_NAME_LEN;
 
 /// Whether `name` is a well-formed *attach target*. Like [`valid_session_name`] but permits the
 /// reserved `eph-` prefix: attaching to an already-running ephemeral session (our own, shown as the
 /// current row) is legitimate even though users may not *create* ephemeral names.
+///
+/// This is a session of one's own account. Another account's session (`owner/name`) is admitted
+/// only where a caller parses a [`crate::session::naming::SessionAddress`] on purpose, so a
+/// qualified target cannot reach code that starts, saves, or deletes a session by name.
 pub fn valid_attach_target(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= MAX_SESSION_NAME_LEN
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+    crate::session::naming::valid_bare_name(name)
 }
 
 /// Whether `name` is a valid *user-created* session name. Rejects the reserved ephemeral prefix so

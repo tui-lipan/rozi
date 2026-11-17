@@ -124,10 +124,63 @@ or stop the session.
 Pane synchronization is a separate feature: it copies one client's typing to several panes in the
 active workspace. See [Layouts and panes](layouts-and-panes.md#pane-synchronization).
 
+## Share with another user
+
+On Linux and macOS, you can share a named session with other accounts on the same machine. Every
+pane keeps running as your account; the other person attaches from theirs.
+
+```bash
+rozi sessions share dev --user bob --role editor
+rozi sessions shares dev
+rozi sessions unshare dev --user bob
+rozi sessions unshare dev --all
+```
+
+`--user` takes an account name or numeric id. `--role` defaults to `viewer`. Running `share` again
+for the same account changes its role.
+
+In rozi, run **Share session…** (`open-sharing`) from the command palette (`Ctrl+A`, then `p`) to
+manage shares without leaving the session:
+
+| Key | Action |
+| --- | --- |
+| `Ctrl+N` | Share with the typed account name or numeric id as `viewer` |
+| `Enter` | Cycle the selected account's role (`viewer`, `editor`, `controller`) |
+| `Ctrl+K` twice | Unshare the selected account |
+| `Esc` | Close the list |
+
+The other person attaches with your account name in front of the session name:
+
+```bash
+rozi sessions attach alice/dev
+rozi --remote workbox sessions attach alice/dev
+rozi --session alice/dev list-panes
+```
+
+With `--remote`, they log in to the host with their own SSH account.
+
+| Role | Can do |
+| --- | --- |
+| `viewer` | See panes and layout. Cannot type, change the layout, or take layout control. |
+| `editor` | Also type into panes. Cannot change the layout or take layout control. |
+| `controller` | Also take [layout control](#layout-control), which lets them open, close, and arrange panes. |
+
+A role change applies to attached clients at once. `unshare` disconnects that account's clients.
+Sharing ends when the session server stops: a restarted, upgraded, or restored session is shared
+with no one.
+
+Whatever their role, a guest cannot stop, restart, rename, or share the session, record or log
+panes, browse your files in the sidebar, or remove one of your clients. Your own client can always
+take layout control back from a guest, even with immediate takeover off.
+
+rozi places the endpoint guests connect to in `/tmp/rozi-shared-<your uid>/`. The session server
+identifies each guest by the account the operating system reports for the connection.
+
 ## Collaborators
 
 Open **Collaborators** from the command palette (`Ctrl+A`, then `p`) when another client is
-attached. Type to filter the list.
+attached. The list shows each client's role and, for guests, their operating-system account. Type
+to filter the list.
 
 | Key | Action |
 | --- | --- |
@@ -157,13 +210,19 @@ sidebar, overlays, and notifications. Scratch panes and popups are not part of t
 
 ## Security and caveats
 
-Local sessions are reachable only by the operating-system user who owns them. Remote sharing goes
-through SSH to the remote user's private sessions. rozi opens no network port for sessions.
+Local sessions are private to the operating-system user who owns them until the owner grants
+access with `rozi sessions share`. Remote sharing goes through SSH to the remote user's account;
+rozi opens no network port for sessions.
 
 Anyone who can attach as a writable client can type into panes, including followers unless input
-lock is on. A writable follower can also stop the session, even when another client controls the
-layout and even with input lock on. When collaborators should not have that authority, give them a
-separate operating-system account or restrict their SSH access.
+lock is on. Typing runs commands as the session owner's account, so an `editor` or `controller`
+guest has that account's access to the machine. A writable client on the owner's own account can
+also stop the session, even when another client controls the layout and even with input lock on.
+
+A `viewer` cannot type, but sees everything the panes show, including scrollback, and what rozi
+knows about each pane: its working directory and project, the command it runs, and the state of
+any agent in it. A viewer can list agent requests but cannot read their prompts or answers. Do not
+share a session whose panes show secrets the viewer should not read.
 
 Immediate takeover suits sessions where every client is yours. Turn it off when sharing with other
 people: taking control changes the terminal size and can make another person's full-screen program

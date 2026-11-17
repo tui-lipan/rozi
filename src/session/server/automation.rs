@@ -448,6 +448,10 @@ fn session_worker_permitted(command: &ControlCommand) -> bool {
         | ControlCommand::PortsClose { .. }
         | ControlCommand::ExtensionsDeploy { .. }
         | ControlCommand::ExtensionsUndeploy { .. }
+        // Deployed automation never decides who a session is shared with.
+        | ControlCommand::ShareGrant { .. }
+        | ControlCommand::ShareRevoke { .. }
+        | ControlCommand::ShareList
         | ControlCommand::Focus { .. }
         | ControlCommand::RunAction { .. }
         | ControlCommand::CaptureUi { .. }

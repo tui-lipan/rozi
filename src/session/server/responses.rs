@@ -383,7 +383,10 @@ mod tests {
                 None,
                 None,
                 true,
-                ReplyTo::Attached { request_id: 42 },
+                ReplyTo::Attached {
+                    request_id: 42,
+                    permission: crate::session::protocol::Permission::View,
+                },
             )
             .unwrap();
         server
@@ -442,7 +445,10 @@ mod tests {
                 None,
                 None,
                 true,
-                ReplyTo::Attached { request_id: 43 },
+                ReplyTo::Attached {
+                    request_id: 43,
+                    permission: crate::session::protocol::Permission::View,
+                },
             )
             .unwrap();
         server

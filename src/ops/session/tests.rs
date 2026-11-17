@@ -716,6 +716,8 @@ fn follower_request_control_asks_the_controller_without_stealing() {
                     read_only: false,
                     requesting_control: false,
                     parked: false,
+                    role: None,
+                    user: None,
                 },
                 ClientInfo {
                     id: 2,
@@ -723,6 +725,8 @@ fn follower_request_control_asks_the_controller_without_stealing() {
                     read_only: false,
                     requesting_control: false,
                     parked: false,
+                    role: None,
+                    user: None,
                 },
             ];
             state.current_mut().shared = Some(shared);
@@ -778,6 +782,8 @@ fn shared_controller_backend() -> tui_lipan::TestBackend<crate::AppRoot> {
             read_only: false,
             requesting_control: false,
             parked: false,
+            role: None,
+            user: None,
         },
         ClientInfo {
             id: 2,
@@ -785,6 +791,8 @@ fn shared_controller_backend() -> tui_lipan::TestBackend<crate::AppRoot> {
             read_only: false,
             requesting_control: true,
             parked: false,
+            role: None,
+            user: None,
         },
     ];
     state.current_mut().shared = Some(shared);
@@ -1131,6 +1139,8 @@ fn cancelling_occupied_attach_does_not_retain_it_as_offline() {
                     read_only: false,
                     requesting_control: false,
                     parked: false,
+                    role: None,
+                    user: None,
                 },
                 ClientInfo {
                     id: 2,
@@ -1138,6 +1148,8 @@ fn cancelling_occupied_attach_does_not_retain_it_as_offline() {
                     read_only: false,
                     requesting_control: false,
                     parked: false,
+                    role: None,
+                    user: None,
                 },
             ];
             state.current_mut().shared = Some(shared);
@@ -1483,6 +1495,8 @@ fn controller_grant_control_key_grants_to_the_earliest_requester() {
                 read_only: false,
                 requesting_control: true,
                 parked: false,
+                role: None,
+                user: None,
             };
             shared.clients = vec![
                 ClientInfo {
@@ -1491,6 +1505,8 @@ fn controller_grant_control_key_grants_to_the_earliest_requester() {
                     read_only: false,
                     requesting_control: false,
                     parked: false,
+                    role: None,
+                    user: None,
                 },
                 requester(3),
                 requester(2),
@@ -1522,6 +1538,8 @@ fn only_solo_ephemeral_controller_may_shutdown_on_release() {
         read_only: false,
         requesting_control: false,
         parked: false,
+        role: None,
+        user: None,
     };
     assert!(may_shutdown_ephemeral(&ephemeral_state(
         1,
@@ -1571,6 +1589,8 @@ fn background_after_leaving_ephemeral(engaged: bool) -> bool {
                 read_only: false,
                 requesting_control: false,
                 parked: false,
+                role: None,
+                user: None,
             }];
             state.current_mut().shared = Some(shared);
             state.rename_session = Some(SessionRenameState::new(&name, NamingMode::CreateSession));
@@ -2708,5 +2728,77 @@ fn killing_current_remote_session_removes_its_live_snapshot_immediately() {
                 .entries
                 .contains(&killed)
         );
+    });
+}
+
+#[test]
+fn collaborators_dialog_shows_role_and_guest_account_and_guest_refuses_lifecycle_actions() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = shared_controller_backend();
+        backend.state_mut().config.animations.picker =
+            crate::layout::anim::PickerAnimationStyle::Off;
+        let current = backend.state_mut().current_mut();
+        current.session_name = Some("alice/dev".into());
+        let shared = current.shared.as_mut().unwrap();
+        shared.role = Some(crate::session::protocol::SessionRole::Controller);
+        shared.clients = vec![
+            ClientInfo {
+                id: 1,
+                label: "me".into(),
+                read_only: false,
+                requesting_control: false,
+                parked: false,
+                role: Some(crate::session::protocol::SessionRole::Controller),
+                user: Some("carol".into()),
+            },
+            ClientInfo {
+                id: 2,
+                label: "bob".into(),
+                read_only: false,
+                requesting_control: false,
+                parked: false,
+                role: Some(crate::session::protocol::SessionRole::Editor),
+                user: Some("bob".into()),
+            },
+        ];
+        backend.state_mut().collaboration = Some(crate::state::CollaborationState::new());
+
+        backend.render();
+        let rendered = backend.capture_frame().to_fixed_grid();
+        assert!(
+            rendered.contains("me #1 · ctrl · controller"),
+            "expected the guest's role in its own tag: {rendered}"
+        );
+        assert!(
+            rendered.contains("bob #2")
+                && rendered.contains("editor")
+                && !rendered.contains("@bob"),
+            "expected the guest's role, with its account named once: {rendered}"
+        );
+
+        assert!(!crate::commands::command_available(
+            crate::input::Action::KillSession,
+            backend.state(),
+        ));
+        assert!(!crate::commands::command_available(
+            crate::input::Action::RestartSession,
+            backend.state(),
+        ));
+        assert!(!crate::commands::command_available(
+            crate::input::Action::RenameSession,
+            backend.state(),
+        ));
+
+        backend
+            .dispatch(crate::Msg::RunAction(crate::input::Action::RenameSession))
+            .unwrap();
+        assert!(backend.state().rename_session.is_none());
+
+        let err = super::lifecycle::shutdown_discovered_session(
+            &session_row("alice/dev", None),
+            &crate::config::RemoteConfig::default(),
+        )
+        .expect_err("cannot kill another user's session");
+        assert!(err.to_string().contains("another user's session"), "{err}");
     });
 }

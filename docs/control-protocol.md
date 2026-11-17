@@ -144,7 +144,8 @@ Branch on `code`; the message may gain context or change wording. The error code
 
 `invalid-request`, `request-timeout`, `message-too-large`, `extension-inactive`, `unknown-event`,
 `pane-not-found`, `target-required`, `pane-not-running`, `session-not-attached`,
-`session-not-connected`, `input-locked`, `read-only`, `not-controller`, `unsupported`,
+`session-not-connected`, `input-locked`, `read-only`, `not-controller`, `not-shared`,
+`permission-denied`, `unsupported`,
 `invalid-argument`, `spawn-failed`, `conflict`, `unavailable`, `agent-gone`, `agent-blocked`,
 `agent-replaced`, `stale-reference`, `timeout`, `request-failed`, `not-permitted`,
 `out-of-scope`, `action-not-found`, `action-busy`, `action-failed`, `invalid-arguments`,
@@ -182,6 +183,7 @@ The shape inside `data` depends on `cmd`. The CLI's JSON output keeps this envel
 | `capture-ui` | `{ "width": number, "height": number }` plus the same `render` and `text`, `png_base64`, or `frame` fields as `capture-pane` |
 | `send-text`, `send-keys` with `capture` | The same capture as `capture-pane`, taken once the wait resolved. Absent without `capture`. |
 | `new-pane` | `{ "id": number, "accepted": bool, "pty_ready": bool }` |
+| `share-grant`, `share-revoke`, `share-list` | `{ "endpoint": string or absent, "grants": [{ "user": string, "uid": number, "role": "viewer" \| "editor" \| "controller", "connected": number }] }` |
 | Other one-shot commands | Absent on success. |
 
 A `list-panes` pane object has these fields; optional values are JSON null:
@@ -727,7 +729,8 @@ A session server answers `list-panes`, `layout-get`, `layout-set`, `pane-set`, `
 `agent-prompt`, `agent-ask`, `agent-reply`, `agent-await`, `agent-request`, `agent-requests`,
 `agent-cancel`, `agent-report`, `agent-release`, `metrics`, `capture-pane`, `send-text`,
 `send-keys`, `new-pane`, `set-status`, `pane-logging`, `record-start`, `record-stop`, `record-list`,
-`record-mark`, `extensions-deploy`, `extensions-undeploy`, and `extensions-status`. It refuses
+`record-mark`, `share-grant`, `share-revoke`, `share-list`, `extensions-deploy`,
+`extensions-undeploy`, and `extensions-status`. It refuses
 every other `cmd` with `ok: false` and a reason naming what the request needs a UI for.
 
 These requests behave differently than against a UI:

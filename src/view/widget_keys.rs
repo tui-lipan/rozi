@@ -99,6 +99,10 @@ pub fn collaboration_key() -> &'static str {
     "rozi-collaboration"
 }
 
+pub fn sharing_key() -> &'static str {
+    "rozi-sharing"
+}
+
 pub fn follow_prompt_key() -> &'static str {
     "rozi-follow-prompt"
 }

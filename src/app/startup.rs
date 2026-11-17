@@ -376,17 +376,41 @@ impl TargetResolution {
     }
 
     fn resolve_session_target(&mut self, cli: &cli::CliArgs, explicit_target: bool) {
+        if let Err(message) = self.try_resolve_session_target(cli, explicit_target) {
+            startup_fatal(message);
+        }
+    }
+
+    fn try_resolve_session_target(
+        &mut self,
+        cli: &cli::CliArgs,
+        explicit_target: bool,
+    ) -> std::result::Result<(), String> {
         let Some(name) = self.attach_session.clone() else {
-            return;
+            return Ok(());
         };
+        let Some(address) = crate::session::naming::SessionAddress::parse(&name) else {
+            return Err(format!("Invalid session name `{name}`."));
+        };
+        if address.is_shared() {
+            if matches!(cli.session_command, cli::SessionCommand::New(_)) {
+                return Err(format!("Cannot create another user's session `{name}`."));
+            }
+            self.autostart = false;
+            if self.remote.is_none() {
+                check_local_shared_attach_target(&name)?;
+            }
+            return Ok(());
+        }
         if !crate::session::discovery::valid_session_name(&name) {
-            startup_fatal(format!("Invalid session name `{name}`."));
+            return Err(format!("Invalid session name `{name}`."));
         }
         if self.remote.is_some() {
             self.resolve_remote_session(cli, &name, explicit_target);
         } else {
-            self.resolve_local_session(cli, &name, explicit_target);
+            self.resolve_local_session(cli, &name, explicit_target)?;
         }
+        Ok(())
     }
 
     fn resolve_remote_session(&mut self, cli: &cli::CliArgs, name: &str, explicit_target: bool) {
@@ -421,7 +445,12 @@ impl TargetResolution {
         }
     }
 
-    fn resolve_local_session(&mut self, cli: &cli::CliArgs, name: &str, explicit_target: bool) {
+    fn resolve_local_session(
+        &mut self,
+        cli: &cli::CliArgs,
+        name: &str,
+        explicit_target: bool,
+    ) -> std::result::Result<(), String> {
         let running = crate::session::discovery::discover_session(name)
             .ok()
             .flatten()
@@ -436,7 +465,7 @@ impl TargetResolution {
                         path.exists()
                             .then(|| format!("\nStart it with: rozi {name}"))
                     };
-                    startup_fatal(format!(
+                    return Err(format!(
                         "Session `{name}` is not running.{}",
                         hint.unwrap_or_default()
                     ));
@@ -445,7 +474,7 @@ impl TargetResolution {
             }
             cli::SessionCommand::New(new) => {
                 if running {
-                    startup_fatal(format!(
+                    return Err(format!(
                         "Session `{name}` is already running.\nAttach with: rozi sessions attach {name}"
                     ));
                 }
@@ -457,7 +486,7 @@ impl TargetResolution {
                 if running {
                     self.autostart = false;
                 } else if *read_only {
-                    startup_fatal(format!("Session `{name}` is not running."));
+                    return Err(format!("Session `{name}` is not running."));
                 } else if saved_session_exists(name) {
                     // A saved session outranks its same-name profile, as it does in Sessions: the
                     // server started for it restores the snapshot, and refuses one it cannot read
@@ -467,7 +496,7 @@ impl TargetResolution {
                     self.profile = Some(load_startup_profile(name, path));
                     self.autostart = true;
                 } else {
-                    startup_fatal(format!(
+                    return Err(format!(
                         "No session or profile named `{name}`.\nCreate it with: rozi sessions new {name}"
                     ));
                 }
@@ -485,6 +514,7 @@ impl TargetResolution {
                 }
             }
         }
+        Ok(())
     }
 
     fn load_fallback_profile(&mut self) {
@@ -612,6 +642,26 @@ fn try_load_startup_profile(
             records_origin: true,
         }),
         Err(err) => Err(format!("Profile `{name}` load failed: {err}")),
+    }
+}
+
+fn check_local_shared_attach_target(name: &str) -> std::result::Result<(), String> {
+    let endpoint = crate::session::server::attach_endpoint(name)
+        .map_err(|err| format!("Cannot attach to `{name}`: {err}"))?;
+    match endpoint.connect() {
+        Ok(_stream) => Ok(()),
+        Err(err)
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+            ) =>
+        {
+            Err(format!(
+                "{}.",
+                crate::session::naming::not_running_message(name)
+            ))
+        }
+        Err(err) => Err(format!("Cannot attach to `{name}`: {err}")),
     }
 }
 
@@ -1051,5 +1101,19 @@ mod tests {
                 .expect_err("nothing to open")
                 .contains("No session or profile named")
         );
+    }
+
+    #[test]
+    fn remote_shared_target_plans_non_autostart_attach_without_touching_profiles() {
+        let plan = plan_for(&["--remote", "box", "sessions", "attach", "alice/dev"]);
+        assert!(matches!(
+            plan.session,
+            StartupSession::Attach {
+                ref request,
+                auto_created: false,
+            } if request.name == "alice/dev"
+                && request.mode == crate::state::AttachMode::Join
+                && request.remote == Some(crate::session::remote::RemoteTarget::Alias("box".into()))
+        ));
     }
 }

@@ -869,6 +869,9 @@ fn upgrade_session(
     remote: Option<&str>,
     config: &crate::config::RemoteConfig,
 ) -> std::result::Result<(), String> {
+    if crate::session::naming::is_shared_target(name) {
+        return Err(format!("cannot upgrade another user's session `{name}`"));
+    }
     let Some(spec) = remote else {
         return crate::session::server::upgrade_named_session(name).map_err(|e| e.to_string());
     };

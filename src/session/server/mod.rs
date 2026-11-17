@@ -64,6 +64,7 @@ pub(crate) use resurrect::{
 };
 mod responses;
 mod runtime;
+mod sharing;
 mod shutdown;
 mod subscriptions;
 mod waits;
@@ -278,6 +279,7 @@ pub struct SessionServer {
     undelivered_ui_events: VecDeque<events::SessionEvent>,
     /// The pane mid-spawn, which raises no runtime events until it has been announced.
     spawning_pane: Option<PaneId>,
+    shares: sharing::Shares,
 }
 
 #[derive(Clone, Debug)]
@@ -986,7 +988,11 @@ struct ClientConn {
     /// The transport is closed, but already-decoded controls may still be behind a media fence.
     transport_closed: bool,
     label: Option<String>,
-    read_only: bool,
+    access: protocol::ClientAccess,
+    guest: Option<crate::platform::user::UserAccount>,
+    /// Whether this client's `Attach` requested `read_only: true`, preserved across live role
+    /// changes so a read-only guest attach never rises above `Viewer`.
+    requested_read_only: bool,
     /// Whether this client can open the paths this server's children write, which is what decides
     /// if a pane may hand out a frame by naming a file instead of pasting the pixels into the
     /// stream. False for an SSH attach, and until this client has attached at all.
@@ -994,6 +1000,10 @@ struct ClientConn {
     seed: Option<AttachSeedState>,
     /// Close this connection once its outbox drains (query probes, rejected attaches).
     close_after_flush: bool,
+    /// The connection came through the shared endpoint and must send its first frame by then.
+    handshake_deadline: Option<Instant>,
+    /// When the client's share was revoked: its eviction notice is queued and nothing more is.
+    revoked_at: Option<Instant>,
     last_pong: Instant,
     last_ping: Instant,
     ping_seq: u64,
@@ -1042,10 +1052,14 @@ impl ClientConn {
             attached: false,
             transport_closed: false,
             label: None,
-            read_only: false,
+            access: protocol::ClientAccess::OWNER,
+            guest: None,
+            requested_read_only: false,
             shares_filesystem: false,
             seed: None,
             close_after_flush: false,
+            handshake_deadline: None,
+            revoked_at: None,
             last_pong: now,
             last_ping: now,
             ping_seq: 0,
@@ -1163,7 +1177,7 @@ impl ClientConn {
         pane: Option<PaneSeedKey>,
     ) -> bool {
         // A gated frame is dropped, which for the caller is as good as queued: nothing overflowed.
-        if self.transport_closed || !self.admits(&bytes) {
+        if self.transport_closed || self.revoked_at.is_some() || !self.admits(&bytes) {
             return true;
         }
         if self.outbox_bytes.saturating_add(bytes.len()) > cap {
@@ -1196,7 +1210,7 @@ impl ClientConn {
         default_cap: usize,
         replacement: Option<ReplacementKey>,
     ) -> ClientFrameResult {
-        if self.transport_closed || !self.admits(&bytes) {
+        if self.transport_closed || self.revoked_at.is_some() || !self.admits(&bytes) {
             return ClientFrameResult::Ignored;
         }
         let Some(seed) = self.seed.as_ref().filter(|seed| !seed.baseline_queued) else {
@@ -1861,6 +1875,7 @@ impl SessionServer {
             notifications: VecDeque::new(),
             undelivered_ui_events: VecDeque::new(),
             spawning_pane: None,
+            shares: sharing::Shares::default(),
             settings,
         }
     }
@@ -1964,6 +1979,7 @@ impl SessionServer {
     ) -> io::Result<bool> {
         let iteration_started = Instant::now();
         let mut activity = self.accept_new(listener)?;
+        activity |= self.accept_shared()?;
         // Ordinary PTY output keeps its existing precedence. Commit completed media only after
         // attachments have been handled, then begin emitting it in this same iteration. A new
         // remote reader therefore cannot slip between choosing a file reference and its emission.
@@ -2066,6 +2082,7 @@ impl SessionServer {
         }
         self.sleep_policy = power::AgentSleepPolicy::default();
         self.discard_ephemeral_logs();
+        self.shares.close_listener();
         // Retire the discovery entry while this server still owns the listener/pipe instances. A
         // replacement can then claim the name without a later post-loop unlink being able to remove
         // that replacement's endpoint.
@@ -2497,6 +2514,44 @@ pub fn session_endpoint(name: &str) -> io::Result<IpcEndpoint> {
     ))
 }
 
+/// Resolve an attach target (`name` or `owner/name`) to its IPC endpoint.
+///
+/// Bare targets route to the owner's private runtime directory through [`session_endpoint`].
+/// Qualified `owner/name` targets resolve the owner account and verify its shared directory before
+/// deriving the socket path.
+pub fn attach_endpoint(target: &str) -> io::Result<IpcEndpoint> {
+    let address = crate::session::naming::SessionAddress::parse(target)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid session name"))?;
+    let Some(owner) = address.owner.as_deref() else {
+        return session_endpoint(&address.name);
+    };
+    let account = crate::platform::user::lookup_user(owner)?.ok_or_else(|| {
+        io::Error::new(io::ErrorKind::NotFound, format!("unknown user `{owner}`"))
+    })?;
+    if account.id == crate::platform::user::current_user_id() {
+        // The session's server knows its owner only by the bare name.
+        return Err(io::Error::other(format!(
+            "this is your own session; attach to `{}`",
+            address.name
+        )));
+    }
+    let shared_dir = crate::platform::paths::verified_shared_dir(account.id).map_err(|err| {
+        if err.kind() == io::ErrorKind::NotFound {
+            // The owner shares nothing right now.
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "the session is not running or not shared with you",
+            )
+        } else {
+            err
+        }
+    })?;
+    Ok(EndpointRegistry::shared_session_endpoint(
+        &shared_dir,
+        &address.name,
+    ))
+}
+
 pub fn bind_session_socket(name: &str) -> io::Result<(IpcListener, IpcEndpoint)> {
     let endpoint = session_endpoint(name)?;
     let bound = endpoint.bind()?;
@@ -2589,6 +2644,7 @@ pub fn run_named_session_mode_with_nonce(
         return Err(resurrect::restore_refusal(name, &err));
     }
     let result = server.run_listener(listener);
+    server.shares.close_listener();
     // A rename replaces the endpoint, so retire the current one rather than the original. Claim the
     // stale name first: a same-name replacement that won the race must not have its endpoint removed.
     if let Some(endpoint) = &server.endpoint

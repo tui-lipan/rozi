@@ -304,7 +304,7 @@ impl Invocations {
         let started_it = |running: &&Running| {
             running.caller.as_ref().is_some_and(|(owner, reply)| {
                 *owner == client
-                    && matches!(reply, ReplyTo::Attached { request_id: id } if *id == request_id)
+                    && matches!(reply, ReplyTo::Attached { request_id: id, .. } if *id == request_id)
             })
         };
         if let Some(running) = self.running.values().find(started_it) {

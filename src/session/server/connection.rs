@@ -59,6 +59,19 @@ impl SessionServer {
         }
     }
 
+    #[cfg(all(test, unix))]
+    pub(super) fn add_client_for_peer(
+        &mut self,
+        stream: IpcConnection,
+        peer_uid: crate::platform::user::UserId,
+    ) -> ClientId {
+        let id = self.next_client_id;
+        self.next_client_id += 1;
+        let conn = self.client_conn_from_shared(id, stream, peer_uid);
+        self.clients.push(conn);
+        id
+    }
+
     pub(super) fn pump_clients(&mut self) -> bool {
         let mut activity = self.poll_attachment_work();
         let mut inbound: Vec<(ClientId, Frame<ClientMessage>)> = Vec::new();
@@ -277,6 +290,17 @@ impl SessionServer {
     }
 
     pub(super) fn process_client_frame(&mut self, id: ClientId, frame: Frame<ClientMessage>) {
+        // Only a request that opens a conversation ends the handshake window; anything else from a
+        // client that has not made one would otherwise keep a shared slot forever.
+        if let Frame::Control(
+            ClientMessage::Attach { .. }
+            | ClientMessage::Query { .. }
+            | ClientMessage::SessionControl { .. },
+        ) = &frame
+            && let Some(client) = self.client_mut(id)
+        {
+            client.handshake_deadline = None;
+        }
         match frame {
             Frame::PaneOutput { .. } => self.set_close_after_flush(id),
             Frame::AcquisitionAcks(acks) => {
@@ -362,25 +386,89 @@ impl SessionServer {
     }
 
     fn accepts_client_control(&mut self, id: ClientId, message: &ClientMessage) -> bool {
+        if self
+            .clients
+            .iter()
+            .any(|client| client.id == id && client.close_after_flush)
+        {
+            return false;
+        }
+        if let Some(guest_id) = self
+            .client(id)
+            .and_then(|client| client.guest.as_ref().map(|g| g.id))
+        {
+            if let Some(grant) = self.shares.grant_for(guest_id).cloned() {
+                if let Some(client) = self.client_mut(id)
+                    && !client.attached
+                {
+                    client.access = protocol::ClientAccess::guest(grant.role, false);
+                    client.guest = Some(crate::platform::user::UserAccount {
+                        id: guest_id,
+                        name: grant.user,
+                    });
+                }
+            } else {
+                self.enqueue(
+                    id,
+                    Target::Sender,
+                    ServerMessage::Error {
+                        code: protocol::NOT_SHARED_ERROR_CODE.to_string(),
+                        message: "this session is not shared with your account".to_string(),
+                        peer: None,
+                    },
+                );
+                self.set_close_after_flush(id);
+                return false;
+            }
+        }
+
         if matches!(
             message,
             ClientMessage::Attach { .. }
                 | ClientMessage::Query { .. }
                 | ClientMessage::SessionControl { .. }
-        ) || self.client_attached(id)
-        {
+        ) {
             return true;
         }
-        self.enqueue(
-            id,
-            Target::Sender,
-            ServerMessage::Error {
-                code: "attach-required".to_string(),
-                message: "first client message must be attach".to_string(),
-                peer: None,
-            },
-        );
-        self.set_close_after_flush(id);
+
+        if !self.client_attached(id) {
+            self.enqueue(
+                id,
+                Target::Sender,
+                ServerMessage::Error {
+                    code: "attach-required".to_string(),
+                    message: "first client message must be attach".to_string(),
+                    peer: None,
+                },
+            );
+            self.set_close_after_flush(id);
+            return false;
+        }
+
+        let Some(client) = self.client(id) else {
+            return false;
+        };
+        if client.access.allows(message.required_permission()) || refused_by_its_handler(message) {
+            return true;
+        }
+
+        let supports_sharing = client
+            .capabilities
+            .supports(protocol::Capability::SessionSharing);
+        let role = client.access.role;
+        if let Some(refusal) = permission_refusal_for_request_message(message) {
+            self.enqueue(id, Target::Sender, refusal);
+        } else if supports_sharing {
+            self.enqueue(
+                id,
+                Target::Sender,
+                ServerMessage::Error {
+                    code: protocol::PERMISSION_DENIED_ERROR_CODE.to_string(),
+                    message: format!("permission denied: {role} role cannot perform this action"),
+                    peer: None,
+                },
+            );
+        }
         false
     }
 
@@ -550,9 +638,7 @@ impl SessionServer {
                     && self.origin_seed_client == Some(client_id)
                     && !self.panes.is_empty()
                     && valid_origin(&origin)
-                    && self
-                        .client_mut(client_id)
-                        .is_some_and(|client| !client.read_only)
+                    && !self.client_read_only(client_id)
                 {
                     self.origin = origin;
                     self.origin_seed_client = None;
@@ -573,7 +659,8 @@ impl SessionServer {
                 min_protocol_version,
             } => {
                 self.record_capabilities(client_id, capabilities.as_ref());
-                self.handle_query(
+                self.handle_query_for_client(
+                    client_id,
                     session,
                     protocol_version,
                     min_protocol_version,
@@ -619,10 +706,7 @@ impl SessionServer {
                 generation,
                 enabled,
             } => {
-                if self
-                    .client_mut(client_id)
-                    .is_some_and(|client| client.read_only)
-                {
+                if !self.client_allows(client_id, protocol::Permission::Admin) {
                     vec![(
                         Target::Sender,
                         ServerMessage::PaneLoggingChanged {
@@ -860,7 +944,10 @@ impl SessionServer {
                 } else {
                     self.spawn_shared_pane(request, placement, client_id, &mut messages)
                 };
-                if initial_seed && matches!(message, ServerMessage::SpawnResult { ok: true, .. }) {
+                if initial_seed
+                    && matches!(message, ServerMessage::SpawnResult { ok: true, .. })
+                    && self.client_allows(client_id, protocol::Permission::Admin)
+                {
                     self.origin_seed_client = Some(client_id);
                 }
                 if local
@@ -1427,7 +1514,16 @@ impl SessionServer {
                 )];
             }
         };
-        if session != self.session_name {
+        let guest_id = self
+            .client(client_id)
+            .and_then(|client| client.guest.as_ref().map(|g| g.id));
+        let session_matches = if guest_id.is_some() {
+            crate::session::naming::SessionAddress::parse(&session)
+                .is_some_and(|address| address.name == self.session_name)
+        } else {
+            session == self.session_name
+        };
+        if !session_matches {
             return vec![(
                 Target::Sender,
                 ServerMessage::Error {
@@ -1440,6 +1536,21 @@ impl SessionServer {
                 },
             )];
         }
+        let guest_grant = if let Some(uid) = guest_id {
+            let Some(grant) = self.shares.grant_for(uid).cloned() else {
+                return vec![(
+                    Target::Sender,
+                    ServerMessage::Error {
+                        code: protocol::NOT_SHARED_ERROR_CODE.to_string(),
+                        message: "this session is not shared with your account".to_string(),
+                        peer: None,
+                    },
+                )];
+            };
+            Some((uid, grant))
+        } else {
+            None
+        };
         if let Some(expected) = expected_server_nonce
             && self.settings.startup_nonce.as_deref() != Some(expected.as_str())
         {
@@ -1466,9 +1577,20 @@ impl SessionServer {
             let was_attached = client.attached;
             client.capabilities = capabilities.clone();
             client.attached = true;
-            client.label = Some(label);
-            client.read_only = read_only;
-            client.shares_filesystem = shares_filesystem;
+            client.requested_read_only = read_only;
+            if let Some((uid, grant)) = guest_grant {
+                client.access = protocol::ClientAccess::guest(grant.role, read_only);
+                client.guest = Some(crate::platform::user::UserAccount {
+                    id: uid,
+                    name: grant.user.clone(),
+                });
+                client.label = Some(grant.user);
+                client.shares_filesystem = false;
+            } else {
+                client.access = protocol::ClientAccess::owner(read_only);
+                client.label = Some(label);
+                client.shares_filesystem = shares_filesystem;
+            }
             client.last_pong = Instant::now();
             client.effective_protocol = effective;
             if !was_attached {
@@ -1478,17 +1600,19 @@ impl SessionServer {
         self.sync_image_media_policy();
         // A relaunched client takes over the slot its previous process reserved: the lease, if that
         // process held it, and its parked state. A token that claims nothing is an ordinary attach.
-        let claimed = handoff_token
+        let mut claimed = handoff_token
             .as_deref()
             .filter(|_| capabilities.supports(protocol::Capability::ClientHandoff))
             .and_then(|token| self.claim_handoff(client_id, token));
         let handoff_claimed = handoff_token.as_ref().map(|_| claimed.is_some());
         let mut lease_passed = false;
-        if let Some(claimed) = &claimed {
+        let mut handoff_lease_released = Vec::new();
+        if let Some(claimed) = &mut claimed {
             if let Some(client) = self.client_mut(client_id) {
                 client.parked = claimed.parked;
             }
             lease_passed = claimed.held_lease && self.controller == Some(client_id);
+            handoff_lease_released = std::mem::take(&mut claimed.lease_released);
             // The new process is the same client: nobody saw it leave, so nobody sees it join.
             joined_label = None;
         }
@@ -1496,7 +1620,7 @@ impl SessionServer {
         let granted = if lease_passed {
             true
         } else if self.controller.is_none()
-            && !read_only
+            && self.client_may_hold_lease(client_id)
             && claimed.as_ref().is_none_or(|claimed| !claimed.parked)
         {
             self.controller = Some(client_id);
@@ -1566,6 +1690,10 @@ impl SessionServer {
                 Target::Broadcast,
                 self.controller_changed_message(self.controller, ControllerChangeReason::Granted),
             ));
+        } else {
+            for message in handoff_lease_released {
+                responses.push((Target::Broadcast, message));
+            }
         }
         responses
     }
@@ -1582,8 +1710,46 @@ impl SessionServer {
         }
     }
 
+    pub(super) fn handle_query_for_client(
+        &mut self,
+        client_id: ClientId,
+        session: String,
+        protocol_version: u32,
+        min_protocol_version: u32,
+        capabilities: Option<protocol::Capabilities>,
+    ) -> Vec<(Target, ServerMessage)> {
+        let is_guest = self
+            .client(client_id)
+            .is_some_and(|client| client.guest.is_some());
+        self.handle_query_inner(
+            is_guest,
+            session,
+            protocol_version,
+            min_protocol_version,
+            capabilities,
+        )
+    }
+
+    #[cfg(all(test, unix))]
     pub(super) fn handle_query(
         &mut self,
+        session: String,
+        protocol_version: u32,
+        min_protocol_version: u32,
+        capabilities: Option<protocol::Capabilities>,
+    ) -> Vec<(Target, ServerMessage)> {
+        self.handle_query_inner(
+            false,
+            session,
+            protocol_version,
+            min_protocol_version,
+            capabilities,
+        )
+    }
+
+    fn handle_query_inner(
+        &mut self,
+        is_guest: bool,
         session: String,
         protocol_version: u32,
         min_protocol_version: u32,
@@ -1607,7 +1773,13 @@ impl SessionServer {
                 )];
             }
         };
-        if session != self.session_name {
+        let session_matches = if is_guest {
+            crate::session::naming::SessionAddress::parse(&session)
+                .is_some_and(|address| address.name == self.session_name)
+        } else {
+            session == self.session_name
+        };
+        if !session_matches {
             return vec![(
                 Target::Sender,
                 ServerMessage::Error {
@@ -1653,5 +1825,40 @@ impl SessionServer {
                 terminal_engine: Some(crate::pane::engine::active().name().to_string()),
             },
         )]
+    }
+}
+
+/// Requests whose handler answers a client that may not send input with a reply the sender is
+/// waiting for. Refusing them here would leave that wait unanswered.
+fn refused_by_its_handler(message: &ClientMessage) -> bool {
+    matches!(
+        message,
+        ClientMessage::SetPaneLogging { .. }
+            | ClientMessage::ReportAgent { .. }
+            | ClientMessage::SpawnPane { .. }
+            | ClientMessage::MarkedInput { .. }
+            | ClientMessage::Attachment { .. }
+    )
+}
+
+fn permission_refusal_for_request_message(message: &ClientMessage) -> Option<ServerMessage> {
+    match message {
+        ClientMessage::Worktree { request_id, .. } => Some(ServerMessage::WorktreeResult {
+            request_id: *request_id,
+            result: protocol::WorktreeResult::Failed {
+                message: "permission denied".to_string(),
+            },
+        }),
+        ClientMessage::ListDirectory { path, .. } => Some(ServerMessage::DirectoryListing {
+            path: path.clone(),
+            entries: Vec::new(),
+            error: Some("permission denied".to_string()),
+        }),
+        ClientMessage::ListChanges { root } => Some(ServerMessage::ChangeListing {
+            root: root.clone(),
+            changes: Vec::new(),
+            error: Some("permission denied".to_string()),
+        }),
+        _ => None,
     }
 }

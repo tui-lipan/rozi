@@ -53,6 +53,18 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "kill <NAME> [--remote <HOST>]",
                 "Stop a session and all of its panes",
             ),
+            row(
+                "share <NAME> --user <USER> [--role <ROLE>]",
+                "Share a session with another user",
+            ),
+            row(
+                "unshare <NAME> (--user <USER> | --all)",
+                "Revoke a user's access to a session",
+            ),
+            row(
+                "shares <NAME> [--format text|json]",
+                "List who a session is shared with",
+            ),
         ],
     },
     HelpSection {
@@ -97,7 +109,7 @@ pub(super) fn parse(
     let spelling = format!("sessions {command}");
     if matches!(
         command.as_str(),
-        "watch" | "list" | "restart" | "upgrade" | "kill"
+        "watch" | "list" | "restart" | "upgrade" | "kill" | "share" | "unshare" | "shares"
     ) {
         if let Some(option) = cli.launch_only_option() {
             return Err(format!("{option} does not apply to {spelling}"));
@@ -121,8 +133,11 @@ pub(super) fn parse(
         "restart" => parse_restart(iter, cli.remote, cli.config_path),
         "upgrade" => parse_upgrade(iter, cli.remote, cli.config_path),
         "kill" => parse_kill(iter, cli.remote, cli.config_path),
+        "share" => parse_share(iter, cli),
+        "unshare" => parse_unshare(iter, cli),
+        "shares" => parse_shares(iter, cli),
         other => Err(format!(
-            "unknown sessions command `{other}` (expected list, watch, attach, new, restart, upgrade, or kill)"
+            "unknown sessions command `{other}` (expected list, watch, attach, new, restart, upgrade, kill, share, unshare, or shares)"
         )),
     }
 }
@@ -180,6 +195,9 @@ fn parse_new(
         return Err(READ_ONLY_NEW.to_string());
     }
     let name = take_target(iter, &cli, "sessions new")?;
+    if session::naming::is_shared_target(&name) {
+        return Err(format!("cannot create another user's session `{name}`"));
+    }
     let mut new = NewSession::default();
     let mut detach = false;
     let mut no_resurrect = false;
@@ -237,9 +255,7 @@ fn parse_new_detached(
     if let Some(option) = refused {
         return Err(format!("{option} cannot be combined with --detach"));
     }
-    if !session::discovery::valid_session_name(&name) {
-        return Err("invalid session name".to_string());
-    }
+    validate_own_session_target(&name, "create", true)?;
     Ok(ParsedCli::Sessions(SessionsCommand::NewDetached {
         name,
         resurrect,
@@ -312,9 +328,7 @@ fn parse_restart(
     config_path: Option<String>,
 ) -> std::result::Result<ParsedCli, String> {
     let name = require_value(iter, "sessions restart requires a session name")?;
-    if !session::discovery::valid_session_name(&name) {
-        return Err("invalid session name".to_string());
-    }
+    validate_own_session_target(&name, "restart", true)?;
     let mut resurrect = true;
     while let Some(flag) = iter.next() {
         match flag.as_str() {
@@ -351,9 +365,7 @@ fn parse_upgrade(
     config_path: Option<String>,
 ) -> std::result::Result<ParsedCli, String> {
     let name = require_value(iter, "sessions upgrade requires a session name")?;
-    if !session::discovery::valid_session_name(&name) {
-        return Err("invalid session name".to_string());
-    }
+    validate_own_session_target(&name, "upgrade", true)?;
     while let Some(flag) = iter.next() {
         match flag.as_str() {
             "--remote" => {
@@ -386,9 +398,7 @@ fn parse_kill(
     config_path: Option<String>,
 ) -> std::result::Result<ParsedCli, String> {
     let name = require_value(iter, "sessions kill requires a session name")?;
-    if !session::discovery::valid_attach_target(&name) {
-        return Err("invalid session name".to_string());
-    }
+    validate_own_session_target(&name, "kill", false)?;
     while let Some(flag) = iter.next() {
         match flag.as_str() {
             "--remote" => {
@@ -411,6 +421,237 @@ fn parse_kill(
         remote,
         config_path,
     }))
+}
+
+fn validate_own_session_target(
+    name: &str,
+    verb: &str,
+    require_named: bool,
+) -> std::result::Result<(), String> {
+    if session::naming::is_shared_target(name) {
+        return Err(format!("cannot {verb} another user's session `{name}`"));
+    }
+    let valid = if require_named {
+        session::discovery::valid_session_name(name)
+    } else {
+        session::discovery::valid_attach_target(name)
+    };
+    if !valid {
+        return Err("invalid session name".to_string());
+    }
+    Ok(())
+}
+
+fn share_control_cli(
+    name: String,
+    mut remote: Option<String>,
+    config_path: Option<String>,
+    command: crate::control::ControlCommand,
+    output_format: Option<ListFormat>,
+) -> ParsedCli {
+    let endpoint = match remote.take() {
+        Some(target) => super::ControlEndpoint::Remote {
+            target,
+            session: name,
+        },
+        None => super::ControlEndpoint::Session(name),
+    };
+    ParsedCli::Control(super::ControlCli {
+        config_path,
+        endpoint,
+        request: super::control_request(command),
+        output_format: Some(output_format.unwrap_or(ListFormat::Text)),
+        output: None,
+    })
+}
+
+fn parse_share_role(value: &str) -> std::result::Result<session::protocol::SessionRole, String> {
+    use session::protocol::SessionRole;
+    match value {
+        "viewer" => Ok(SessionRole::Viewer),
+        "editor" => Ok(SessionRole::Editor),
+        "controller" => Ok(SessionRole::Controller),
+        other => Err(format!(
+            "unknown share role `{other}` (expected viewer, editor, or controller)"
+        )),
+    }
+}
+
+/// `sessions share <NAME> --user <USER> [--role viewer|editor|controller] [--format text|json] [--remote <HOST>]`.
+fn parse_share(
+    iter: &mut impl Iterator<Item = String>,
+    mut cli: CliArgs,
+) -> std::result::Result<ParsedCli, String> {
+    let name = require_value(iter, "sessions share requires a session name")?;
+    validate_own_session_target(&name, "share", false)?;
+    let mut user = None;
+    let mut role = None;
+    let mut output_format = None;
+    while let Some(flag) = iter.next() {
+        match flag.as_str() {
+            "--user" => {
+                let value = require_value(iter, "sessions share --user requires a user name")?;
+                if value.is_empty() {
+                    return Err("sessions share --user requires a user name".to_string());
+                }
+                if user.replace(value).is_some() {
+                    return Err("sessions share --user specified more than once".to_string());
+                }
+            }
+            "--role" => {
+                let value = require_value(
+                    iter,
+                    "sessions share --role requires viewer, editor, or controller",
+                )?;
+                let parsed = parse_share_role(&value)?;
+                if role.replace(parsed).is_some() {
+                    return Err("sessions share --role specified more than once".to_string());
+                }
+            }
+            "--format" => {
+                let value = require_value(iter, "--format requires text or json")?;
+                let parsed = parse_list_format(&value, "sessions share")?;
+                if output_format.replace(parsed).is_some() {
+                    return Err("sessions share --format specified more than once".to_string());
+                }
+            }
+            "--remote" => {
+                let target = require_value(
+                    iter,
+                    "sessions share --remote requires a host alias or ssh:// URL",
+                )?;
+                session::remote::parse_remote_target(&target)?;
+                if cli.remote.replace(target).is_some() {
+                    return Err("sessions share --remote specified more than once".to_string());
+                }
+            }
+            other => {
+                return Err(format!(
+                    "unexpected argument `{other}` after sessions share"
+                ));
+            }
+        }
+    }
+    let user = user.ok_or_else(|| "sessions share requires --user <USER>".to_string())?;
+    Ok(share_control_cli(
+        name,
+        cli.remote,
+        cli.config_path,
+        crate::control::ControlCommand::ShareGrant {
+            user,
+            role: role.unwrap_or(session::protocol::SessionRole::Viewer),
+        },
+        output_format,
+    ))
+}
+
+/// `sessions unshare <NAME> (--user <USER> | --all) [--format text|json] [--remote <HOST>]`.
+fn parse_unshare(
+    iter: &mut impl Iterator<Item = String>,
+    mut cli: CliArgs,
+) -> std::result::Result<ParsedCli, String> {
+    let name = require_value(iter, "sessions unshare requires a session name")?;
+    validate_own_session_target(&name, "unshare", false)?;
+    let mut user = None;
+    let mut all = false;
+    let mut output_format = None;
+    while let Some(flag) = iter.next() {
+        match flag.as_str() {
+            "--user" => {
+                if all {
+                    return Err("--user cannot be combined with --all".to_string());
+                }
+                let value = require_value(iter, "sessions unshare --user requires a user name")?;
+                if value.is_empty() {
+                    return Err("sessions unshare --user requires a user name".to_string());
+                }
+                if user.replace(value).is_some() {
+                    return Err("sessions unshare --user specified more than once".to_string());
+                }
+            }
+            "--all" => {
+                if user.is_some() {
+                    return Err("--all cannot be combined with --user".to_string());
+                }
+                all = true;
+            }
+            "--format" => {
+                let value = require_value(iter, "--format requires text or json")?;
+                let parsed = parse_list_format(&value, "sessions unshare")?;
+                if output_format.replace(parsed).is_some() {
+                    return Err("sessions unshare --format specified more than once".to_string());
+                }
+            }
+            "--remote" => {
+                let target = require_value(
+                    iter,
+                    "sessions unshare --remote requires a host alias or ssh:// URL",
+                )?;
+                session::remote::parse_remote_target(&target)?;
+                if cli.remote.replace(target).is_some() {
+                    return Err("sessions unshare --remote specified more than once".to_string());
+                }
+            }
+            other => {
+                return Err(format!(
+                    "unexpected argument `{other}` after sessions unshare"
+                ));
+            }
+        }
+    }
+    if !all && user.is_none() {
+        return Err("sessions unshare requires --user <USER> or --all".to_string());
+    }
+    Ok(share_control_cli(
+        name,
+        cli.remote,
+        cli.config_path,
+        crate::control::ControlCommand::ShareRevoke { user },
+        output_format,
+    ))
+}
+
+/// `sessions shares <NAME> [--format text|json] [--remote <HOST>]`.
+fn parse_shares(
+    iter: &mut impl Iterator<Item = String>,
+    mut cli: CliArgs,
+) -> std::result::Result<ParsedCli, String> {
+    let name = require_value(iter, "sessions shares requires a session name")?;
+    validate_own_session_target(&name, "list shares for", false)?;
+    let mut output_format = None;
+    while let Some(flag) = iter.next() {
+        match flag.as_str() {
+            "--format" => {
+                let value = require_value(iter, "--format requires text or json")?;
+                let parsed = parse_list_format(&value, "sessions shares")?;
+                if output_format.replace(parsed).is_some() {
+                    return Err("sessions shares --format specified more than once".to_string());
+                }
+            }
+            "--remote" => {
+                let target = require_value(
+                    iter,
+                    "sessions shares --remote requires a host alias or ssh:// URL",
+                )?;
+                session::remote::parse_remote_target(&target)?;
+                if cli.remote.replace(target).is_some() {
+                    return Err("sessions shares --remote specified more than once".to_string());
+                }
+            }
+            other => {
+                return Err(format!(
+                    "unexpected argument `{other}` after sessions shares"
+                ));
+            }
+        }
+    }
+    Ok(share_control_cli(
+        name,
+        cli.remote,
+        cli.config_path,
+        crate::control::ControlCommand::ShareList,
+        output_format,
+    ))
 }
 
 #[cfg(test)]
@@ -460,7 +701,7 @@ mod tests {
         ));
         assert_eq!(
             parse_cli_args(vec!["sessions".into(), "lst".into()]).expect_err("must reject"),
-            "unknown sessions command `lst` (expected list, watch, attach, new, restart, upgrade, or kill)"
+            "unknown sessions command `lst` (expected list, watch, attach, new, restart, upgrade, kill, share, unshare, or shares)"
         );
     }
 
@@ -837,5 +1078,115 @@ mod tests {
                 ..
             }) if remote.is_empty()
         ));
+    }
+
+    #[test]
+    fn share_unshare_and_shares_commands_parse() {
+        use super::super::{ControlEndpoint, ListFormat};
+
+        assert!(matches!(
+            parse(&["sessions", "share", "dev", "--user", "bob"]),
+            Ok(ParsedCli::Control(cli)) if matches!(
+                (&cli.endpoint, &cli.request.command, cli.output_format),
+                (
+                    ControlEndpoint::Session(s),
+                    crate::control::ControlCommand::ShareGrant {
+                        user,
+                        role: crate::session::protocol::SessionRole::Viewer,
+                    },
+                    Some(ListFormat::Text),
+                ) if s == "dev" && user == "bob"
+            )
+        ));
+
+        assert!(matches!(
+            parse(&[
+                "--remote",
+                "workbox",
+                "sessions",
+                "share",
+                "dev",
+                "--user",
+                "bob",
+                "--role",
+                "editor",
+                "--format",
+                "json",
+            ]),
+            Ok(ParsedCli::Control(cli)) if matches!(
+                (&cli.endpoint, &cli.request.command, cli.output_format),
+                (
+                    ControlEndpoint::Remote { target, session },
+                    crate::control::ControlCommand::ShareGrant {
+                        user,
+                        role: crate::session::protocol::SessionRole::Editor,
+                    },
+                    Some(ListFormat::Json),
+                ) if target == "workbox" && session == "dev" && user == "bob"
+            )
+        ));
+
+        assert!(matches!(
+            parse(&["sessions", "unshare", "dev", "--all"]),
+            Ok(ParsedCli::Control(cli)) if matches!(
+                (&cli.endpoint, &cli.request.command),
+                (
+                    ControlEndpoint::Session(s),
+                    crate::control::ControlCommand::ShareRevoke { user: None },
+                ) if s == "dev"
+            )
+        ));
+
+        assert!(matches!(
+            parse(&["sessions", "shares", "dev", "--format", "json"]),
+            Ok(ParsedCli::Control(cli)) if matches!(
+                (&cli.endpoint, &cli.request.command, cli.output_format),
+                (
+                    ControlEndpoint::Session(s),
+                    crate::control::ControlCommand::ShareList,
+                    Some(ListFormat::Json),
+                ) if s == "dev"
+            )
+        ));
+
+        assert!(parse(&["sessions", "share", "dev"]).is_err());
+        assert!(
+            parse(&[
+                "sessions", "share", "dev", "--user", "bob", "--role", "owner"
+            ])
+            .is_err()
+        );
+        assert!(parse(&["sessions", "unshare", "dev"]).is_err());
+        assert!(parse(&["sessions", "unshare", "dev", "--user", "bob", "--all"]).is_err());
+    }
+
+    #[test]
+    fn owner_qualified_targets_are_accepted_for_attach_and_refused_for_owner_commands() {
+        let attached = launch(&["sessions", "attach", "alice/dev"]);
+        assert_eq!(attached.attach_session.as_deref(), Some("alice/dev"));
+        assert!(matches!(
+            attached.session_command,
+            SessionCommand::Attach(_)
+        ));
+
+        let bare = launch(&["alice/dev"]);
+        assert_eq!(bare.attach_session.as_deref(), Some("alice/dev"));
+
+        for args in [
+            &["sessions", "new", "alice/dev"][..],
+            &["sessions", "new", "alice/dev", "--detach"][..],
+            &["sessions", "kill", "alice/dev"][..],
+            &["sessions", "restart", "alice/dev"][..],
+            &["sessions", "upgrade", "alice/dev"][..],
+            &["sessions", "share", "alice/dev", "--user", "bob"][..],
+            &["sessions", "unshare", "alice/dev", "--all"][..],
+            &["sessions", "shares", "alice/dev"][..],
+        ] {
+            let err = parse(args).expect_err("must refuse owner/name");
+            assert!(
+                err.contains("another user's session"),
+                "unexpected error for {args:?}: {err}"
+            );
+        }
     }
 }

@@ -1383,7 +1383,107 @@ pub(super) fn format_control_text(
                 styles.paint("Marked recording", OutputTone::Success)
             )
         }
+        control::ControlCommand::ShareGrant { .. }
+        | control::ControlCommand::ShareRevoke { .. }
+        | control::ControlCommand::ShareList => {
+            format_share_control_text(command, None, response, styles)
+                .unwrap_or_else(|| format!("{}\n", styles.paint("OK", OutputTone::Success)))
+        }
         _ => format!("{}\n", styles.paint("OK", OutputTone::Success)),
+    }
+}
+
+pub(super) fn format_share_control_text(
+    command: &control::ControlCommand,
+    endpoint: Option<&crate::cli::args::ControlEndpoint>,
+    response: &serde_json::Value,
+    styles: OutputStyles,
+) -> Option<String> {
+    let (session, remote) = match endpoint {
+        Some(crate::cli::args::ControlEndpoint::Session(session)) => (Some(session.as_str()), None),
+        Some(crate::cli::args::ControlEndpoint::Remote { target, session }) => {
+            (Some(session.as_str()), Some(target.as_str()))
+        }
+        _ => (None, None),
+    };
+    let state = response
+        .get("data")
+        .and_then(|value| serde_json::from_value::<control::ShareState>(value.clone()).ok());
+    match command {
+        control::ControlCommand::ShareGrant { user, role } => {
+            let grant = state.as_ref().and_then(|state| {
+                state
+                    .grants
+                    .iter()
+                    .find(|grant| grant.user == *user || grant.uid.to_string() == *user)
+            });
+            let granted_user = grant.map(|g| g.user.as_str()).unwrap_or(user.as_str());
+            let granted_role = grant.map(|g| g.role).unwrap_or(*role);
+            let mut out = format!(
+                "{}  {} ({})\n",
+                styles.paint("Shared", OutputTone::Success),
+                granted_user,
+                granted_role.as_str(),
+            );
+            if let Some(session) = session {
+                let attach_target = match remote {
+                    Some(_) => format!("<owner>/{session}"),
+                    None => format!("{}/{session}", crate::platform::user::current_user_label()),
+                };
+                out.push_str(&format!(
+                    "{}  rozi sessions attach {attach_target}\n",
+                    styles.paint("Attach:", OutputTone::Accent),
+                ));
+                if let Some(host) = remote {
+                    out.push_str(&format!(
+                        "{}  rozi --remote {host} sessions attach {attach_target}\n",
+                        styles.paint("Remote:", OutputTone::Muted),
+                    ));
+                }
+            }
+            Some(out)
+        }
+        control::ControlCommand::ShareRevoke { user } => {
+            let message = match (user, session) {
+                (Some(user), Some(session)) => format!("Revoked share for {user} on {session}"),
+                (Some(user), None) => format!("Revoked share for {user}"),
+                (None, Some(session)) => format!("Revoked all shares on {session}"),
+                (None, None) => "Revoked all shares".to_string(),
+            };
+            Some(format!("{}\n", styles.paint(&message, OutputTone::Success)))
+        }
+        control::ControlCommand::ShareList => {
+            let grants = state.map(|state| state.grants).unwrap_or_default();
+            if grants.is_empty() {
+                let message = match session {
+                    Some(session) => format!("No shares for {session}"),
+                    None => "No shares".to_string(),
+                };
+                return Some(format!("{}\n", styles.paint(&message, OutputTone::Muted)));
+            }
+            let rows: Vec<Vec<TableCell>> = grants
+                .into_iter()
+                .map(|grant| {
+                    let connected_tone = if grant.connected > 0 {
+                        OutputTone::Success
+                    } else {
+                        OutputTone::Muted
+                    };
+                    vec![
+                        TableCell::plain(grant.user),
+                        TableCell::plain(grant.uid.to_string()),
+                        TableCell::new(grant.role.as_str(), OutputTone::Accent),
+                        TableCell::new(grant.connected.to_string(), connected_tone),
+                    ]
+                })
+                .collect();
+            Some(format_table(
+                &["USER", "UID", "ROLE", "CONNECTED"],
+                &rows,
+                styles,
+            ))
+        }
+        _ => None,
     }
 }
 
@@ -2194,5 +2294,70 @@ mod tests {
             OutputStyles::plain(),
         );
         assert!(closed_text.contains("No matching port forward"));
+    }
+
+    #[test]
+    fn share_control_commands_render_attach_hint_revocations_and_table() {
+        let granted = serde_json::json!({
+            "ok": true,
+            "data": {
+                "endpoint": "/tmp/shared.sock",
+                "grants": [{
+                    "user": "bob",
+                    "uid": 1001,
+                    "role": "editor",
+                    "connected": 1
+                }]
+            }
+        });
+        let endpoint = crate::cli::args::ControlEndpoint::Session("dev".into());
+        let share_text = format_share_control_text(
+            &control::ControlCommand::ShareGrant {
+                user: "1001".into(),
+                role: crate::session::protocol::SessionRole::Editor,
+            },
+            Some(&endpoint),
+            &granted,
+            OutputStyles::plain(),
+        )
+        .expect("share grant formats");
+        assert!(share_text.contains("bob (editor)"), "{share_text}");
+        assert!(
+            share_text.contains("rozi sessions attach") && share_text.contains("/dev"),
+            "{share_text}"
+        );
+
+        let revoked_text = format_share_control_text(
+            &control::ControlCommand::ShareRevoke {
+                user: Some("bob".into()),
+            },
+            Some(&endpoint),
+            &serde_json::json!({"ok": true, "data": {"grants": []}}),
+            OutputStyles::plain(),
+        )
+        .expect("share revoke formats");
+        assert!(
+            revoked_text.contains("Revoked share for bob on dev"),
+            "{revoked_text}"
+        );
+
+        let table = format_share_control_text(
+            &control::ControlCommand::ShareList,
+            Some(&endpoint),
+            &granted,
+            OutputStyles::plain(),
+        )
+        .expect("share list formats");
+        assert!(table.contains("USER") && table.contains("UID") && table.contains("ROLE"));
+        assert!(table.contains("bob") && table.contains("1001") && table.contains("editor"));
+
+        let empty = format_share_control_text(
+            &control::ControlCommand::ShareList,
+            Some(&endpoint),
+            &serde_json::json!({"ok": true, "data": {"grants": []}}),
+            OutputStyles::plain(),
+        )
+        .expect("empty share list formats");
+        assert!(empty.contains("No shares for dev"), "{empty}");
     }
 }

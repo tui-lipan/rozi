@@ -932,7 +932,9 @@ impl SessionServer {
                     // the owner's own panes.
                     let per_spawn: Vec<_> = integration_env
                         .into_iter()
-                        .chain(spawn_env.unwrap_or_default())
+                        .chain(crate::pane::spawn_policy::guest_spawn_values(
+                            spawn_env.unwrap_or_default(),
+                        ))
                         .collect();
                     (
                         crate::pane::spawn_policy::spawn_environment(

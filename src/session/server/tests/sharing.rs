@@ -1113,7 +1113,15 @@ fn a_guest_pane_runs_with_the_owner_shell_runner_and_environment() {
         command_shell: vec![runner.to_string(), "-c".to_string()],
         cell_width: 0,
         cell_height: 0,
-        spawn_env: Some(vec![("PER_SPAWN".into(), "a file name".into())]),
+        // A client can name what the ambient environment would have carried as values of its own.
+        spawn_env: Some(vec![
+            ("PER_SPAWN".into(), "a file name".into()),
+            ("ROZI_FILE".into(), "/srv/notes.md".into()),
+            ("ROZI_BIN".into(), "/home/client/bin/rozi".into()),
+            ("ROZI_SOCKET".into(), "/run/client/rozi.sock".into()),
+            ("ROZI_EXTENSION".into(), "tools".into()),
+            ("WAYLAND_DISPLAY".into(), "wayland-client".into()),
+        ]),
     };
     let value = |env: &[(String, String)], key: &str| {
         env.iter()
@@ -1144,7 +1152,20 @@ fn a_guest_pane_runs_with_the_owner_shell_runner_and_environment() {
         Some("a file name")
     );
     assert_eq!(value(&pane.env, "ROZI_PANE").as_deref(), Some("1"));
-    for client_only in ["CLIENT_AMBIENT", "ROZI_BIN", "ROZI_SOCKET"] {
+    assert_eq!(
+        value(&pane.env, "ROZI_FILE").as_deref(),
+        Some("/srv/notes.md")
+    );
+    assert_ne!(
+        value(&pane.env, "WAYLAND_DISPLAY").as_deref(),
+        Some("wayland-client")
+    );
+    for client_only in [
+        "CLIENT_AMBIENT",
+        "ROZI_BIN",
+        "ROZI_SOCKET",
+        "ROZI_EXTENSION",
+    ] {
         assert_eq!(value(&pane.env, client_only), None, "{client_only}");
     }
 

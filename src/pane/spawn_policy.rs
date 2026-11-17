@@ -110,6 +110,44 @@ pub(crate) enum SpawnOrigin<'a> {
     Headless,
 }
 
+/// The `ROZI_*` values a command is given about what it was opened for: the link, file, or row, and
+/// the pane and session it came from. Every other `ROZI_*` name describes where a process runs.
+const ROZI_ARGUMENT_VARIABLES: &[&str] = &[
+    "ROZI_FILE",
+    "ROZI_URL",
+    "ROZI_ROW",
+    "ROZI_SOURCE_PANE",
+    "ROZI_SOURCE_SESSION",
+    "ROZI_REMOTE_HOST",
+];
+
+/// Variables that set up the process rather than tell the command something: the terminal, the
+/// desktop, the SSH connection, and shell integration.
+const EXECUTION_VARIABLES: &[&str] = &[
+    "SSH_CONNECTION",
+    "TERM",
+    "TERM_PROGRAM",
+    "TERM_PROGRAM_VERSION",
+    "ZDOTDIR",
+    "XDG_DATA_DIRS",
+    "PROMPT",
+];
+
+/// The part of a guest's per-spawn environment that crosses into a pane running as the owner: the
+/// values its command is given. A guest names what to run and with what; the owner's session decides
+/// how it runs, so a guest cannot point the pane at its own `rozi`, UI, extension, or desktop.
+pub(crate) fn guest_spawn_values(env: Vec<(String, String)>) -> Vec<(String, String)> {
+    env.into_iter()
+        .filter(|(name, _)| {
+            let rozi_owned =
+                name.starts_with("ROZI") && !ROZI_ARGUMENT_VARIABLES.contains(&name.as_str());
+            !rozi_owned
+                && !EXECUTION_VARIABLES.contains(&name.as_str())
+                && !crate::platform::environment::DESKTOP_VARIABLES.contains(&name.as_str())
+        })
+        .collect()
+}
+
 /// The environment a freshly spawned pane starts with.
 ///
 /// `per_spawn` is [`crate::state::PaneIdentity::env`] — values that belong to this one spawn and

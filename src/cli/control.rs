@@ -1063,14 +1063,8 @@ fn attach_files(
     let ControlEndpoint::Remote { target, session } = &command.endpoint else {
         let mut list = String::from("\n\nAttached files:");
         for attachment in &opened {
-            let path = attachment.path.to_str().ok_or_else(|| {
-                format!(
-                    "cannot attach {}: its path is not UTF-8",
-                    attachment.path.display()
-                )
-            })?;
             list.push_str("\n- ");
-            list.push_str(path);
+            list.push_str(listed_path(&attachment.path)?);
         }
         if let control::ControlCommand::AgentAsk { prompt, .. } = &mut command.request.command {
             prompt.push_str(&list);
@@ -1103,14 +1097,26 @@ struct Attachment {
     file: std::fs::File,
 }
 
+/// A local attachment's path as one line of the request's text. A path that is not UTF-8 or
+/// holds a control character would name a different file there, or none.
+fn listed_path(path: &std::path::Path) -> std::result::Result<&str, String> {
+    let refuse = |reason: &str| format!("cannot attach {}: {reason}", path.display());
+    let text = path
+        .to_str()
+        .ok_or_else(|| refuse("its path is not UTF-8"))?;
+    if text.chars().any(char::is_control) {
+        return Err(refuse("its path holds a control character"));
+    }
+    Ok(text)
+}
+
 /// Open a file to attach: a regular file, not a link, device, or pipe, within the size a paste
-/// may carry.
+/// may carry. The path is opened as given, since resolving it first would follow a link.
 fn open_attachment(file: &std::path::Path) -> std::result::Result<Attachment, String> {
     let refuse =
         |reason: &dyn std::fmt::Display| format!("cannot attach {}: {reason}", file.display());
-    let path = std::fs::canonicalize(file).map_err(|error| refuse(&error))?;
-    let opened =
-        crate::platform::attachments::open_source(&path).map_err(|error| refuse(&error))?;
+    let opened = crate::platform::attachments::open_source(file).map_err(|error| refuse(&error))?;
+    let path = std::path::absolute(file).map_err(|error| refuse(&error))?;
     let size = opened.metadata().map_err(|error| refuse(&error))?.len();
     if size > crate::session::protocol::MAX_ATTACHMENT_BYTES {
         return Err(refuse(&"files may be up to 16 MiB"));
@@ -1438,6 +1444,24 @@ mod tests {
         let answered =
             serde_json::json!({ "ok": true, "data": { "id": "r7", "state": "answered" } });
         assert_eq!(keep_asked_request(request, Ok(answered.clone())), answered);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_attachment_is_neither_a_link_nor_a_path_that_breaks_the_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.txt");
+        std::fs::write(&real, b"abc").unwrap();
+        let link = dir.path().join("link.txt");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(open_attachment(&link).is_err());
+
+        let opened = open_attachment(&real).unwrap();
+        assert_eq!(listed_path(&opened.path), Ok(real.to_str().unwrap()));
+        let split = dir.path().join("notes\nsecond-line.txt");
+        std::fs::write(&split, b"abc").unwrap();
+        let opened = open_attachment(&split).unwrap();
+        assert!(listed_path(&opened.path).is_err());
     }
 
     fn capture_cli(

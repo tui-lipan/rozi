@@ -35,6 +35,9 @@ ignore = [
     # nothing a pane prints can choose which font file is read. Revisit when fontdb and tui-lipan
     # move to a maintained parser.
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained and has no safe upgrade; it only parses installed system fonts for requested PNG captures, never pane output." },
+    # Used by rozi, tui-lipan, and relswap for local clock time and timestamp formatting. No known
+    # vulnerability; revisit when the three move to jiff or time.
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained but has no known vulnerability; rozi, tui-lipan, and relswap use it only to read the clock and format timestamps." },
 ]
 
 [sources]

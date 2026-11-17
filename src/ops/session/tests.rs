@@ -2766,12 +2766,14 @@ fn collaborators_dialog_shows_role_and_guest_account_and_guest_refuses_lifecycle
         backend.render();
         let rendered = backend.capture_frame().to_fixed_grid();
         assert!(
-            rendered.contains("me #1 · @carol · ctrl"),
-            "expected guest account + controller marker in self tag: {rendered}"
+            rendered.contains("me #1 · ctrl · controller"),
+            "expected the guest's role in its own tag: {rendered}"
         );
         assert!(
-            rendered.contains("@bob") && rendered.contains("editor"),
-            "expected guest account and role in collaborator row: {rendered}"
+            rendered.contains("bob #2")
+                && rendered.contains("editor")
+                && !rendered.contains("@bob"),
+            "expected the guest's role, with its account named once: {rendered}"
         );
 
         assert!(!crate::commands::command_available(

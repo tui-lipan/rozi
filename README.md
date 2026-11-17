@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/demo.gif" alt="A recording of rozi: new panes tile beside an editor, the layout changes, a pane floats, is dragged around, and goes fullscreen, each sidebar opens, a theme previews, and the view slides between workspaces" width="960">
+  <img src="assets/demo.gif" alt="A recording of rozi: new panes tile beside an editor, the layout changes from Master to Grid to Scrollable and Dwindle, a pane floats and is dragged, and the view moves between workspaces" width="960">
 </p>
 
 rozi arranges panes as you open them, keeps named sessions running after you leave, reaches other
@@ -84,6 +84,13 @@ Attach to the named session again with:
 rozi sessions attach dev
 ```
 
+## Compared with tmux and zellij
+
+tmux is smaller, runs nearly everywhere, and has almost twenty years of scripts and plugins behind
+it. zellij has WASM plugins, layout files, and a web client. rozi is for you if you would rather
+not split panes by hand: it places them like a tiling window manager, lists local and SSH sessions
+in one picker, and tracks the coding agents running in them.
+
 ## Documentation
 
 The full documentation is at [rozi.tui-lipan.dev](https://rozi.tui-lipan.dev). Good places to
@@ -106,6 +113,15 @@ It also builds and runs on NetBSD, where it is packaged in pkgsrc. That platform
 community-supported: no prebuilt binaries, and CI builds and tests it without gating a merge.
 
 See [Platform support](docs/platform-support.md).
+
+## How rozi is built
+
+rozi's interface is one application written with [tui-lipan](https://tui-lipan.dev), a component
+framework for terminal apps built alongside it. Coding agents wrote most of the code in both
+projects, directed and reviewed by one person, under the rules in [`AGENTS.md`](AGENTS.md): tests
+that exercise production behavior instead of stand-ins, benchmarks behind performance claims, and
+a [wire-compatibility policy](dev/wire-compatibility.md) so an update never ends a running
+session.
 
 ## Contributing
 

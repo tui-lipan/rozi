@@ -395,6 +395,7 @@ fn answer(
             }
             Update::full()
         }
+        AttachedReply::Sharing(kind) => crate::ops::sharing::answered(ctx, epoch, kind, response),
     }
 }
 

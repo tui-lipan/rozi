@@ -68,6 +68,7 @@ pub enum Action {
     /// The requests between the session's agents, and each chain of them as a sequence diagram.
     OpenAgentConversations,
     OpenCollaborators,
+    OpenSharing,
     RenameSession,
     NewTemporarySession,
     RequestControl,
@@ -220,6 +221,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::OpenAgentPicker,
     Action::OpenAgentConversations,
     Action::OpenCollaborators,
+    Action::OpenSharing,
     Action::RenameSession,
     Action::NewTemporarySession,
     Action::RequestControl,
@@ -357,6 +359,7 @@ impl Action {
             Action::OpenAgentPicker => "agents",
             Action::OpenAgentConversations => "agent-conversations",
             Action::OpenCollaborators => "collaborators",
+            Action::OpenSharing => "open-sharing",
             Action::RenameSession => "rename-session",
             Action::NewTemporarySession => "new-temporary-session",
             Action::RequestControl => "request-control",
@@ -461,6 +464,7 @@ impl Action {
             Action::OpenAgentConversations => {
                 Some(crate::session::protocol::Capability::AgentRequestUpdates)
             }
+            Action::OpenSharing => Some(crate::session::protocol::Capability::SessionSharing),
             Action::Spawn
             | Action::SpawnFloat
             | Action::RespawnPane

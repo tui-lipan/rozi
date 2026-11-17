@@ -425,6 +425,7 @@ fn execute_action_inner(
         Action::OpenAgentPicker => crate::ops::agents::open_agent_picker(ctx),
         Action::OpenAgentConversations => crate::ops::agent_conversations::open(ctx),
         Action::OpenCollaborators => crate::ops::session::open_collaborators(ctx),
+        Action::OpenSharing => crate::ops::sharing::open(ctx),
         Action::RenameSession => crate::ops::session::open_rename_session(ctx),
         Action::NewTemporarySession => {
             if ctx.state.current().session_attached
@@ -605,6 +606,7 @@ fn closes_settings(action: Action) -> bool {
             | Action::OpenAgentPicker
             | Action::OpenAgentConversations
             | Action::OpenCollaborators
+            | Action::OpenSharing
             | Action::OpenExtensions
     )
 }
@@ -656,6 +658,7 @@ pub(crate) fn clear_non_settings_overlays(ctx: &mut Context<AppRoot>) {
     ctx.state.agent_conversations = None;
     ctx.state.extensions = None;
     ctx.state.collaboration = None;
+    ctx.state.sharing = None;
     ctx.state.follow_prompt = None;
     ctx.state.overlay_return = None;
 }

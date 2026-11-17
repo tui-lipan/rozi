@@ -134,6 +134,7 @@ pub(crate) fn clients_changed(
         }
     }
     ctx.state.commands_dirty = true;
+    crate::ops::sharing::refresh_if_open(ctx);
     Update::full()
 }
 

@@ -32,8 +32,8 @@ pub use widget_keys::{
     profile_picker_key, recording_mark_input_key, release_notes_key, remote_picker_key,
     rename_input_key, rename_session_input_key, save_profile_key, search_input_key,
     session_picker_key, settings_choice_key, settings_number_field_key, settings_palette_key,
-    sidebar_body_key, sidebar_region_key, theme_picker_key, welcome_key, worktree_form_input_key,
-    worktree_picker_key,
+    sharing_key, sidebar_body_key, sidebar_region_key, theme_picker_key, welcome_key,
+    worktree_form_input_key, worktree_picker_key,
 };
 pub(crate) use workbar::{
     UiRecordingChip, ui_recording_chip, ui_recording_label, workspace_tab_shows_recording,
@@ -60,8 +60,8 @@ use overlays::{
     palette_overlay, pick_overlay, pick_prompt_overlay, ports_overlay, profile_picker_overlay,
     reconnecting_overlay, recording_mark_overlay, remote_picker_overlay, rename_overlay,
     rename_session_overlay, save_profile_overlay, search_overlay, session_picker_overlay,
-    settings_choice_overlay, settings_number_overlay, settings_overlay, theme_picker_overlay,
-    worktree_overlay,
+    settings_choice_overlay, settings_number_overlay, settings_overlay, sharing_overlay,
+    theme_picker_overlay, worktree_overlay,
 };
 use workbar::{connecting_workspace_panel, empty_workspace_panel, launcher_panel, workbar};
 
@@ -633,6 +633,9 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     }
     if ctx.state.collaboration.is_some() {
         root = root.child(collaboration_overlay(ctx));
+    }
+    if ctx.state.sharing.is_some() {
+        root = root.child(sharing_overlay(ctx));
     }
     if ctx.state.follow_prompt.is_some() {
         root = root.child(follow_prompt_overlay(ctx));

@@ -256,6 +256,11 @@ pub fn attached_control_refusal(
         ControlCommand::RecordStart { .. }
         | ControlCommand::RecordStop { .. }
         | ControlCommand::RecordMark { .. } => None,
+        // Share management stays gated on `ControlCommand::required_permission() == Admin` in
+        // `serve_control`, so only the session owner's non-read-only client passes.
+        ControlCommand::ShareGrant { .. }
+        | ControlCommand::ShareRevoke { .. }
+        | ControlCommand::ShareList => None,
         // The server derives who asks or answers from the calling pane, which a UI cannot vouch
         // for; the CLI sends these to the pane's own session.
         ControlCommand::AgentAsk { .. }

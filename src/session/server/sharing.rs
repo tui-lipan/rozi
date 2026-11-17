@@ -200,7 +200,7 @@ impl SessionServer {
             Ok(None) => {
                 return ControlResponse::error_with(
                     ControlErrorCode::InvalidArgument,
-                    format!("unknown user {user:?}"),
+                    format!("no account named `{user}` on this host"),
                 );
             }
             Err(err) if err.kind() == io::ErrorKind::Unsupported => {

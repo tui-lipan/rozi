@@ -1703,7 +1703,23 @@ impl SessionServer {
         );
         self.settings.scrollback = loaded.config.scrollback;
         self.settings.split_width_multiplier = loaded.config.layout.split_width_multiplier;
+        self.settings.shell_integration = loaded.config.shell_integration.mode;
         self.apply_spawn_policy(loaded.config.rules, shell, command_shell);
+    }
+
+    /// The owner's interactive shell with shell integration applied, and the environment that
+    /// integration needs, for a pane no client of the owner prepared: one restored from a
+    /// snapshot, or one a guest opened. Without integration, prompt readiness never arrives and
+    /// every command waits for the fallback.
+    pub(super) fn owner_interactive_shell(&self) -> (Vec<String>, Vec<(String, String)>) {
+        let (shell, integration_env) =
+            crate::platform::shell_integration::resolve_interactive_shell(
+                Some(&self.settings.shell),
+                &crate::platform::command::ShellEnv::from_process(),
+                self.settings.shell_integration,
+                &crate::platform::shell_integration::InjectionEnv::from_process(),
+            );
+        (shell.as_argv(), integration_env)
     }
 
     /// Re-read `[recording]` for the recording about to start, for the reason

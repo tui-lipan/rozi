@@ -212,6 +212,7 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
         command_shell,
         cell_width: 0,
         cell_height: 0,
+        spawn_env: None,
     });
     read_until(&mut controller, |frame| {
         matches!(
@@ -525,6 +526,7 @@ fn consumed_media_reaches_two_local_clients_and_a_late_remote_over_the_protocol(
         command_shell,
         cell_width: 0,
         cell_height: 0,
+        spawn_env: None,
     });
     read_until(&mut controller, |frame| {
         matches!(

@@ -899,6 +899,7 @@ impl SessionServer {
                 command_shell,
                 cell_width,
                 cell_height,
+                spawn_env,
             } => {
                 if local && self.client_read_only(client_id) {
                     return vec![(
@@ -918,6 +919,35 @@ impl SessionServer {
                     && self.origin_seed_client.is_none()
                     && self.panes.is_empty()
                     && self.layout.is_none();
+                // A guest's pane runs as the owner and outlives the guest's visit, so how it runs
+                // is the owner's: the guest asks for what to run, where, and with which values of
+                // its own, but its shell, environment, and rozi integration are not carried over.
+                let (env, shell, command_shell) = if self
+                    .client(client_id)
+                    .is_some_and(|client| client.access.is_guest())
+                {
+                    self.reload_spawn_policy();
+                    let (shell, integration_env) = self.owner_interactive_shell();
+                    // Integration first, so a value the pane asked for still wins, as it does for
+                    // the owner's own panes.
+                    let per_spawn: Vec<_> = integration_env
+                        .into_iter()
+                        .chain(crate::pane::spawn_policy::guest_spawn_values(
+                            spawn_env.unwrap_or_default(),
+                        ))
+                        .collect();
+                    (
+                        crate::pane::spawn_policy::spawn_environment(
+                            crate::pane::spawn_policy::SpawnOrigin::Headless,
+                            pane_id,
+                            &per_spawn,
+                        ),
+                        shell,
+                        self.settings.command_shell.clone(),
+                    )
+                } else {
+                    (env, shell, command_shell)
+                };
                 let request = SpawnRequest {
                     pane_id,
                     owner: local.then_some(client_id),

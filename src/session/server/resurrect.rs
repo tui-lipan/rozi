@@ -830,15 +830,7 @@ impl SessionServer {
         let (mut layout, mut damaged) = self.restore_layout(&path, meta.layout_rev);
         let mut restored = 0;
         let mut resumed = std::collections::HashSet::new();
-        // Restore has no client to inject integration into the shell's argv and environment.
-        // Without it, prompt readiness never arrives and every command waits for the fallback.
-        let (shell, integration_env) =
-            crate::platform::shell_integration::resolve_interactive_shell(
-                Some(&self.settings.shell),
-                &crate::platform::command::ShellEnv::from_process(),
-                self.settings.shell_integration,
-                &crate::platform::shell_integration::InjectionEnv::from_process(),
-            );
+        let (shell, integration_env) = self.owner_interactive_shell();
         for saved in meta.panes {
             let generation = self.next_generation;
             self.next_generation += 1;
@@ -874,7 +866,7 @@ impl SessionServer {
                         &integration_env,
                     ),
                     palette: saved.palette,
-                    shell: shell.as_argv(),
+                    shell: shell.clone(),
                     command_shell: self.settings.command_shell.clone(),
                     // Resurrect predates any client attaching; the first controller resize
                     // reports the real cell size.

@@ -525,6 +525,7 @@ fn oversized_write_frame_is_rejected() {
         },
         cell_width: 0,
         cell_height: 0,
+        spawn_env: None,
         shell: vec!["/bin/sh".to_string()],
         command_shell: vec!["/bin/sh".to_string(), "-c".to_string()],
     };
@@ -870,6 +871,7 @@ fn golden_client_spawn_json_shape() {
         command_shell: vec!["/bin/sh".to_string(), "-c".to_string()],
         cell_width: 9,
         cell_height: 18,
+        spawn_env: None,
     })
     .unwrap();
     assert_eq!(

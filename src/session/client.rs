@@ -283,6 +283,8 @@ pub struct SpawnPaneRequest {
     pub rows: u16,
     pub keep_open: bool,
     pub env: Vec<(String, String)>,
+    /// The pane's own environment within `env`: [`crate::state::PaneIdentity::env`].
+    pub spawn_env: Vec<(String, String)>,
     pub title: Option<String>,
     pub palette: TerminalColorPalette,
     pub shell: Vec<String>,
@@ -835,6 +837,7 @@ impl SessionClient {
             command_shell: request.command_shell,
             cell_width: self.cell.width,
             cell_height: self.cell.height,
+            spawn_env: Some(request.spawn_env),
         });
     }
 

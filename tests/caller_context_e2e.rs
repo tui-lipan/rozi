@@ -869,6 +869,7 @@ fn a_verified_caller_passes_on_its_ssh_connection_and_nothing_else() {
         command_shell,
         cell_width: 0,
         cell_height: 0,
+        spawn_env: None,
     });
     common::read_until(&mut client, |frame| {
         matches!(

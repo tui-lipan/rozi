@@ -1074,3 +1074,108 @@ fn an_answer_held_across_a_downgrade_is_authorized_again_before_it_goes() {
     assert_eq!(response.code, Some(ControlErrorCode::NotPermitted));
     assert!(response.data.is_none());
 }
+
+/// A guest's pane runs as the owner and outlives the guest, so the owner's config decides its shell
+/// and runner and its whole environment. The guest still chooses the command, where it runs, and
+/// the data rozi passes the command. The owner's own panes are unchanged.
+#[test]
+fn a_guest_pane_runs_with_the_owner_shell_runner_and_environment() {
+    crate::test_support::isolate_user_dirs();
+    let _config = crate::test_support::lock_config_file();
+    std::fs::write(
+        crate::config::config_path(),
+        "shell = [\"/bin/sh\"]\ncommand_shell = [\"/bin/sh\", \"-c\"]\n",
+    )
+    .unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let cwd = cwd.path().to_str().unwrap().to_string();
+    let pair = |name: &str, value: &str| (name.to_string(), value.to_string());
+    let arguments = [
+        ("ROZI_FILE", "/srv/notes.md"),
+        ("ROZI_HINT", "notes.md:3:7"),
+        ("ROZI_LINE", "3"),
+        ("ROZI_COLUMN", "7"),
+        ("ROZI_ROW_ID", "row-1"),
+    ];
+    // What a client can name that would set up the process rather than tell the command something.
+    let execution = [
+        ("CLIENT_VALUE", "1"),
+        ("PATH", "/home/client/bin"),
+        ("LD_PRELOAD", "/home/client/lib/hook.so"),
+        ("ROZI_BIN", "/home/client/bin/rozi"),
+        ("ROZI_SOCKET", "/run/client/rozi.sock"),
+        ("ROZI_EXTENSION", "tools"),
+        ("WAYLAND_DISPLAY", "wayland-client"),
+    ];
+    let env: Vec<_> = arguments
+        .iter()
+        .chain(&execution)
+        .map(|(name, value)| pair(name, value))
+        .collect();
+    let spawn = |pane_id, shell: &str, runner: &str| ClientMessage::SpawnPane {
+        placement: None,
+        pane_id,
+        local: true,
+        generation: 1,
+        launch: Some(crate::pane::launch::PaneLaunch::shell("sleep 5")),
+        cwd: Some(cwd.clone()),
+        cols: 20,
+        rows: 5,
+        keep_open: false,
+        env: env.clone(),
+        title: None,
+        palette: crate::session::protocol::WirePalette::from(
+            tui_lipan::TerminalColorPalette::default(),
+        ),
+        shell: vec![shell.to_string()],
+        command_shell: vec![runner.to_string(), "-c".to_string()],
+        cell_width: 0,
+        cell_height: 0,
+        spawn_env: Some(env.clone()),
+    };
+    let value = |env: &[(String, String)], key: &str| {
+        env.iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.clone())
+    };
+
+    let (mut server, _dir) = shared_test_server("dev");
+    grant_user(&mut server, bob_uid(), "bob", SessionRole::Editor);
+    let (bob, _b_stream) = attach_guest(&mut server, bob_uid(), "alice/dev", false);
+    clear_outboxes(&mut server, &[bob]);
+    // The guest's runner does not exist: the spawn can only succeed with the owner's.
+    send_frame(
+        &mut server,
+        bob,
+        spawn(1, "/home/bob/bin/fish", "/home/bob/bin/runner"),
+    );
+    assert!(
+        outbox_controls(&server, bob)
+            .iter()
+            .any(|reply| matches!(reply, ServerMessage::SpawnResult { ok: true, .. }))
+    );
+    let pane = &server.local_panes[&(bob, 1)];
+    assert_eq!(pane.shell, ["/bin/sh"]);
+    assert_eq!(pane.cwd.as_deref(), Some(cwd.as_str()));
+    assert_eq!(value(&pane.env, "ROZI_PANE").as_deref(), Some("1"));
+    for (name, expected) in arguments {
+        assert_eq!(value(&pane.env, name).as_deref(), Some(expected), "{name}");
+    }
+    for (name, sent) in execution {
+        assert_ne!(value(&pane.env, name).as_deref(), Some(sent), "{name}");
+    }
+
+    let (owner, _o_stream) = attach_client(&mut server);
+    send_frame(&mut server, owner, spawn(2, "/bin/bash", "/bin/sh"));
+    let pane = &server.local_panes[&(owner, 2)];
+    assert_eq!(pane.shell, ["/bin/bash"]);
+    for (name, sent) in arguments.iter().chain(&execution) {
+        assert_eq!(value(&pane.env, name).as_deref(), Some(*sent), "{name}");
+    }
+
+    for pane in server.local_panes.values() {
+        if let Some(pty) = &pane.pty {
+            let _ = pty.kill();
+        }
+    }
+}

@@ -110,6 +110,31 @@ pub(crate) enum SpawnOrigin<'a> {
     Headless,
 }
 
+/// The values rozi gives a command about what it was opened for: the link, file, or position a hint
+/// named, the row activated, and the pane and session it came from.
+const GUEST_SPAWN_ARGUMENT_VARIABLES: &[&str] = &[
+    "ROZI_FILE",
+    "ROZI_URL",
+    "ROZI_HINT",
+    "ROZI_LINE",
+    "ROZI_COLUMN",
+    "ROZI_ROW",
+    "ROZI_ROW_ID",
+    "ROZI_SOURCE_PANE",
+    "ROZI_SOURCE_SESSION",
+    "ROZI_REMOTE_HOST",
+];
+
+/// The part of a guest's per-spawn environment that crosses into a pane running as the owner. A
+/// guest chooses the command and the data rozi passes it; the owner's session sets everything else
+/// about how it runs. Any other variable can change that - `PATH`, `LD_PRELOAD`, a display, rozi's
+/// own socket or binary - so only these named values cross.
+pub(crate) fn guest_spawn_values(env: Vec<(String, String)>) -> Vec<(String, String)> {
+    env.into_iter()
+        .filter(|(name, _)| GUEST_SPAWN_ARGUMENT_VARIABLES.contains(&name.as_str()))
+        .collect()
+}
+
 /// The environment a freshly spawned pane starts with.
 ///
 /// `per_spawn` is [`crate::state::PaneIdentity::env`] — values that belong to this one spawn and

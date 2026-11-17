@@ -2824,6 +2824,7 @@ fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() 
             command_shell: test_command_shell(),
             cell_width: 0,
             cell_height: 0,
+            spawn_env: None,
         },
     );
     server.handle_message(
@@ -3636,6 +3637,7 @@ fn spawn_from_follower_is_rejected() {
             command_shell: test_command_shell(),
             cell_width: 0,
             cell_height: 0,
+            spawn_env: None,
         },
     );
     assert!(matches!(
@@ -3664,6 +3666,7 @@ fn local_spawn(pane_id: PaneId, generation: u64) -> ClientMessage {
         command_shell: test_command_shell(),
         cell_width: 0,
         cell_height: 0,
+        spawn_env: None,
     }
 }
 
@@ -3751,6 +3754,7 @@ fn colliding_spawn(pane_id: PaneId, local: bool, generation: u64, command: &str)
         command_shell: test_command_shell(),
         cell_width: 0,
         cell_height: 0,
+        spawn_env: None,
     }
 }
 

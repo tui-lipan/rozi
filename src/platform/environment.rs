@@ -152,6 +152,37 @@ fn x11_socket_path(display: &str) -> Option<PathBuf> {
     valid.then(|| PathBuf::from(format!("/tmp/.X11-unix/X{number}")))
 }
 
+/// The character set a pane gets when nothing names a locale. macOS's sshd and launchd set none, so
+/// a server started over SSH would otherwise run every pane in the `C` locale, where zsh shows typed
+/// non-ASCII text as escapes. `UTF-8` is what Terminal.app sets in the same case. Elsewhere a login
+/// shell reads the system locale itself.
+#[cfg(target_os = "macos")]
+const DEFAULT_CHARACTER_SET: Option<&str> = Some("UTF-8");
+#[cfg(not(target_os = "macos"))]
+const DEFAULT_CHARACTER_SET: Option<&str> = None;
+
+/// Give a pane this platform's default character set when neither its spawn request nor the server
+/// names a locale. Any locale that is named, `C` included, is left as chosen.
+pub fn fill_default_locale(env: &mut Vec<(String, String)>) {
+    if let Some(charset) = DEFAULT_CHARACTER_SET
+        && names_no_locale(env, |name| std::env::var(name).ok())
+    {
+        env.push(("LC_CTYPE".to_string(), charset.to_string()));
+    }
+}
+
+/// Whether the spawn request and the inherited environment leave the character set unset. An empty
+/// value names nothing, as it does to `setlocale`.
+fn names_no_locale(env: &[(String, String)], read: impl Fn(&str) -> Option<String>) -> bool {
+    ["LC_ALL", "LC_CTYPE", "LANG"].iter().all(|name| {
+        let requested = env.iter().rev().find(|(key, _)| key == name);
+        requested
+            .map(|(_, value)| value.clone())
+            .or_else(|| read(name))
+            .is_none_or(|value| value.is_empty())
+    })
+}
+
 /// Read the built-in desktop variables, this client's SSH connection, and explicitly configured
 /// additions from this client. A client inside an SSH login talks to the server over local IPC, and
 /// a pane it opens is on that login's connection all the same.
@@ -304,6 +335,30 @@ mod tests {
         for elsewhere in ["localhost:10.0", "", ":", ":x", "host:0"] {
             assert_eq!(x11_socket_path(elsewhere), None, "{elsewhere:?}");
         }
+    }
+
+    #[test]
+    fn only_a_spawn_with_no_locale_anywhere_lacks_one() {
+        let inherit = |inherited: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                inherited
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| value.to_string())
+            }
+        };
+        assert!(names_no_locale(&[], inherit(&[])));
+        assert!(names_no_locale(&[], inherit(&[("LANG", "")])));
+        assert!(!names_no_locale(&[], inherit(&[("LC_ALL", "C")])));
+        assert!(!names_no_locale(
+            &vars(&[("LANG", "pl_PL.UTF-8")]),
+            inherit(&[])
+        ));
+        // An empty request value replaces the inherited one, so it names nothing.
+        assert!(names_no_locale(
+            &vars(&[("LC_CTYPE", "")]),
+            inherit(&[("LC_CTYPE", "UTF-8")])
+        ));
     }
 
     #[test]

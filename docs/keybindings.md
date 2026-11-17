@@ -145,6 +145,7 @@ These actions are available in the command palette, and you can bind them under 
 - `open-config`
 - `apply-profile`
 - `collaborators`
+- `open-sharing`
 - `new-temporary-session`
 - `toggle-input-lock`
 - `toggle-control-takeover`
@@ -362,6 +363,8 @@ leave the search text unchanged even when there are no matches.
   **Discover**. See the list below.
 - **Collaborators:** `Enter` grants control, `Ctrl+D` declines a request, and `Ctrl+K` twice removes
   a client.
+- **Sharing:** `Ctrl+N` shares with the typed account as `viewer`, `Enter` cycles its role, and
+  `Ctrl+K` twice unshares it.
 - **Rename prompts:** `Enter` submits. An empty pane or workspace name clears it.
 
 In **Extensions**:

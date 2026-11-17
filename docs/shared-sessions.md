@@ -139,6 +139,16 @@ rozi sessions unshare dev --all
 `--user` takes an account name or numeric id. `--role` defaults to `viewer`. Running `share` again
 for the same account changes its role.
 
+In rozi, run **Share session…** (`open-sharing`) from the command palette (`Ctrl+A`, then `p`) to
+manage shares without leaving the session:
+
+| Key | Action |
+| --- | --- |
+| `Ctrl+N` | Share with the typed account name or numeric id as `viewer` |
+| `Enter` | Cycle the selected account's role (`viewer`, `editor`, `controller`) |
+| `Ctrl+K` twice | Unshare the selected account |
+| `Esc` | Close the list |
+
 The other person attaches with your account name in front of the session name:
 
 ```bash

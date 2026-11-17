@@ -1139,4 +1139,6 @@ pub enum Msg {
     },
     /// Client-owned SSH port-forwarding events and overlay actions.
     Ports(crate::ops::ports::PortMsg),
+    /// In-app session sharing picker actions.
+    Sharing(crate::update::sharing::Msg),
 }

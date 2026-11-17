@@ -14,6 +14,7 @@ mod prompts;
 pub(crate) use prompts::cancel_attach_askpass;
 mod services;
 pub(crate) mod session;
+pub(crate) mod sharing;
 pub(crate) mod sidebar;
 pub(crate) mod workbar;
 
@@ -93,6 +94,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             projects,
         } => hosts::apply(ctx, target, generation, rows, agents, projects),
         Msg::Ports(msg) => ports::handle(ctx, msg),
+        Msg::Sharing(msg) => sharing::handle(ctx, msg),
         Msg::LocalAgentMetadata(snapshot) => local_agents::apply(ctx, snapshot),
         Msg::PullRequests {
             target,
@@ -1225,6 +1227,7 @@ pub(crate) fn sync_modifier_key_reporting(ctx: &mut Context<AppRoot>) {
         ctx.state.modal_overlay(),
         Some(
             "collaboration"
+                | "sharing"
                 | "agent-picker"
                 | "remote-picker"
                 | "session-picker"

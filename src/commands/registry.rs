@@ -381,6 +381,7 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
                 .iter()
                 .any(|client| client.id != shared.client_id)
         }),
+        Action::OpenSharing => state.current().session_attached,
         Action::ToggleInputLock => shared.is_some_and(|shared| {
             shared.clients.len() > 1 && !shared.read_only && shared.is_controller()
         }),
@@ -427,6 +428,23 @@ pub(crate) fn can_upgrade_attached_session(state: &State) -> bool {
 /// Why `action` is disabled on the currently attached session, or `None` when the session supports
 /// it (or no session is attached).
 pub(crate) fn action_disabled_reason(action: Action, state: &State) -> Option<String> {
+    if action == Action::OpenSharing {
+        if let Some(reason) = crate::platform::user::session_sharing_unavailable() {
+            return Some(reason.to_string());
+        }
+        if state.current().is_guest_session() {
+            return Some("only the session owner can share it".to_string());
+        }
+        if state
+            .current()
+            .shared
+            .as_ref()
+            .is_some_and(|shared| shared.read_only)
+            || state.current().reconnect_read_only
+        {
+            return Some("attached read-only".to_string());
+        }
+    }
     if action == Action::RequestControl
         && state
             .current()
@@ -1996,6 +2014,7 @@ mod tests {
                 crate::input::Action::OpenAgentConversations => {
                     Some(Capability::AgentRequestUpdates)
                 }
+                crate::input::Action::OpenSharing => Some(Capability::SessionSharing),
                 _ => None,
             };
             assert_eq!(command.action.required_capability(), expected);
@@ -2006,6 +2025,13 @@ mod tests {
                 .disabled_reason_for_capabilities(Some(&older))
                 .as_deref(),
             Some("needs this session on rozi ≥ 0.0.48")
+        );
+        let without_sharing = Capabilities::current().without(Capability::SessionSharing);
+        assert_eq!(
+            crate::input::Action::OpenSharing
+                .disabled_reason_for_capabilities(Some(&without_sharing))
+                .as_deref(),
+            Some("needs this session on rozi ≥ 0.0.50")
         );
     }
 }

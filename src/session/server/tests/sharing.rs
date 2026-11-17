@@ -819,3 +819,71 @@ fn guest_handoff_respects_role_changes_and_read_only_clamp_persists_across_upgra
         SessionRole::Editor
     );
 }
+
+#[test]
+fn attached_control_share_grant_succeeds_for_owner_and_refuses_guest_controller() {
+    let (mut server, _dir) = shared_test_server("dev");
+    let (owner, _o_stream) = attach_client(&mut server);
+    let bob = bob_uid();
+    let bob_spec = bob.to_string();
+
+    clear_outboxes(&mut server, &[owner]);
+    send_frame(
+        &mut server,
+        owner,
+        ClientMessage::AttachedControl {
+            request_id: 11,
+            request: control_req(ControlCommand::ShareGrant {
+                user: bob_spec.clone(),
+                role: SessionRole::Controller,
+            }),
+        },
+    );
+    let reply = outbox_controls(&server, owner);
+    let [
+        ServerMessage::AttachedControlResult {
+            request_id: 11,
+            response,
+        },
+    ] = reply.as_slice()
+    else {
+        panic!("expected AttachedControlResult, got {reply:?}");
+    };
+    assert!(response.ok, "{response:?}");
+    let share_state: ShareState = serde_json::from_value(response.data.clone().unwrap()).unwrap();
+    assert_eq!(share_state.grants.len(), 1);
+    assert_eq!(share_state.grants[0].uid, bob.as_raw());
+    assert_eq!(share_state.grants[0].role, SessionRole::Controller);
+
+    // Attach Bob as guest controller and verify AttachedControl ShareGrant is refused.
+    let (guest_ctrl, _g_stream) = attach_guest(&mut server, bob, "alice/dev", false);
+    assert_eq!(
+        server.client(guest_ctrl).unwrap().access.role,
+        SessionRole::Controller
+    );
+    let charlie = charlie_uid();
+    clear_outboxes(&mut server, &[guest_ctrl]);
+    send_frame(
+        &mut server,
+        guest_ctrl,
+        ClientMessage::AttachedControl {
+            request_id: 12,
+            request: control_req(ControlCommand::ShareGrant {
+                user: charlie.to_string(),
+                role: SessionRole::Viewer,
+            }),
+        },
+    );
+    assert!(matches!(
+        outbox_controls(&server, guest_ctrl).as_slice(),
+        [ServerMessage::AttachedControlResult {
+            request_id: 12,
+            response: ControlResponse {
+                ok: false,
+                code: Some(ControlErrorCode::NotPermitted),
+                ..
+            }
+        }]
+    ));
+    assert!(server.shares.grant_for(charlie).is_none());
+}

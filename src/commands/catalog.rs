@@ -532,6 +532,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::OpenSharing,
+        label: "Share session…",
+        category: "Collaboration",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::RenameSession,
         label: "Rename session",
         category: "Session",

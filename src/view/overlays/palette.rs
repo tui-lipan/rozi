@@ -322,6 +322,7 @@ pub(crate) struct OverlayPalette<'a, T> {
     item_gutter: Option<OverlayGutterRenderer<T>>,
     fallback_interceptor: Option<KeyHandler>,
     tabs: Option<OverlayTabs>,
+    reset_key: Option<String>,
     item_key: Option<OverlayItemKey<T>>,
     description_wins: Option<Length>,
     detail: Option<Element>,
@@ -357,6 +358,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             item_gutter: None,
             fallback_interceptor: None,
             tabs: None,
+            reset_key: None,
             item_key: None,
             description_wins: None,
             detail: None,
@@ -394,6 +396,11 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
 
     pub(crate) fn item_key(mut self, key: OverlayItemKey<T>) -> Self {
         self.item_key = Some(key);
+        self
+    }
+
+    pub(crate) fn reset_key(mut self, key: impl Into<String>) -> Self {
+        self.reset_key = Some(key.into());
         self
     }
 
@@ -509,6 +516,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             item_gutter,
             fallback_interceptor,
             tabs,
+            reset_key,
             item_key,
             description_wins,
             detail,
@@ -585,8 +593,10 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             // Reset rather than remount: each page brings its own query and highlight, but the tab
             // strip above them has to keep its scroll position.
             palette = palette
-                .reset_key(tabs.active.to_string())
+                .reset_key(reset_key.unwrap_or_else(|| tabs.active.to_string()))
                 .results_header(tabs.strip(ctx));
+        } else if let Some(reset_key) = reset_key {
+            palette = palette.reset_key(reset_key);
         }
         body = body.child(palette);
         if let Some(detail) = detail {

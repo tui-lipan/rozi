@@ -20,16 +20,60 @@
   <img src="assets/demo.gif" alt="A recording of rozi: new panes tile beside an editor, the layout changes from Master to Grid to Scrollable and Dwindle, a pane floats and is dragged, and the view moves between workspaces" width="960">
 </p>
 
-rozi arranges panes as you open them, keeps named sessions running after you leave, reaches other
-machines over SSH, and shows which coding agents need you. You can change any of it live, from
-inside rozi: themes, pane frames, layouts, and keys preview as you browse and save to one config
-file. Everything you can do interactively, you can also script from the CLI, hooks, and extensions.
+rozi is a terminal multiplexer built for how terminals get used now: several coding agents at
+once, work spread across machines, terminals that show images, and Windows next to Linux and
+macOS. Panes tile themselves the way a tiling window manager places windows, sessions keep running
+after you leave, and everything you can do by hand, you can also script.
 
-| Tiling workspace | Persistent sessions | Remote machines |
-| --- | --- | --- |
-| Seven tiling layouts, plus floating and fullscreen panes | Live processes and scrollback survive detach | Attach to saved hosts through SSH |
-| **Agent activity** | **Shared sessions** | **Automation and extensions** |
-| See which coding agents are working or need input | Follow another client or take layout control | Inspect, control, and extend rozi from the CLI |
+### Tiling
+
+- Seven layouts: dwindle, master, grid, columns, rows, monocle, and a scrollable strip wider than
+  the screen. Floating and fullscreen panes, nine workspaces per session.
+- A mouse that works everywhere: focus, resize splits, drag floating panes, click hints.
+- Themes, frames, layouts, and keys preview live as you browse them and save to one config file.
+  30 themes are built in.
+
+### Coding agents
+
+- rozi recognises 23 agent CLIs, including Claude Code, Codex, and opencode, and shows which are
+  working, finished, or waiting for you, across every session and connected machine.
+- One key jumps to the next agent that needs you. The Projects tab groups agents by repository and
+  checkout, and Git worktrees open in their own sessions.
+- Agents can drive rozi themselves: rozi ships a skill that teaches them its CLI, and one agent can
+  ask another a question and wait for the answer.
+
+### Remote machines over SSH
+
+- Local and remote sessions are in one picker. rozi installs itself on the host, uses your OpenSSH
+  config and keys, and reconnects when the connection drops; the remote session keeps running.
+- Ctrl-click a file path in a remote pane and it opens on your machine. Paste or drop files onto a
+  remote pane and they are uploaded and their remote paths are typed in.
+- A `localhost` link in a remote pane opens through an automatic SSH port forward. The clipboard,
+  your theme, and your keys stay local.
+
+### A full terminal
+
+- Images through the Kitty graphics protocol, shown as Kitty, iTerm2, or sixel graphics depending
+  on your terminal. Video in a pane stays current instead of falling behind.
+- Drag and drop between panes and other applications, clickable links and file paths, copy mode,
+  scrollback search, and shell integration.
+
+### Sessions
+
+- Named sessions survive detaching. After a crash or a reboot, rozi restores the layout, the
+  scrollback, and the commands and agent conversations that ran in them.
+- Several clients can attach to one session and hand layout control between them, including users
+  of other accounts on the same machine.
+- Updating rozi does not end running sessions.
+
+### Scripting and extensions
+
+- Every action is a CLI command with JSON output: open panes, send keys, wait for text to appear,
+  capture a pane as text, JSON, or PNG, and record it for replay, as PNG frames, or as an
+  asciinema cast.
+- Hooks run on pane, workspace, and session events. Extensions are plain processes in any language
+  that add commands, pickers, and sidebar tabs, can run on the remote host, and install from an
+  in-app gallery.
 
 Tiling behavior and keyboard flow take their cues from the
 [Hyprland](https://hypr.land) window manager.
@@ -88,8 +132,9 @@ rozi sessions attach dev
 
 tmux is smaller, runs nearly everywhere, and has almost twenty years of scripts and plugins behind
 it. zellij has WASM plugins, layout files, and a web client. rozi is for you if you would rather
-not split panes by hand: it places them like a tiling window manager, lists local and SSH sessions
-in one picker, and tracks the coding agents running in them.
+not split panes by hand, run coding agents you need to keep an eye on, or work across machines and
+operating systems: it places panes like a tiling window manager, treats SSH hosts as part of the
+same workspace, and tracks every agent on every connected machine.
 
 ## Documentation
 

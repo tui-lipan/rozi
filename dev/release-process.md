@@ -49,7 +49,9 @@ cargo install relswap --version "=$RELSWAP_VERSION" --locked --features release-
 GitHub Releases is the canonical changelog, including the migrated history through 0.0.22. The
 repository intentionally has no `CHANGELOG.md`; do not recreate one or add per-PR note fragments.
 
-1. Choose a semantic version and update `package.version` in `Cargo.toml`.
+1. Choose the version and update `package.version` in `Cargo.toml`. Before 1.0, a release that
+   contains a breaking change raises the minor version (0.1.3 → 0.2.0); any other release raises
+   the patch version (0.1.3 → 0.1.4). Breaking changes are the commits marked `!`.
 2. Let Cargo update `Cargo.lock`, and confirm both files describe the same dependency graph.
 3. Update user documentation for any release behavior that changed.
 4. Capture the golden wire corpus for this release, so later builds keep decoding what it sends

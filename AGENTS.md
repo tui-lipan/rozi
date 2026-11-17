@@ -37,7 +37,8 @@ tiling layout and keyboard flow take their cues from the Hyprland window manager
   defines release-note structure; Rosie writes the prose from each PR Summary.
 - Mark every breaking change with `!` in the commit or PR title and add a `### Breaking changes`
   section saying what breaks and how to migrate. The rules are in
-  `.agents/instructions/git-contributions.md`.
+  `.agents/instructions/git-contributions.md`. Before 1.0, a release with a breaking change raises
+  the minor version and any other release the patch version.
 - Prefer a clean breaking change over aliases or compatibility shims unless the user asks for
   compatibility or a protocol test intentionally covers version skew.
 - The repository is MPL-2.0. Contributions require a DCO sign-off.

@@ -690,9 +690,14 @@ impl SessionServer {
             }
         };
         if let Some(response) = held {
-            return response.map_or_else(Vec::new, |response| {
-                vec![(Target::Sender, reply.message(response))]
-            });
+            let Some(response) = response else {
+                self.held_permissions.insert(
+                    (client_id, reply.hold_id()),
+                    request.command.required_permission(),
+                );
+                return Vec::new();
+            };
+            return vec![(Target::Sender, reply.message(response))];
         }
         let mut broadcasts = Vec::new();
         let response = self.run_session_control(request, &mut broadcasts);
@@ -702,12 +707,23 @@ impl SessionServer {
     }
 
     /// Send `response` to a reply held since its request, closing a headless connection behind it.
+    ///
+    /// The client's access is checked again first: a guest whose role shrank while the answer was
+    /// held gets a refusal instead of what its old role could read.
     pub(super) fn answer_held(
         &mut self,
         client_id: ClientId,
         reply: &ReplyTo,
-        response: ControlResponse,
+        mut response: ControlResponse,
     ) {
+        if let Some(permission) = self.held_permissions.remove(&(client_id, reply.hold_id()))
+            && !self.client_access_for_control(client_id).allows(permission)
+        {
+            response = ControlResponse::error_with(
+                ControlErrorCode::NotPermitted,
+                "permission denied: this client's role changed while the request was waiting",
+            );
+        }
         self.enqueue(client_id, Target::Sender, reply.message(response));
         if reply.closes() {
             self.set_close_after_flush(client_id);

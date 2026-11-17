@@ -127,15 +127,15 @@ impl ControlCommand {
             | Self::AgentAsk { .. }
             | Self::AgentReply { .. }
             | Self::AgentReplyLater { .. }
-            | Self::AgentAwait { .. }
             | Self::AgentCancel { .. }
             // Files for an `agent-ask`, under the same random transfer ids the asker holds.
             | Self::AgentAttach { .. }
             | Self::AgentAttachCancel { .. }
             | Self::Notify { .. } => Permission::Input,
-            Self::AgentResponse { .. } | Self::AgentWait { .. } | Self::AgentRequest { .. } => {
-                Permission::AgentContent
-            }
+            Self::AgentResponse { .. }
+            | Self::AgentWait { .. }
+            | Self::AgentAwait { .. }
+            | Self::AgentRequest { .. } => Permission::AgentContent,
             Self::LayoutSet { .. }
             | Self::PaneSet { .. }
             | Self::PaneMove { .. }

@@ -290,6 +290,9 @@ impl SessionServer {
     }
 
     pub(super) fn process_client_frame(&mut self, id: ClientId, frame: Frame<ClientMessage>) {
+        if let Some(client) = self.client_mut(id) {
+            client.handshake_deadline = None;
+        }
         match frame {
             Frame::PaneOutput { .. } => self.set_close_after_flush(id),
             Frame::AcquisitionAcks(acks) => {

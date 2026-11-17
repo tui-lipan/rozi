@@ -125,13 +125,22 @@ impl Shares {
     }
 }
 
+/// How long a connection to the shared endpoint may stay silent before its first frame.
+const SHARED_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Connections the shared endpoint takes in one pump, so a connect flood cannot stall the session.
+const MAX_SHARED_ACCEPTS_PER_PUMP: usize = 32;
+/// Connections one granted account may hold at once.
+const MAX_CLIENTS_PER_GUEST: usize = 16;
+/// Connections from accounts without a grant that may wait to hear they are refused.
+const MAX_UNSHARED_PEERS: usize = 4;
+
 impl SessionServer {
     pub(super) fn accept_shared(&mut self) -> io::Result<bool> {
         let Some(listener) = self.shares.listener.as_ref() else {
             return Ok(false);
         };
         let mut accepted_streams = Vec::new();
-        loop {
+        while accepted_streams.len() < MAX_SHARED_ACCEPTS_PER_PUMP {
             match listener.accept() {
                 Ok(stream) => accepted_streams.push(stream),
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => break,
@@ -147,12 +156,62 @@ impl SessionServer {
                 // Drop connections whose OS identity cannot be verified by the kernel.
                 continue;
             };
+            if !self.shared_peer_has_room(peer_uid) {
+                continue;
+            }
             let id = self.next_client_id;
             self.next_client_id += 1;
             let conn = self.client_conn_from_shared(id, stream, peer_uid);
             self.clients.push(conn);
         }
         Ok(accepted)
+    }
+
+    /// Whether another connection from `peer_uid` fits. Anyone may connect to the shared socket, so
+    /// an account without a grant only gets a few slots, each closed after its refusal or when it
+    /// stays silent, and a granted account gets a bounded number of clients.
+    pub(super) fn shared_peer_has_room(&self, peer_uid: UserId) -> bool {
+        if peer_uid == current_user_id() {
+            return true;
+        }
+        let granted = self.shares.grant_for(peer_uid).is_some();
+        let held = self
+            .clients
+            .iter()
+            .filter(|client| {
+                client.guest.as_ref().is_some_and(|guest| {
+                    if granted {
+                        guest.id == peer_uid
+                    } else {
+                        self.shares.grant_for(guest.id).is_none()
+                    }
+                })
+            })
+            .count();
+        held < if granted {
+            MAX_CLIENTS_PER_GUEST
+        } else {
+            MAX_UNSHARED_PEERS
+        }
+    }
+
+    /// Close shared-endpoint connections that never sent a frame, and revoked clients that have not
+    /// taken their eviction notice in time.
+    pub(super) fn expire_shared_connections(&mut self, now: Instant) {
+        let silent: Vec<ClientId> = self
+            .clients
+            .iter()
+            .filter(|client| {
+                client.handshake_deadline.is_some_and(|at| now >= at)
+                    || client
+                        .revoked_at
+                        .is_some_and(|at| now >= at + SHARED_HANDSHAKE_TIMEOUT)
+            })
+            .map(|client| client.id)
+            .collect();
+        for id in silent {
+            self.remove_client(id);
+        }
     }
 
     pub(super) fn client_conn_from_shared(
@@ -162,6 +221,7 @@ impl SessionServer {
         peer_uid: UserId,
     ) -> ClientConn {
         let mut conn = ClientConn::new(id, stream);
+        conn.handshake_deadline = Some(Instant::now() + SHARED_HANDSHAKE_TIMEOUT);
         if peer_uid != current_user_id() {
             let name = self.shares.account_name_for(peer_uid);
             conn.access = protocol::ClientAccess::guest(protocol::SessionRole::Viewer, true);
@@ -345,14 +405,20 @@ impl SessionServer {
             self.handoffs.forget_client(target);
             self.set_close_after_flush(target);
             if attached {
-                broadcasts.push((
-                    Target::Client(target),
+                self.enqueue(
+                    target,
+                    Target::Sender,
                     ServerMessage::Error {
                         code: protocol::EVICTED_ERROR_CODE.to_string(),
                         message: "access to this session was revoked".to_string(),
                         peer: None,
                     },
-                ));
+                );
+            }
+            // Revocation takes effect now, not when the outbox drains: whatever the session
+            // produces from here on, and any reply still held for this client, is not queued.
+            if let Some(client) = self.client_mut(target) {
+                client.revoked_at = Some(Instant::now());
             }
             if self.controller == Some(target) {
                 controller_revoked = true;

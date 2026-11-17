@@ -1000,6 +1000,10 @@ struct ClientConn {
     seed: Option<AttachSeedState>,
     /// Close this connection once its outbox drains (query probes, rejected attaches).
     close_after_flush: bool,
+    /// The connection came through the shared endpoint and must send its first frame by then.
+    handshake_deadline: Option<Instant>,
+    /// When the client's share was revoked: its eviction notice is queued and nothing more is.
+    revoked_at: Option<Instant>,
     last_pong: Instant,
     last_ping: Instant,
     ping_seq: u64,
@@ -1054,6 +1058,8 @@ impl ClientConn {
             shares_filesystem: false,
             seed: None,
             close_after_flush: false,
+            handshake_deadline: None,
+            revoked_at: None,
             last_pong: now,
             last_ping: now,
             ping_seq: 0,
@@ -1171,7 +1177,7 @@ impl ClientConn {
         pane: Option<PaneSeedKey>,
     ) -> bool {
         // A gated frame is dropped, which for the caller is as good as queued: nothing overflowed.
-        if self.transport_closed || !self.admits(&bytes) {
+        if self.transport_closed || self.revoked_at.is_some() || !self.admits(&bytes) {
             return true;
         }
         if self.outbox_bytes.saturating_add(bytes.len()) > cap {
@@ -1204,7 +1210,7 @@ impl ClientConn {
         default_cap: usize,
         replacement: Option<ReplacementKey>,
     ) -> ClientFrameResult {
-        if self.transport_closed || !self.admits(&bytes) {
+        if self.transport_closed || self.revoked_at.is_some() || !self.admits(&bytes) {
             return ClientFrameResult::Ignored;
         }
         let Some(seed) = self.seed.as_ref().filter(|seed| !seed.baseline_queued) else {

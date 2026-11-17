@@ -522,6 +522,24 @@ fn headless_session_control_gates_commands_by_guest_role() {
     );
     assert_eq!(denied.code, Some(ControlErrorCode::NotPermitted));
 
+    // A viewer may list requests, but a prompt or an agent's answer can exist outside any pane.
+    assert!(
+        send_headless(
+            &mut server,
+            ControlCommand::AgentRequests { direction: None }
+        )
+        .ok
+    );
+    for command in [
+        ControlCommand::AgentRequest { id: "r1".into() },
+        ControlCommand::AgentResponse {
+            target: crate::control::AgentTarget::Pane(1),
+        },
+    ] {
+        let denied = send_headless(&mut server, command);
+        assert_eq!(denied.code, Some(ControlErrorCode::NotPermitted));
+    }
+
     // Upgrade to Editor: Notify succeeds, PaneClose (Layout) is denied.
     grant_user(&mut server, bob_uid(), "bob", SessionRole::Editor);
     assert!(
@@ -589,11 +607,25 @@ fn downgrade_moves_lease_and_revoke_disconnects_and_unlinks_endpoint() {
     assert_eq!(state.grants[0].connected, 1);
     assert!(shared_path.exists());
     assert!(server.client(bob).unwrap().close_after_flush);
-    assert!(outbox_controls(&server, bob).iter().any(|m| matches!(
-        m,
-        ServerMessage::Error { code, message, .. }
+    // Revocation is immediate: what the session sends after it, before Bob's outbox drains, is
+    // not queued for him.
+    server.broadcast_control(&ServerMessage::Renamed {
+        session: "after-revoke".into(),
+    });
+    let bob_controls = outbox_controls(&server, bob);
+    assert!(matches!(
+        bob_controls.last(),
+        Some(ServerMessage::Error { code, message, .. })
             if code == EVICTED_ERROR_CODE && message == "access to this session was revoked"
+    ));
+    assert!(outbox_controls(&server, charlie).iter().any(|m| matches!(
+        m,
+        ServerMessage::Renamed { session } if session == "after-revoke"
     )));
+    // A revoked client that never reads its notice is closed anyway.
+    server.expire_shared_connections(Instant::now() + Duration::from_secs(60));
+    assert!(server.client(bob).is_none());
+    assert!(server.client(charlie).is_some());
 
     // Revoke everyone: Charlie is evicted too, and the shared endpoint is unlinked.
     let mut broadcasts = Vec::new();
@@ -959,4 +991,31 @@ fn editor_downgraded_mid_upload_gets_the_refusal_as_an_attachment_ack() {
     ));
     assert!(!server.attachments.has_pending());
     server.panes[&1].pty.as_ref().unwrap().kill().unwrap();
+}
+
+#[test]
+fn shared_endpoint_bounds_connections_and_closes_silent_ones() {
+    let (mut server, _dir) = shared_test_server("dev");
+    grant_user(&mut server, bob_uid(), "bob", SessionRole::Viewer);
+
+    // Accounts without a grant share a few slots; a granted account is not crowded out by them.
+    let strangers: Vec<_> = std::iter::from_fn(|| {
+        server
+            .shared_peer_has_room(charlie_uid())
+            .then(|| add_guest_client(&mut server, charlie_uid()))
+    })
+    .take(64)
+    .collect();
+    assert!(strangers.len() < 64);
+    assert!(server.shared_peer_has_room(bob_uid()));
+
+    // A connection that never speaks is closed once its handshake window passes; one that has
+    // spoken is not.
+    let (bob, _stream) = attach_guest(&mut server, bob_uid(), "alice/dev", false);
+    server.expire_shared_connections(Instant::now() + Duration::from_secs(60));
+    assert!(server.client(bob).is_some());
+    for (stranger, _) in &strangers {
+        assert!(server.client(*stranger).is_none());
+    }
+    assert!(server.shared_peer_has_room(charlie_uid()));
 }

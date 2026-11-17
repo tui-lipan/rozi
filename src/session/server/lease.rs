@@ -816,6 +816,7 @@ impl SessionServer {
         for id in timed_out {
             self.remove_client_with_reason(id, ControllerChangeReason::Expired);
         }
+        self.expire_shared_connections(now);
         self.expire_handoffs();
     }
 

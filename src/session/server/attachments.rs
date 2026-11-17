@@ -1,6 +1,8 @@
 //! Bounded uploads. Disk writes run off the session pump; only the pump can insert paths.
 
+use super::headless::ReplyTo;
 use super::*;
+use crate::control::{ControlErrorCode, ControlResponse};
 use crate::platform::attachments::StagedFile;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use protocol::{ATTACHMENT_CHUNK_BYTES, AttachmentOperation, MAX_ATTACHMENT_BYTES};
@@ -11,6 +13,13 @@ const MAX_PENDING: usize = 8;
 const MAX_RETAINED_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_RETAINED_FILES: usize = 256;
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a finished `agent-attach` upload waits for the request that claims it. Long enough
+/// for the rest of a slow multi-file upload; an asker that fails cancels its uploads at once.
+const UNCLAIMED_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+/// Owns the uploads that arrive as `agent-attach` control commands. Each chunk comes over a
+/// connection of its own, so the upload cannot belong to one; no client is ever given this id.
+const CONTROL_UPLOADS: ClientId = ClientId::MAX;
 
 #[derive(Clone, Copy)]
 struct Destination {
@@ -18,8 +27,16 @@ struct Destination {
     generation: u64,
     local: bool,
 }
+/// What a finished upload is for.
+enum Purpose {
+    /// Paste its path into a pane, as a client's paste or drop does.
+    Paste(Destination),
+    /// Keep it for an agent request, answering the control caller with its path. `reply` is the
+    /// chunk whose answer waits on the disk worker.
+    Keep { reply: Option<(ClientId, ReplyTo)> },
+}
 struct Pending {
-    destination: Destination,
+    purpose: Purpose,
     size: u64,
     received: u64,
     busy: bool,
@@ -29,11 +46,15 @@ struct Pending {
 pub(super) struct Attachments {
     pending: HashMap<Key, Pending>,
     retained: Vec<StagedFile>,
+    /// Finished `agent-attach` uploads no request has claimed yet, by transfer id, with when
+    /// they finished. They count against the same limits as retained files.
+    unclaimed: HashMap<u64, (StagedFile, Instant)>,
     worker: Option<Worker>,
 }
+/// Disk steps for one upload, run in order; the first failure ends the job.
 struct Job {
     key: Key,
-    operation: AttachmentOperation,
+    operations: Vec<AttachmentOperation>,
 }
 struct Done {
     key: Key,
@@ -65,9 +86,15 @@ impl Worker {
                         Err(mpsc::RecvTimeoutError::Timeout) => continue,
                         Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     };
-                    let cancel = matches!(job.operation, AttachmentOperation::Cancel);
-                    let result = disk_step(&mut writing, job.key, job.operation)
-                        .map_err(|err| err.to_string());
+                    let cancel = matches!(job.operations[..], [AttachmentOperation::Cancel]);
+                    let mut result = Ok(None);
+                    for operation in job.operations {
+                        result = disk_step(&mut writing, job.key, operation)
+                            .map_err(|err| err.to_string());
+                        if result.is_err() {
+                            break;
+                        }
+                    }
                     if result.is_err() {
                         writing.remove(&job.key);
                     }
@@ -149,20 +176,42 @@ impl Attachments {
 
     fn can_reserve(&self, client: ClientId, size: u64) -> bool {
         let reserved: u64 = self.pending.values().map(|p| p.size).sum();
-        let retained: u64 = self.retained.iter().map(|file| file.size).sum();
+        let kept: u64 = self
+            .retained
+            .iter()
+            .chain(self.unclaimed.values().map(|(file, _)| file))
+            .map(|file| file.size)
+            .sum();
+        let files = self.retained.len() + self.unclaimed.len() + self.pending.len();
+        // A client pastes one upload at a time; control uploads are many callers' at once.
         self.pending.len() < MAX_PENDING
-            && !self.pending.keys().any(|key| key.0 == client)
-            && self.retained.len() + self.pending.len() < MAX_RETAINED_FILES
-            && retained + reserved + size <= MAX_RETAINED_BYTES
+            && (client == CONTROL_UPLOADS || !self.pending.keys().any(|key| key.0 == client))
+            && files < MAX_RETAINED_FILES
+            && kept + reserved + size <= MAX_RETAINED_BYTES
     }
 }
 
+/// One `agent-attach` chunk, as the control command carries it.
+#[derive(Clone, Copy)]
+pub(super) struct AgentAttachmentChunk<'a> {
+    pub(super) transfer: u64,
+    pub(super) name: &'a str,
+    pub(super) size: u64,
+    pub(super) offset: u64,
+    pub(super) data: &'a str,
+    pub(super) last: bool,
+}
+
 fn checked_chunk_size(data: &str, remaining: u64) -> Result<u64, String> {
-    if data.len() > ATTACHMENT_CHUNK_BYTES.div_ceil(3) * 4 {
+    checked_chunk_size_up_to(data, remaining, ATTACHMENT_CHUNK_BYTES)
+}
+
+fn checked_chunk_size_up_to(data: &str, remaining: u64, max: usize) -> Result<u64, String> {
+    if data.len() > max.div_ceil(3) * 4 {
         return Err("attachment chunk is too large".into());
     }
     let size = STANDARD.decode(data).map_err(|err| err.to_string())?.len() as u64;
-    if size == 0 || size > ATTACHMENT_CHUNK_BYTES as u64 || size > remaining {
+    if size == 0 || size > max as u64 || size > remaining {
         return Err("attachment size mismatch".into());
     }
     Ok(size)
@@ -223,7 +272,7 @@ impl SessionServer {
         self.attachments.pending.insert(
             key,
             Pending {
-                destination,
+                purpose: Purpose::Paste(destination),
                 size: *size,
                 received: 0,
                 busy: false,
@@ -252,7 +301,10 @@ impl SessionServer {
         if pending.busy {
             return Err("wait for the previous upload acknowledgement".into());
         }
-        if !self.attachment_destination_valid(key.0, pending.destination) {
+        let Purpose::Paste(destination) = pending.purpose else {
+            return Err("upload not found".into());
+        };
+        if !self.attachment_destination_valid(key.0, destination) {
             return Err(
                 "pane is unavailable, input is blocked, or agent history is being read; retry"
                     .into(),
@@ -275,6 +327,279 @@ impl SessionServer {
         Ok(())
     }
 
+    /// One chunk of an `agent-attach` upload. `None` holds the answer until the disk worker has
+    /// written the chunk; a refusal answers at once and drops the upload.
+    pub(super) fn agent_attachment_chunk(
+        &mut self,
+        client: ClientId,
+        reply: ReplyTo,
+        chunk: AgentAttachmentChunk<'_>,
+    ) -> Option<ControlResponse> {
+        let key = (CONTROL_UPLOADS, chunk.transfer);
+        match self.queue_control_chunk(key, chunk) {
+            Ok(operations) => {
+                let queued =
+                    self.attachments.worker.as_ref().is_some_and(|worker| {
+                        worker.jobs.try_send(Job { key, operations }).is_ok()
+                    });
+                if !queued {
+                    self.cancel_attachment(key);
+                    return Some(ControlResponse::error_with(
+                        ControlErrorCode::Unavailable,
+                        "the session is busy storing other files; retry",
+                    ));
+                }
+                if let Some(pending) = self.attachments.pending.get_mut(&key) {
+                    pending.purpose = Purpose::Keep {
+                        reply: Some((client, reply)),
+                    };
+                }
+                None
+            }
+            Err((code, message)) => {
+                if chunk.offset > 0 || code != ControlErrorCode::Conflict {
+                    self.cancel_attachment(key);
+                }
+                Some(ControlResponse::error_with(code, message))
+            }
+        }
+    }
+
+    /// Check a chunk against its upload, starting the upload at offset 0, and say which disk
+    /// steps it takes.
+    fn queue_control_chunk(
+        &mut self,
+        key: Key,
+        chunk: AgentAttachmentChunk<'_>,
+    ) -> Result<Vec<AttachmentOperation>, (ControlErrorCode, String)> {
+        let invalid = |message: String| (ControlErrorCode::InvalidArgument, message);
+        let mut operations = Vec::new();
+        if chunk.offset == 0 {
+            if self.attachments.pending.contains_key(&key)
+                || self.attachments.unclaimed.contains_key(&chunk.transfer)
+            {
+                return Err((
+                    ControlErrorCode::Conflict,
+                    format!("upload {} is already in progress", chunk.transfer),
+                ));
+            }
+            if chunk.name.is_empty() || chunk.name.len() > 1024 || chunk.size > MAX_ATTACHMENT_BYTES
+            {
+                return Err(invalid(
+                    "a file needs a name and may be up to 16 MiB".into(),
+                ));
+            }
+            if !self.attachments.can_reserve(CONTROL_UPLOADS, chunk.size) {
+                return Err((
+                    ControlErrorCode::Conflict,
+                    "the session's file storage or upload limit is reached".into(),
+                ));
+            }
+            if self.attachments.worker.is_none() {
+                let worker = Worker::new()
+                    .map_err(|err| (ControlErrorCode::Unavailable, err.to_string()))?;
+                self.attachments.worker = Some(worker);
+            }
+            self.attachments.pending.insert(
+                key,
+                Pending {
+                    purpose: Purpose::Keep { reply: None },
+                    size: chunk.size,
+                    received: 0,
+                    busy: false,
+                    updated: Instant::now(),
+                },
+            );
+            operations.push(AttachmentOperation::Begin {
+                pane_id: 0,
+                generation: 0,
+                local: false,
+                name: chunk.name.to_string(),
+                size: chunk.size,
+            });
+        }
+        let pending = self.attachments.pending.get_mut(&key).ok_or_else(|| {
+            invalid(format!(
+                "no upload {} in progress; start it at offset 0",
+                chunk.transfer
+            ))
+        })?;
+        if pending.busy {
+            return Err(invalid("wait for the previous chunk's answer".into()));
+        }
+        if chunk.offset != pending.received || chunk.size != pending.size {
+            return Err(invalid(format!(
+                "this chunk starts at byte {} of {}, but the session holds {} of {}",
+                chunk.offset, chunk.size, pending.received, pending.size
+            )));
+        }
+        if !chunk.data.is_empty() {
+            pending.received += checked_chunk_size_up_to(
+                chunk.data,
+                pending.size - pending.received,
+                crate::control::AGENT_ATTACH_CHUNK_BYTES,
+            )
+            .map_err(invalid)?;
+            operations.push(AttachmentOperation::Chunk {
+                data: chunk.data.to_string(),
+            });
+        }
+        if chunk.last {
+            if pending.received != pending.size {
+                return Err(invalid("the file is incomplete".into()));
+            }
+            operations.push(AttachmentOperation::Finish);
+        }
+        if operations.is_empty() {
+            return Err(invalid("a chunk needs data or `last`".into()));
+        }
+        pending.busy = true;
+        pending.updated = Instant::now();
+        Ok(operations)
+    }
+
+    /// `prompt` with the paths of the uploads a request claims listed after it. Refused unless
+    /// every one has finished and no request has claimed it yet.
+    pub(super) fn attached_prompt(
+        &self,
+        mut prompt: String,
+        transfers: &[u64],
+    ) -> Result<String, ControlResponse> {
+        if transfers.is_empty() {
+            return Ok(prompt);
+        }
+        prompt.push_str("\n\nAttached files:");
+        for transfer in transfers {
+            let (file, _) = self.attachments.unclaimed.get(transfer).ok_or_else(|| {
+                ControlResponse::error_with(
+                    ControlErrorCode::InvalidArgument,
+                    format!(
+                        "upload {transfer} is not finished, was already used, or expired; attach the file again"
+                    ),
+                )
+            })?;
+            prompt.push_str("\n- ");
+            prompt.push_str(file.path.to_str().unwrap_or_default());
+        }
+        Ok(prompt)
+    }
+
+    /// Keep the uploads a request was asked with, until the session stops.
+    pub(super) fn claim_attachments(&mut self, transfers: &[u64]) {
+        for transfer in transfers {
+            if let Some((file, _)) = self.attachments.unclaimed.remove(transfer) {
+                self.attachments.retained.push(file);
+            }
+        }
+    }
+
+    /// Delete uploads no request claimed, finished or still arriving.
+    pub(super) fn cancel_agent_attachments(&mut self, transfers: &[u64]) -> ControlResponse {
+        for transfer in transfers {
+            self.attachments.unclaimed.remove(transfer);
+            self.cancel_attachment((CONTROL_UPLOADS, *transfer));
+        }
+        ControlResponse::empty()
+    }
+
+    /// Upload `bytes` as `agent-attach` upload `transfer`, as a caller would, and return where
+    /// the finished file waits to be claimed.
+    #[cfg(all(test, unix))]
+    pub(super) fn upload_for_test(&mut self, transfer: u64, bytes: &[u8]) -> PathBuf {
+        let data = STANDARD.encode(bytes);
+        let reply = ReplyTo::Headless {
+            capabilities: protocol::Capabilities::current(),
+            effective_protocol: protocol::PROTOCOL_VERSION,
+        };
+        let chunk = AgentAttachmentChunk {
+            transfer,
+            name: "file.txt",
+            size: bytes.len() as u64,
+            offset: 0,
+            data: &data,
+            last: true,
+        };
+        assert!(self.agent_attachment_chunk(0, reply, chunk).is_none());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while self
+            .attachments
+            .pending
+            .contains_key(&(CONTROL_UPLOADS, transfer))
+        {
+            assert!(Instant::now() < deadline);
+            self.poll_attachment_work();
+            std::thread::yield_now();
+        }
+        self.attachments.unclaimed[&transfer].0.path.clone()
+    }
+
+    /// Uploads still arriving, waiting to be claimed, and kept, in that order.
+    #[cfg(all(test, unix))]
+    pub(super) fn attachment_counts(&self) -> (usize, usize, usize) {
+        (
+            self.attachments.pending.len(),
+            self.attachments.unclaimed.len(),
+            self.attachments.retained.len(),
+        )
+    }
+
+    /// Whether `client` waits on a chunk of an `agent-attach` upload, which keeps a headless
+    /// connection open until the chunk is written.
+    pub(super) fn holds_attachment_reply(&self, client: ClientId) -> bool {
+        self.attachments.pending.values().any(|pending| {
+            matches!(
+                &pending.purpose,
+                Purpose::Keep { reply: Some((holder, _)) } if *holder == client
+            )
+        })
+    }
+
+    /// Answer the control caller waiting on a chunk the disk worker has written. The last chunk
+    /// answers with where the session keeps the file.
+    fn complete_control_chunk(&mut self, key: Key, result: Result<Option<StagedFile>, String>) {
+        let Some(pending) = self.attachments.pending.get_mut(&key) else {
+            return;
+        };
+        let reply = match &mut pending.purpose {
+            Purpose::Keep { reply } => reply.take(),
+            Purpose::Paste(_) => None,
+        };
+        pending.busy = false;
+        pending.updated = Instant::now();
+        let received = pending.received;
+        let response = match result {
+            Err(error) => {
+                self.cancel_attachment(key);
+                ControlResponse::error_with(ControlErrorCode::Unavailable, error)
+            }
+            Ok(None) => ControlResponse::ok(crate::control::AgentAttachmentUpload {
+                received,
+                path: None,
+            }),
+            Ok(Some(file)) => {
+                self.attachments.pending.remove(&key);
+                match file.path.to_str().map(str::to_string) {
+                    Some(path) => {
+                        self.attachments
+                            .unclaimed
+                            .insert(key.1, (file, Instant::now()));
+                        ControlResponse::ok(crate::control::AgentAttachmentUpload {
+                            received,
+                            path: Some(path),
+                        })
+                    }
+                    None => ControlResponse::error_with(
+                        ControlErrorCode::Unavailable,
+                        "the stored file's path is not UTF-8",
+                    ),
+                }
+            }
+        };
+        if let Some((client, reply)) = reply {
+            self.answer_held(client, &reply, response);
+        }
+    }
+
     pub(super) fn attachment_step(
         &mut self,
         client: ClientId,
@@ -294,7 +619,10 @@ impl SessionServer {
                     .as_ref()
                     .ok_or("attachment worker unavailable".to_string())?
                     .jobs
-                    .try_send(Job { key, operation })
+                    .try_send(Job {
+                        key,
+                        operations: vec![operation],
+                    })
                     .map_err(|_| "attachment worker is busy".to_string())
             });
         if let Err(error) = result {
@@ -311,12 +639,26 @@ impl SessionServer {
     }
 
     fn cancel_attachment(&mut self, key: Key) {
-        self.attachments.pending.remove(&key);
+        let removed = self.attachments.pending.remove(&key);
         if let Some(worker) = &self.attachments.worker {
             let _ = worker.jobs.try_send(Job {
                 key,
-                operation: AttachmentOperation::Cancel,
+                operations: vec![AttachmentOperation::Cancel],
             });
+        }
+        // A control caller still waiting on a chunk hears that its upload is gone.
+        if let Some(Pending {
+            purpose: Purpose::Keep {
+                reply: Some((client, reply)),
+            },
+            ..
+        }) = removed
+        {
+            self.answer_held(
+                client,
+                &reply,
+                ControlResponse::error_with(ControlErrorCode::Unavailable, "upload cancelled"),
+            );
         }
     }
 
@@ -344,6 +686,10 @@ impl SessionServer {
         for key in expired {
             self.cancel_attachment(key);
         }
+        // Dropping an unclaimed file deletes it.
+        self.attachments
+            .unclaimed
+            .retain(|_, (_, finished)| finished.elapsed() < UNCLAIMED_TIMEOUT);
         let mut activity = false;
         loop {
             let done = self
@@ -356,6 +702,10 @@ impl SessionServer {
             };
             activity = true;
             if !self.attachments.pending.contains_key(&done.key) {
+                continue;
+            }
+            if done.key.0 == CONTROL_UPLOADS {
+                self.complete_control_chunk(done.key, done.result);
                 continue;
             }
             let result = self.complete_attachment_step(done.key, done.result);
@@ -390,7 +740,9 @@ impl SessionServer {
             .ok_or("upload not found")?;
         pending.busy = false;
         pending.updated = Instant::now();
-        let destination = pending.destination;
+        let Purpose::Paste(destination) = pending.purpose else {
+            return Err("upload not found".into());
+        };
         let Some(file) = file else {
             return Ok(());
         };
@@ -583,6 +935,100 @@ mod delivery_tests {
         server.remove_client(client);
         assert!(path.exists());
         server.panes[&7].pty.as_ref().unwrap().kill().unwrap();
+        drop(server);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_control_upload_continues_across_connections_and_answers_with_its_path() {
+        use super::super::tests::add_client;
+        let mut server = SessionServer::new_named("agent-attachments");
+        let reply = ReplyTo::Headless {
+            capabilities: protocol::Capabilities::current(),
+            effective_protocol: protocol::PROTOCOL_VERSION,
+        };
+        fn chunk(offset: u64, data: &str, last: bool) -> AgentAttachmentChunk<'_> {
+            AgentAttachmentChunk {
+                transfer: 9,
+                name: "notes.txt",
+                size: 5,
+                offset,
+                data,
+                last,
+            }
+        }
+        let (hel, o, lo) = (
+            STANDARD.encode(b"hel"),
+            STANDARD.encode(b"o"),
+            STANDARD.encode(b"lo"),
+        );
+        // Each chunk comes over a connection of its own, as one `--remote` call per chunk does,
+        // and that connection stays open until the chunk is written.
+        let answer = |server: &mut SessionServer, chunk: AgentAttachmentChunk<'_>| {
+            let (client, mut stream) = add_client(server);
+            server.process_client_frame(
+                client,
+                protocol::Frame::Control(ClientMessage::SessionControl {
+                    capabilities: Some(protocol::Capabilities::current()),
+                    session: "agent-attachments".into(),
+                    protocol_version: protocol::PROTOCOL_VERSION,
+                    min_protocol_version: protocol::MIN_SUPPORTED_PROTOCOL,
+                    request: crate::control::ControlRequest {
+                        command: crate::control::ControlCommand::AgentAttach {
+                            transfer: chunk.transfer,
+                            name: chunk.name.into(),
+                            size: chunk.size,
+                            offset: chunk.offset,
+                            data: chunk.data.into(),
+                            last: chunk.last,
+                        },
+                        source_pane: None,
+                        source_session: None,
+                        extension: None,
+                        caller_context: None,
+                        credential: None,
+                    },
+                }),
+            );
+            // The server loop flushes before the disk worker is done.
+            server.flush_clients();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while server
+                .attachments
+                .pending
+                .get(&(CONTROL_UPLOADS, 9))
+                .is_some_and(|pending| pending.busy)
+            {
+                assert!(Instant::now() < deadline);
+                server.poll_attachment_work();
+                std::thread::yield_now();
+            }
+            server.flush_clients();
+            let ServerMessage::SessionControlResult { response, .. } =
+                protocol::read_frame(&mut stream).unwrap()
+            else {
+                panic!("a control result")
+            };
+            serde_json::from_value::<crate::control::AgentAttachmentUpload>(response.data.unwrap())
+                .unwrap()
+        };
+        assert_eq!(answer(&mut server, chunk(0, &hel, false)).received, 3);
+        // A chunk that does not continue the file is refused, not guessed at.
+        let (client, _stream) = add_client(&mut server);
+        let gap = server.agent_attachment_chunk(client, reply.clone(), chunk(4, &o, true));
+        assert_eq!(
+            gap.and_then(|refusal| refusal.code),
+            Some(ControlErrorCode::InvalidArgument)
+        );
+        assert_eq!(
+            answer(&mut server, chunk(0, &hel, false)).received,
+            3,
+            "the refused chunk dropped the upload, so it starts again"
+        );
+        let done = answer(&mut server, chunk(3, &lo, true));
+        let path = PathBuf::from(done.path.expect("the last chunk names the file"));
+        assert_eq!(fs::read(&path).unwrap(), b"hello");
+        assert!(server.attachments.pending.is_empty());
         drop(server);
         assert!(!path.exists());
     }

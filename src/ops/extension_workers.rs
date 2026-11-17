@@ -208,7 +208,9 @@ pub(crate) fn gate(command: &ControlCommand) -> Gate {
         | ControlCommand::AgentAwait { .. }
         | ControlCommand::AgentRequest { .. }
         | ControlCommand::AgentRequests { .. }
-        | ControlCommand::AgentCancel { .. } => {
+        | ControlCommand::AgentCancel { .. }
+        | ControlCommand::AgentAttach { .. }
+        | ControlCommand::AgentAttachCancel { .. } => {
             Gate::Denied("agent requests belong to the session server a pane runs in")
         }
         ControlCommand::AgentReport { .. } | ControlCommand::AgentRelease { .. } => {

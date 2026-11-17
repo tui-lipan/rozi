@@ -435,7 +435,9 @@ fn session_worker_permitted(command: &ControlCommand) -> bool {
         | ControlCommand::AgentAwait { .. }
         | ControlCommand::AgentRequest { .. }
         | ControlCommand::AgentRequests { .. }
-        | ControlCommand::AgentCancel { .. } => true,
+        | ControlCommand::AgentCancel { .. }
+        | ControlCommand::AgentAttach { .. }
+        | ControlCommand::AgentAttachCancel { .. } => true,
         ControlCommand::ListAttachedPanes
         | ControlCommand::PaneReveal { .. }
         | ControlCommand::AgentsOverview

@@ -1,5 +1,6 @@
 use super::super::tests::{add_client, test_pane};
 use super::*;
+use crate::control::{ControlCommand, ControlRequest};
 use crate::session::protocol::DetectedAgentState;
 
 /// A session with an agent in each of `panes`, every one running a real PTY that echoes back
@@ -816,6 +817,65 @@ fn lineage_follows_the_request_being_answered_and_is_bounded() {
         rig.try_ask(3, 4);
     }
     assert_eq!(code(rig.try_ask(3, 4)), Some(ControlErrorCode::Conflict));
+}
+
+#[test]
+fn an_ask_keeps_its_uploads_only_when_the_request_is_created() {
+    let mut rig = Rig::new(&[3]);
+    let first = rig.server.upload_for_test(1, b"one");
+    let second = rig.server.upload_for_test(2, b"two");
+    let control = |rig: &mut Rig, command: ControlCommand| {
+        let messages = rig.server.handle_session_control(
+            0,
+            "requests-test".into(),
+            PROTOCOL_VERSION,
+            protocol::MIN_SUPPORTED_PROTOCOL,
+            Some(protocol::Capabilities::current()),
+            ControlRequest {
+                command,
+                source_pane: None,
+                source_session: None,
+                extension: None,
+                caller_context: None,
+                credential: None,
+            },
+        );
+        let Some((_, ServerMessage::SessionControlResult { response, .. })) =
+            messages.into_iter().next()
+        else {
+            panic!("a control result")
+        };
+        response
+    };
+    let ask = |attachments: Vec<u64>| ControlCommand::AgentAsk {
+        target: AgentTarget::Pane(3),
+        prompt: "look at these".into(),
+        parent: None,
+        follows: None,
+        asker_label: None,
+        attachments,
+    };
+
+    // One missing upload refuses the whole ask, and the others stay unclaimed.
+    let refused = control(&mut rig, ask(vec![1, 99]));
+    assert_eq!(code(refused), Some(ControlErrorCode::InvalidArgument));
+    assert_eq!(rig.server.attachment_counts(), (0, 2, 0));
+    // An asker that gives up drops its uploads, and their files go at once.
+    let cancel = ControlCommand::AgentAttachCancel { transfers: vec![2] };
+    assert!(control(&mut rig, cancel).ok);
+    assert!(!second.exists());
+    assert_eq!(rig.server.attachment_counts(), (0, 1, 0));
+
+    let asked = info(control(&mut rig, ask(vec![1])));
+    assert!(
+        asked
+            .prompt
+            .ends_with(&format!("\n\nAttached files:\n- {}", first.display())),
+        "{}",
+        asked.prompt
+    );
+    assert_eq!(rig.server.attachment_counts(), (0, 0, 1));
+    assert!(first.exists());
 }
 
 #[test]

@@ -134,7 +134,9 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::AgentAwait { .. }
         | ControlCommand::AgentRequest { .. }
         | ControlCommand::AgentRequests { .. }
-        | ControlCommand::AgentCancel { .. } => None,
+        | ControlCommand::AgentCancel { .. }
+        | ControlCommand::AgentAttach { .. }
+        | ControlCommand::AgentAttachCancel { .. } => None,
         ControlCommand::ListAttachedPanes => Some(
             "list-panes --scope attached needs a UI; a session server knows only its own panes",
         ),
@@ -261,7 +263,9 @@ pub fn attached_control_refusal(
         | ControlCommand::AgentAwait { .. }
         | ControlCommand::AgentRequest { .. }
         | ControlCommand::AgentRequests { .. }
-        | ControlCommand::AgentCancel { .. } => Some((
+        | ControlCommand::AgentCancel { .. }
+        | ControlCommand::AgentAttach { .. }
+        | ControlCommand::AgentAttachCancel { .. } => Some((
             ControlErrorCode::Unsupported,
             "agent requests go to the calling pane's own session server, not through a UI",
         )),
@@ -555,6 +559,25 @@ impl SessionServer {
                     *timeout_ms,
                     reply.clone(),
                 )),
+                ControlCommand::AgentAttach {
+                    transfer,
+                    name,
+                    size,
+                    offset,
+                    data,
+                    last,
+                } => Some(self.agent_attachment_chunk(
+                    client_id,
+                    reply.clone(),
+                    super::attachments::AgentAttachmentChunk {
+                        transfer: *transfer,
+                        name,
+                        size: *size,
+                        offset: *offset,
+                        data,
+                        last: *last,
+                    },
+                )),
                 ControlCommand::RecordStart { .. }
                 | ControlCommand::RecordStop { .. }
                 | ControlCommand::RecordList
@@ -792,14 +815,29 @@ impl SessionServer {
                 parent,
                 follows,
                 asker_label,
-            } => self.ask_agent(
-                self.caller_agent(request.source_session.as_ref(), request.source_pane),
-                target,
-                prompt,
-                parent.as_deref(),
-                follows.as_deref(),
-                asker_label,
-            ),
+                attachments,
+            } => match self.attached_prompt(prompt, &attachments) {
+                Err(refusal) => refusal,
+                Ok(prompt) => {
+                    let response = self.ask_agent(
+                        self.caller_agent(request.source_session.as_ref(), request.source_pane),
+                        target,
+                        prompt,
+                        parent.as_deref(),
+                        follows.as_deref(),
+                        asker_label,
+                    );
+                    // Only a request that exists keeps its files; a refused ask leaves them
+                    // for the asker to cancel or for expiry.
+                    if response.ok {
+                        self.claim_attachments(&attachments);
+                    }
+                    response
+                }
+            },
+            ControlCommand::AgentAttachCancel { transfers } => {
+                self.cancel_agent_attachments(&transfers)
+            }
             ControlCommand::AgentReply { id, text } => self.reply_to_request(
                 self.caller_agent(request.source_session.as_ref(), request.source_pane),
                 &id,

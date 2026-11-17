@@ -309,6 +309,10 @@ rozi agents ask --target <PANE_ID> --wait --timeout 30m --format text -- 'Review
   keeps its context. Requests between the same two agents share a `conversation`, which the
   Agent conversations view draws as one thread. From another session or host, pass
   `--follows <ID>` with your earlier request's id to join its conversation.
+- **Files.** `--attach <FILE>` (repeatable, up to 16 files of 16 MiB) sends a screenshot, log, or
+  any other file with the request; the other agent gets their paths after your text. With
+  `--remote`, Rozi copies them to that host first. Do not paste your own local paths into the
+  text for an agent on another host: they do not exist there.
 - `ask --wait` prints `asked <ID>` on stderr at once, and after the answer a `note:` line when it
   is not a reply; a harness that merges stderr shows both around the answer. If the wait fails, `rozi agents await <ID>`,
   do not ask again. For long work, await again after a timeout rather than giving `--timeout` a

@@ -1002,22 +1002,40 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
     report_control(&command, raw_capture, value)
 }
 
-/// How `agents ask --wait` and `agents await --require-reply` treat the answer they collect.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// How `agents ask` sends its files, and how `ask --wait` and `await --require-reply` treat the
+/// answer they collect.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AnswerOptions {
     /// `ask --wait`: ask first, then await the new request for this many milliseconds.
     pub(crate) ask_then_await_ms: Option<u64>,
     /// An answer the agent did not give with `agents reply` exits [`NOT_A_REPLY_EXIT`].
     pub(crate) require_reply: bool,
+    /// `ask --attach`: files to give the asked agent.
+    pub(crate) attachments: Vec<PathBuf>,
 }
 
 /// `--require-reply` saw an answer read off the agent's terminal rather than its reply.
 const NOT_A_REPLY_EXIT: i32 = 3;
 
 pub(crate) fn run_agent_answer(mut command: ControlCli, options: AnswerOptions) -> Result<()> {
+    let uploads = match attach_files(&mut command, &options.attachments) {
+        Ok(uploads) => uploads,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
+    let sent = send_control(&command);
+    // Uploads belong to the request; with no request, they go.
+    if sent.as_ref().map_or(true, |value| {
+        value.get("ok").and_then(serde_json::Value::as_bool) != Some(true)
+    }) {
+        cancel_uploads(&command, &uploads);
+    }
+    let sent = sent.or_else(SendFailure::report)?;
     let value = match options.ask_then_await_ms {
-        Some(timeout_ms) => ask_then_await(&mut command, timeout_ms)?,
-        None => send_control(&command).or_else(SendFailure::report)?,
+        Some(timeout_ms) => await_asked(&mut command, sent, timeout_ms)?,
+        None => sent,
     };
     let not_a_reply = crate::cli::output::answered_without_reply(value.get("data"));
     report_control(&command, None, value)?;
@@ -1027,11 +1045,174 @@ pub(crate) fn run_agent_answer(mut command: ControlCli, options: AnswerOptions) 
     Ok(())
 }
 
-/// `agents ask --wait`: ask, then wait for the answer exactly as `agents await` does. A refused
+/// Make `files` reachable by the asked agent. On this host their own paths go after the
+/// request's text. A session on another host gets a copy of each first, and the ask names the
+/// copies, so the session lists them and keeps them only if the request is created. Every file
+/// is opened and checked before anything is sent. Returns the uploads, which belong to the ask.
+fn attach_files(
+    command: &mut ControlCli,
+    files: &[PathBuf],
+) -> std::result::Result<Vec<u64>, String> {
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+    let opened = files
+        .iter()
+        .map(|file| open_attachment(file))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let ControlEndpoint::Remote { target, session } = &command.endpoint else {
+        let mut list = String::from("\n\nAttached files:");
+        for attachment in &opened {
+            list.push_str("\n- ");
+            list.push_str(listed_path(&attachment.path)?);
+        }
+        if let control::ControlCommand::AgentAsk { prompt, .. } = &mut command.request.command {
+            prompt.push_str(&list);
+        }
+        return Ok(Vec::new());
+    };
+    let (target, session) = (target.clone(), session.clone());
+    let mut uploads = Vec::with_capacity(opened.len());
+    for attachment in opened {
+        let mut transfer = [0u8; 8];
+        getrandom::fill(&mut transfer).map_err(|error| error.to_string())?;
+        let transfer = u64::from_le_bytes(transfer);
+        uploads.push(transfer);
+        if let Err(error) = upload_attachment(&target, &session, transfer, attachment) {
+            cancel_uploads(command, &uploads);
+            return Err(error);
+        }
+    }
+    if let control::ControlCommand::AgentAsk { attachments, .. } = &mut command.request.command {
+        attachments.clone_from(&uploads);
+    }
+    Ok(uploads)
+}
+
+/// A file to attach, opened once: what is checked is what is sent.
+struct Attachment {
+    path: PathBuf,
+    name: String,
+    size: u64,
+    file: std::fs::File,
+}
+
+/// A local attachment's path as one line of the request's text. A path that is not UTF-8 or
+/// holds a control character would name a different file there, or none.
+fn listed_path(path: &std::path::Path) -> std::result::Result<&str, String> {
+    let refuse = |reason: &str| format!("cannot attach {}: {reason}", path.display());
+    let text = path
+        .to_str()
+        .ok_or_else(|| refuse("its path is not UTF-8"))?;
+    if text.chars().any(char::is_control) {
+        return Err(refuse("its path holds a control character"));
+    }
+    Ok(text)
+}
+
+/// Open a file to attach: a regular file, not a link, device, or pipe, within the size a paste
+/// may carry. The path is opened as given, since resolving it first would follow a link.
+fn open_attachment(file: &std::path::Path) -> std::result::Result<Attachment, String> {
+    let refuse =
+        |reason: &dyn std::fmt::Display| format!("cannot attach {}: {reason}", file.display());
+    let opened = crate::platform::attachments::open_source(file).map_err(|error| refuse(&error))?;
+    let path = std::path::absolute(file).map_err(|error| refuse(&error))?;
+    let size = opened.metadata().map_err(|error| refuse(&error))?.len();
+    if size > crate::session::protocol::MAX_ATTACHMENT_BYTES {
+        return Err(refuse(&"files may be up to 16 MiB"));
+    }
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "attachment".into());
+    Ok(Attachment {
+        path,
+        name,
+        size,
+        file: opened,
+    })
+}
+
+/// Drop uploads no request will claim, so they free the session's space at once. Best effort:
+/// the session deletes unclaimed uploads on its own after a while.
+fn cancel_uploads(command: &ControlCli, uploads: &[u64]) {
+    let ControlEndpoint::Remote { target, session } = &command.endpoint else {
+        return;
+    };
+    if uploads.is_empty() {
+        return;
+    }
+    let request = super::args::control_request(control::ControlCommand::AgentAttachCancel {
+        transfers: uploads.to_vec(),
+    });
+    let _ = ask_remote_endpoint(target, session, request);
+}
+
+/// Copy one opened file into a session on another host as upload `transfer`.
+fn upload_attachment(
+    target: &str,
+    session: &str,
+    transfer: u64,
+    attachment: Attachment,
+) -> std::result::Result<(), String> {
+    use base64::Engine as _;
+    use std::io::Read as _;
+
+    let local = attachment.path.as_path();
+    let mut bytes = Vec::new();
+    // Read at most one byte past the limit, so a file that grows cannot grow this process.
+    attachment
+        .file
+        .take(crate::session::protocol::MAX_ATTACHMENT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot attach {}: {error}", local.display()))?;
+    if bytes.len() as u64 != attachment.size {
+        return Err(format!(
+            "cannot attach {}: the file changed while it was read",
+            local.display()
+        ));
+    }
+    let name = attachment.name;
+    let chunks: Vec<&[u8]> = if bytes.is_empty() {
+        vec![&[]]
+    } else {
+        bytes.chunks(control::AGENT_ATTACH_CHUNK_BYTES).collect()
+    };
+    let mut offset = 0u64;
+    let last_index = chunks.len() - 1;
+    for (index, chunk) in chunks.into_iter().enumerate() {
+        let request = super::args::control_request(control::ControlCommand::AgentAttach {
+            transfer,
+            name: name.clone(),
+            size: bytes.len() as u64,
+            offset,
+            data: base64::engine::general_purpose::STANDARD.encode(chunk),
+            last: index == last_index,
+        });
+        let answer = ask_remote_endpoint(target, session, request).map_err(|failure| {
+            let reason = match failure {
+                SendFailure::Unreachable(message) => message,
+                SendFailure::Failed(error) => error.to_string(),
+            };
+            format!("cannot attach {}: {reason}", local.display())
+        })?;
+        if answer.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
+            let error = answer["error"].as_str().unwrap_or("refused");
+            return Err(format!("cannot attach {}: {error}", local.display()));
+        }
+        offset += chunk.len() as u64;
+    }
+    Ok(())
+}
+
+/// `agents ask --wait`, once asked: wait for the answer exactly as `agents await` does. A refused
 /// ask is reported as itself. The request's id goes to stderr as soon as it exists, so a command
 /// that is killed or put in the background can always be collected with `agents await`.
-fn ask_then_await(command: &mut ControlCli, timeout_ms: u64) -> Result<serde_json::Value> {
-    let asked = send_control(command).or_else(SendFailure::report)?;
+fn await_asked(
+    command: &mut ControlCli,
+    asked: serde_json::Value,
+    timeout_ms: u64,
+) -> Result<serde_json::Value> {
     let Some(request) = asked
         .get("ok")
         .and_then(serde_json::Value::as_bool)
@@ -1263,6 +1444,24 @@ mod tests {
         let answered =
             serde_json::json!({ "ok": true, "data": { "id": "r7", "state": "answered" } });
         assert_eq!(keep_asked_request(request, Ok(answered.clone())), answered);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_attachment_is_neither_a_link_nor_a_path_that_breaks_the_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.txt");
+        std::fs::write(&real, b"abc").unwrap();
+        let link = dir.path().join("link.txt");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(open_attachment(&link).is_err());
+
+        let opened = open_attachment(&real).unwrap();
+        assert_eq!(listed_path(&opened.path), Ok(real.to_str().unwrap()));
+        let split = dir.path().join("notes\nsecond-line.txt");
+        std::fs::write(&split, b"abc").unwrap();
+        let opened = open_attachment(&split).unwrap();
+        assert!(listed_path(&opened.path).is_err());
     }
 
     fn capture_cli(

@@ -205,6 +205,11 @@ pub const GATED_VOCABULARY: &[GatedValue] = &[
         value: "agent-attach",
         capability: Capability::AgentAttachments,
     },
+    GatedValue {
+        vocabulary: "ControlRequest",
+        value: "agent-attach-cancel",
+        capability: Capability::AgentAttachments,
+    },
 ];
 
 /// A control command a session server serves only with [`Capability::AgentRequests`].

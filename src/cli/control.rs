@@ -1018,13 +1018,24 @@ pub(crate) struct AnswerOptions {
 const NOT_A_REPLY_EXIT: i32 = 3;
 
 pub(crate) fn run_agent_answer(mut command: ControlCli, options: AnswerOptions) -> Result<()> {
-    if let Err(error) = attach_files(&mut command, &options.attachments) {
-        eprintln!("{error}");
-        std::process::exit(1);
+    let uploads = match attach_files(&mut command, &options.attachments) {
+        Ok(uploads) => uploads,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
+    let sent = send_control(&command);
+    // Uploads belong to the request; with no request, they go.
+    if sent.as_ref().map_or(true, |value| {
+        value.get("ok").and_then(serde_json::Value::as_bool) != Some(true)
+    }) {
+        cancel_uploads(&command, &uploads);
     }
+    let sent = sent.or_else(SendFailure::report)?;
     let value = match options.ask_then_await_ms {
-        Some(timeout_ms) => ask_then_await(&mut command, timeout_ms)?,
-        None => send_control(&command).or_else(SendFailure::report)?,
+        Some(timeout_ms) => await_asked(&mut command, sent, timeout_ms)?,
+        None => sent,
     };
     let not_a_reply = crate::cli::output::answered_without_reply(value.get("data"));
     report_control(&command, None, value)?;
@@ -1034,68 +1045,128 @@ pub(crate) fn run_agent_answer(mut command: ControlCli, options: AnswerOptions) 
     Ok(())
 }
 
-/// Put `files` where the asked agent can open them, and list their paths after the request's
-/// text. A session on this host reads them where they are; one on another host gets a copy
-/// first, which it keeps until it stops. Nothing is asked if any file cannot be sent.
-fn attach_files(command: &mut ControlCli, files: &[PathBuf]) -> std::result::Result<(), String> {
+/// Make `files` reachable by the asked agent. On this host their own paths go after the
+/// request's text. A session on another host gets a copy of each first, and the ask names the
+/// copies, so the session lists them and keeps them only if the request is created. Every file
+/// is opened and checked before anything is sent. Returns the uploads, which belong to the ask.
+fn attach_files(
+    command: &mut ControlCli,
+    files: &[PathBuf],
+) -> std::result::Result<Vec<u64>, String> {
     if files.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
-    let mut paths = Vec::with_capacity(files.len());
-    for file in files {
-        let local = attachable(file)?;
-        paths.push(match &command.endpoint {
-            ControlEndpoint::Remote { target, session } => {
-                upload_attachment(target, session, &local)?
-            }
-            _ => local.to_string_lossy().into_owned(),
-        });
+    let opened = files
+        .iter()
+        .map(|file| open_attachment(file))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let ControlEndpoint::Remote { target, session } = &command.endpoint else {
+        let mut list = String::from("\n\nAttached files:");
+        for attachment in &opened {
+            let path = attachment.path.to_str().ok_or_else(|| {
+                format!(
+                    "cannot attach {}: its path is not UTF-8",
+                    attachment.path.display()
+                )
+            })?;
+            list.push_str("\n- ");
+            list.push_str(path);
+        }
+        if let control::ControlCommand::AgentAsk { prompt, .. } = &mut command.request.command {
+            prompt.push_str(&list);
+        }
+        return Ok(Vec::new());
+    };
+    let (target, session) = (target.clone(), session.clone());
+    let mut uploads = Vec::with_capacity(opened.len());
+    for attachment in opened {
+        let mut transfer = [0u8; 8];
+        getrandom::fill(&mut transfer).map_err(|error| error.to_string())?;
+        let transfer = u64::from_le_bytes(transfer);
+        uploads.push(transfer);
+        if let Err(error) = upload_attachment(&target, &session, transfer, attachment) {
+            cancel_uploads(command, &uploads);
+            return Err(error);
+        }
     }
-    if let control::ControlCommand::AgentAsk { prompt, .. } = &mut command.request.command {
-        prompt.push_str(&attachment_list(&paths));
+    if let control::ControlCommand::AgentAsk { attachments, .. } = &mut command.request.command {
+        attachments.clone_from(&uploads);
     }
-    Ok(())
+    Ok(uploads)
 }
 
-/// A file's absolute path, if it can be attached: a regular file, within the size a paste may
-/// carry.
-fn attachable(file: &std::path::Path) -> std::result::Result<PathBuf, String> {
-    let path = std::fs::canonicalize(file)
-        .map_err(|error| format!("cannot attach {}: {error}", file.display()))?;
-    let metadata = std::fs::metadata(&path)
-        .map_err(|error| format!("cannot attach {}: {error}", file.display()))?;
-    if !metadata.is_file() {
-        return Err(format!(
-            "cannot attach {}: not a regular file",
-            file.display()
-        ));
-    }
-    if metadata.len() > crate::session::protocol::MAX_ATTACHMENT_BYTES {
-        return Err(format!(
-            "cannot attach {}: files may be up to 16 MiB",
-            file.display()
-        ));
-    }
-    Ok(path)
+/// A file to attach, opened once: what is checked is what is sent.
+struct Attachment {
+    path: PathBuf,
+    name: String,
+    size: u64,
+    file: std::fs::File,
 }
 
-/// Copy one file into a session on another host, and return its path there.
-fn upload_attachment(
-    target: &str,
-    session: &str,
-    local: &std::path::Path,
-) -> std::result::Result<String, String> {
-    use base64::Engine as _;
-
-    let bytes = std::fs::read(local)
-        .map_err(|error| format!("cannot attach {}: {error}", local.display()))?;
-    let name = local
+/// Open a file to attach: a regular file, not a link, device, or pipe, within the size a paste
+/// may carry.
+fn open_attachment(file: &std::path::Path) -> std::result::Result<Attachment, String> {
+    let refuse =
+        |reason: &dyn std::fmt::Display| format!("cannot attach {}: {reason}", file.display());
+    let path = std::fs::canonicalize(file).map_err(|error| refuse(&error))?;
+    let opened =
+        crate::platform::attachments::open_source(&path).map_err(|error| refuse(&error))?;
+    let size = opened.metadata().map_err(|error| refuse(&error))?.len();
+    if size > crate::session::protocol::MAX_ATTACHMENT_BYTES {
+        return Err(refuse(&"files may be up to 16 MiB"));
+    }
+    let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "attachment".into());
-    let mut transfer = [0u8; 8];
-    getrandom::fill(&mut transfer).map_err(|error| error.to_string())?;
-    let transfer = u64::from_le_bytes(transfer);
+    Ok(Attachment {
+        path,
+        name,
+        size,
+        file: opened,
+    })
+}
+
+/// Drop uploads no request will claim, so they free the session's space at once. Best effort:
+/// the session deletes unclaimed uploads on its own after a while.
+fn cancel_uploads(command: &ControlCli, uploads: &[u64]) {
+    let ControlEndpoint::Remote { target, session } = &command.endpoint else {
+        return;
+    };
+    if uploads.is_empty() {
+        return;
+    }
+    let request = super::args::control_request(control::ControlCommand::AgentAttachCancel {
+        transfers: uploads.to_vec(),
+    });
+    let _ = ask_remote_endpoint(target, session, request);
+}
+
+/// Copy one opened file into a session on another host as upload `transfer`.
+fn upload_attachment(
+    target: &str,
+    session: &str,
+    transfer: u64,
+    attachment: Attachment,
+) -> std::result::Result<(), String> {
+    use base64::Engine as _;
+    use std::io::Read as _;
+
+    let local = attachment.path.as_path();
+    let mut bytes = Vec::new();
+    // Read at most one byte past the limit, so a file that grows cannot grow this process.
+    attachment
+        .file
+        .take(crate::session::protocol::MAX_ATTACHMENT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot attach {}: {error}", local.display()))?;
+    if bytes.len() as u64 != attachment.size {
+        return Err(format!(
+            "cannot attach {}: the file changed while it was read",
+            local.display()
+        ));
+    }
+    let name = attachment.name;
     let chunks: Vec<&[u8]> = if bytes.is_empty() {
         vec![&[]]
     } else {
@@ -1124,31 +1195,18 @@ fn upload_attachment(
             return Err(format!("cannot attach {}: {error}", local.display()));
         }
         offset += chunk.len() as u64;
-        if index == last_index {
-            return answer["data"]["path"]
-                .as_str()
-                .map(str::to_string)
-                .ok_or_else(|| format!("cannot attach {}: no path came back", local.display()));
-        }
     }
-    unreachable!("a file has at least one chunk")
+    Ok(())
 }
 
-/// The lines that tell the asked agent which files came with the request.
-fn attachment_list(paths: &[String]) -> String {
-    let mut list = String::from("\n\nAttached files:");
-    for path in paths {
-        list.push_str("\n- ");
-        list.push_str(path);
-    }
-    list
-}
-
-/// `agents ask --wait`: ask, then wait for the answer exactly as `agents await` does. A refused
+/// `agents ask --wait`, once asked: wait for the answer exactly as `agents await` does. A refused
 /// ask is reported as itself. The request's id goes to stderr as soon as it exists, so a command
 /// that is killed or put in the background can always be collected with `agents await`.
-fn ask_then_await(command: &mut ControlCli, timeout_ms: u64) -> Result<serde_json::Value> {
-    let asked = send_control(command).or_else(SendFailure::report)?;
+fn await_asked(
+    command: &mut ControlCli,
+    asked: serde_json::Value,
+    timeout_ms: u64,
+) -> Result<serde_json::Value> {
     let Some(request) = asked
         .get("ok")
         .and_then(serde_json::Value::as_bool)

@@ -213,7 +213,8 @@ pub(crate) fn handle_control_request(
         | ControlCommand::AgentRequest { .. }
         | ControlCommand::AgentRequests { .. }
         | ControlCommand::AgentCancel { .. }
-        | ControlCommand::AgentAttach { .. } => ControlResponse::error_with(
+        | ControlCommand::AgentAttach { .. }
+        | ControlCommand::AgentAttachCancel { .. } => ControlResponse::error_with(
             crate::control::ControlErrorCode::Unsupported,
             "agent requests belong to a session server; run this from a pane or pass `--session <NAME>`",
         ),

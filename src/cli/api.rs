@@ -105,6 +105,7 @@ const REPLY_PAYLOADS: &[(&str, &[&str])] = &[
 /// Commands that answer with no named payload. Listed so that a new command has to choose.
 #[cfg(test)]
 const NO_REPLY_PAYLOAD: &[&str] = &[
+    "agent-attach-cancel",
     "agent-go",
     "agent-release",
     "agent-report",

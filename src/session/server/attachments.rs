@@ -13,6 +13,9 @@ const MAX_PENDING: usize = 8;
 const MAX_RETAINED_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_RETAINED_FILES: usize = 256;
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a finished `agent-attach` upload waits for the request that claims it. Long enough
+/// for the rest of a slow multi-file upload; an asker that fails cancels its uploads at once.
+const UNCLAIMED_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// Owns the uploads that arrive as `agent-attach` control commands. Each chunk comes over a
 /// connection of its own, so the upload cannot belong to one; no client is ever given this id.
@@ -43,6 +46,9 @@ struct Pending {
 pub(super) struct Attachments {
     pending: HashMap<Key, Pending>,
     retained: Vec<StagedFile>,
+    /// Finished `agent-attach` uploads no request has claimed yet, by transfer id, with when
+    /// they finished. They count against the same limits as retained files.
+    unclaimed: HashMap<u64, (StagedFile, Instant)>,
     worker: Option<Worker>,
 }
 /// Disk steps for one upload, run in order; the first failure ends the job.
@@ -170,12 +176,18 @@ impl Attachments {
 
     fn can_reserve(&self, client: ClientId, size: u64) -> bool {
         let reserved: u64 = self.pending.values().map(|p| p.size).sum();
-        let retained: u64 = self.retained.iter().map(|file| file.size).sum();
+        let kept: u64 = self
+            .retained
+            .iter()
+            .chain(self.unclaimed.values().map(|(file, _)| file))
+            .map(|file| file.size)
+            .sum();
+        let files = self.retained.len() + self.unclaimed.len() + self.pending.len();
         // A client pastes one upload at a time; control uploads are many callers' at once.
         self.pending.len() < MAX_PENDING
             && (client == CONTROL_UPLOADS || !self.pending.keys().any(|key| key.0 == client))
-            && self.retained.len() + self.pending.len() < MAX_RETAINED_FILES
-            && retained + reserved + size <= MAX_RETAINED_BYTES
+            && files < MAX_RETAINED_FILES
+            && kept + reserved + size <= MAX_RETAINED_BYTES
     }
 }
 
@@ -363,7 +375,9 @@ impl SessionServer {
         let invalid = |message: String| (ControlErrorCode::InvalidArgument, message);
         let mut operations = Vec::new();
         if chunk.offset == 0 {
-            if self.attachments.pending.contains_key(&key) {
+            if self.attachments.pending.contains_key(&key)
+                || self.attachments.unclaimed.contains_key(&chunk.transfer)
+            {
                 return Err((
                     ControlErrorCode::Conflict,
                     format!("upload {} is already in progress", chunk.transfer),
@@ -444,6 +458,91 @@ impl SessionServer {
         Ok(operations)
     }
 
+    /// `prompt` with the paths of the uploads a request claims listed after it. Refused unless
+    /// every one has finished and no request has claimed it yet.
+    pub(super) fn attached_prompt(
+        &self,
+        mut prompt: String,
+        transfers: &[u64],
+    ) -> Result<String, ControlResponse> {
+        if transfers.is_empty() {
+            return Ok(prompt);
+        }
+        prompt.push_str("\n\nAttached files:");
+        for transfer in transfers {
+            let (file, _) = self.attachments.unclaimed.get(transfer).ok_or_else(|| {
+                ControlResponse::error_with(
+                    ControlErrorCode::InvalidArgument,
+                    format!(
+                        "upload {transfer} is not finished, was already used, or expired; attach the file again"
+                    ),
+                )
+            })?;
+            prompt.push_str("\n- ");
+            prompt.push_str(file.path.to_str().unwrap_or_default());
+        }
+        Ok(prompt)
+    }
+
+    /// Keep the uploads a request was asked with, until the session stops.
+    pub(super) fn claim_attachments(&mut self, transfers: &[u64]) {
+        for transfer in transfers {
+            if let Some((file, _)) = self.attachments.unclaimed.remove(transfer) {
+                self.attachments.retained.push(file);
+            }
+        }
+    }
+
+    /// Delete uploads no request claimed, finished or still arriving.
+    pub(super) fn cancel_agent_attachments(&mut self, transfers: &[u64]) -> ControlResponse {
+        for transfer in transfers {
+            self.attachments.unclaimed.remove(transfer);
+            self.cancel_attachment((CONTROL_UPLOADS, *transfer));
+        }
+        ControlResponse::empty()
+    }
+
+    /// Upload `bytes` as `agent-attach` upload `transfer`, as a caller would, and return where
+    /// the finished file waits to be claimed.
+    #[cfg(all(test, unix))]
+    pub(super) fn upload_for_test(&mut self, transfer: u64, bytes: &[u8]) -> PathBuf {
+        let data = STANDARD.encode(bytes);
+        let reply = ReplyTo::Headless {
+            capabilities: protocol::Capabilities::current(),
+            effective_protocol: protocol::PROTOCOL_VERSION,
+        };
+        let chunk = AgentAttachmentChunk {
+            transfer,
+            name: "file.txt",
+            size: bytes.len() as u64,
+            offset: 0,
+            data: &data,
+            last: true,
+        };
+        assert!(self.agent_attachment_chunk(0, reply, chunk).is_none());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while self
+            .attachments
+            .pending
+            .contains_key(&(CONTROL_UPLOADS, transfer))
+        {
+            assert!(Instant::now() < deadline);
+            self.poll_attachment_work();
+            std::thread::yield_now();
+        }
+        self.attachments.unclaimed[&transfer].0.path.clone()
+    }
+
+    /// Uploads still arriving, waiting to be claimed, and kept, in that order.
+    #[cfg(all(test, unix))]
+    pub(super) fn attachment_counts(&self) -> (usize, usize, usize) {
+        (
+            self.attachments.pending.len(),
+            self.attachments.unclaimed.len(),
+            self.attachments.retained.len(),
+        )
+    }
+
     /// Whether `client` waits on a chunk of an `agent-attach` upload, which keeps a headless
     /// connection open until the chunk is written.
     pub(super) fn holds_attachment_reply(&self, client: ClientId) -> bool {
@@ -481,7 +580,9 @@ impl SessionServer {
                 self.attachments.pending.remove(&key);
                 match file.path.to_str().map(str::to_string) {
                     Some(path) => {
-                        self.attachments.retained.push(file);
+                        self.attachments
+                            .unclaimed
+                            .insert(key.1, (file, Instant::now()));
                         ControlResponse::ok(crate::control::AgentAttachmentUpload {
                             received,
                             path: Some(path),
@@ -585,6 +686,10 @@ impl SessionServer {
         for key in expired {
             self.cancel_attachment(key);
         }
+        // Dropping an unclaimed file deletes it.
+        self.attachments
+            .unclaimed
+            .retain(|_, (_, finished)| finished.elapsed() < UNCLAIMED_TIMEOUT);
         let mut activity = false;
         loop {
             let done = self

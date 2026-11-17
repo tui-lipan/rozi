@@ -3704,6 +3704,15 @@
                 "null"
               ]
             },
+            "attachments": {
+              "description": "Files uploaded with `agent-attach`, by transfer id, that go with this request. The\nsession lists their paths after the prompt and keeps them once the request exists; a\nrefused ask leaves them unclaimed.",
+              "items": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "array"
+            },
             "cmd": {
               "const": "agent-ask",
               "type": "string"
@@ -3856,7 +3865,7 @@
           "type": "object"
         },
         {
-          "description": "Store one chunk of a file in the session, for a request to one of its agents. `transfer`\nis the caller's id for the file. The chunk at `offset` 0 starts it, each later one must\ncontinue where the stored file ends, and `last` finishes it: the answer then carries the\nfile's path on the session's host. The session keeps the file until it stops.",
+          "description": "Store one chunk of a file in the session, for a request to one of its agents. `transfer`\nis the caller's id for the file. The chunk at `offset` 0 starts it, each later one must\ncontinue where the stored file ends, and `last` finishes it. A finished file waits for an\n`agent-ask` that names it in `attachments`, which keeps it until the session stops;\none no request claims is deleted after a while.",
           "properties": {
             "cmd": {
               "const": "agent-attach",
@@ -3896,6 +3905,28 @@
             "size",
             "offset",
             "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Drop uploads no request claimed, finished or not, so a failed ask frees their space at once.",
+          "properties": {
+            "cmd": {
+              "const": "agent-attach-cancel",
+              "type": "string"
+            },
+            "transfers": {
+              "items": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "cmd",
+            "transfers"
           ],
           "type": "object"
         },

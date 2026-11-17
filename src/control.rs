@@ -160,7 +160,10 @@ impl ControlCommand {
             Self::AgentAsk {
                 follows: Some(_), ..
             } => Some(crate::session::protocol::Capability::AgentConversations),
-            Self::AgentAttach { .. } => {
+            Self::AgentAttach { .. } | Self::AgentAttachCancel { .. } => {
+                Some(crate::session::protocol::Capability::AgentAttachments)
+            }
+            Self::AgentAsk { attachments, .. } if !attachments.is_empty() => {
                 Some(crate::session::protocol::Capability::AgentAttachments)
             }
             Self::AgentReplyLater { .. }
@@ -789,6 +792,11 @@ pub enum ControlCommand {
         /// session. Shown only, and always marked as coming from outside the session.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         asker_label: Option<String>,
+        /// Files uploaded with `agent-attach`, by transfer id, that go with this request. The
+        /// session lists their paths after the prompt and keeps them once the request exists; a
+        /// refused ask leaves them unclaimed.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<u64>,
     },
     /// Answer a request sent to the calling agent.
     AgentReply { id: String, text: String },
@@ -812,8 +820,9 @@ pub enum ControlCommand {
     AgentCancel { id: String },
     /// Store one chunk of a file in the session, for a request to one of its agents. `transfer`
     /// is the caller's id for the file. The chunk at `offset` 0 starts it, each later one must
-    /// continue where the stored file ends, and `last` finishes it: the answer then carries the
-    /// file's path on the session's host. The session keeps the file until it stops.
+    /// continue where the stored file ends, and `last` finishes it. A finished file waits for an
+    /// `agent-ask` that names it in `attachments`, which keeps it until the session stops;
+    /// one no request claims is deleted after a while.
     AgentAttach {
         transfer: u64,
         name: String,
@@ -824,6 +833,8 @@ pub enum ControlCommand {
         #[serde(default)]
         last: bool,
     },
+    /// Drop uploads no request claimed, finished or not, so a failed ask frees their space at once.
+    AgentAttachCancel { transfers: Vec<u64> },
     /// Report an agent's state from its own integration, for a pane.
     AgentReport {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3348,6 +3359,7 @@ mod tests {
             parent: parent.map(Into::into),
             follows: None,
             asker_label: None,
+            attachments: Vec::new(),
         };
         assert_eq!(
             ask(None).required_session_capability(),

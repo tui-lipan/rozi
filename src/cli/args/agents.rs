@@ -583,6 +583,7 @@ fn parse_ask(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
             parent,
             follows,
             asker_label: None,
+            attachments: Vec::new(),
         },
         format,
         await_ms,
@@ -1313,6 +1314,7 @@ mod tests {
                 parent: None,
                 follows: None,
                 asker_label: None,
+                attachments: Vec::new(),
             }
         );
         assert_eq!(parsed.await_ms, None);

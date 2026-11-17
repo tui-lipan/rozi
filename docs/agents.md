@@ -432,25 +432,30 @@ An agent can hand work to another agent in its session and keep going. `agents a
 once with a request id; the answer is collected for you:
 
 ```bash
-id=$(rozi agents ask --ref "$REVIEWER" --format json -- "Review the parser changes" | jq -r .id)
+id=$(rozi agents ask --target 4 --format json -- "Review the parser changes" | jq -r .id)
 rozi agents await "$id" --timeout 10m
 ```
 
+`--target <PANE>` asks the agent on screen in that pane; `--ref` from `agents list` asks one exact
+agent run, and is refused if another agent has replaced it.
+
 `--wait --timeout <DUR>` does both in one command. With `--format text` it prints only the answer,
 so an agent can run it as a background command, end its turn, and be notified with the answer when
-it arrives. If the wait fails, the request stays asked; await its id rather than asking again.
+it arrives. The request id goes to stderr as soon as it is asked; if the wait fails, the request
+stays asked, so await that id rather than asking again. When the answer is not the agent's reply
+(see below) or not all of it, a note on stderr says so; `--require-reply` makes that exit 3.
 
 ```bash
-rozi agents ask --ref "$REVIEWER" --wait --timeout 30m --format text -- "Review the parser changes"
+rozi agents ask --target 4 --wait --timeout 30m --format text -- "Review the parser changes"
 ```
 
 rozi types the request into the other agent once it is idle, done, or in error, shows no dialog,
 and nobody has typed into its pane for two seconds. The typed text names the request and how to
-answer it: `rozi agents reply <ID> --stdin`, with the answer on stdin. An agent receives one
+answer it: `rozi agents reply <ID> --format text --stdin`, with the answer on stdin. An agent receives one
 request at a time, and an approval prompt does not end its turn. Without a reply, the answer is the
 agent's [integration response](#read-the-agents-response), or else its terminal when the turn
 ends, read the same way, including an alternate-screen transcript. An agent that will answer after
-its turn, such as when a background command finishes, runs `rozi agents reply <ID> --later` first:
+its turn, such as when a background command finishes, runs `rozi agents reply <ID> --format text --later` first:
 the request then stays `active` past the turn, and the agent can take the next request meanwhile.
 What the agent asks while it owes a request belongs to that request; an agent that owes several
 names the one with `agents ask --for <ID>`, or the ask is refused.
@@ -467,20 +472,26 @@ rozi that a reply needs, so its requests are answered from its terminal; allow i
 | `failed` | The agent exited, was replaced, or moved to another conversation before answering. |
 | `cancelled` | Cancelled by whoever asked, or the asking agent left or changed conversation before delivery. |
 
-`agents await` prints the answer, or the request's state when it failed or was cancelled. A
-request asked while answering another belongs to its chain (`parent` and `root` in JSON). Awaiting
+`agents await` prints the answer, or the request's state when it failed or was cancelled, and
+takes `--require-reply` too. A request asked while answering another belongs to its chain (`parent`
+and `root` in JSON). Asking the same agent again continues the conversation: requests between two
+agents, either way round, share a `conversation` while both stay in the same native conversation,
+and the typed text names the request it follows. Awaiting
 a request fails at once with `conflict` when a request from its chain is waiting on you, since
 neither could finish; answer that one first. `agents requests --incoming` or `--outgoing` lists
 the requests to or from you without their text, which `agents request <ID>` shows, and
 `agents cancel <ID>` cancels one you asked.
 
 These commands always go to the session server of the pane they run in; from outside rozi, pass
-`--session`, and the request has no asker. A prompt is limited to 64 KiB, an agent to 16 queued
-requests, a chain to 8 levels and 64 requests, and a session to 1024 live requests. A request
-counts as live until it is resolved and its delivery turn has ended. Replies whose delivery turns
-have not ended share a 16 MiB storage budget, including their prompts. A reply that exceeds the
-remaining budget is refused with `conflict`; the request remains unanswered. Requests do not
-survive a session restart.
+`--session`, or `--remote <HOST> --session <NAME>` for another host. Such a request has no asker in
+that session. It names the caller's agent and pane, its session unless that is temporary, and this
+machine's hostname when it goes to another host, such as `Claude Code (30 · dev@laptop), outside`.
+It starts its own conversation unless `--follows <ID>` continues the one an earlier request of the
+caller's is in. A prompt is limited to 64 KiB, an agent to 16 queued requests, a chain to 8 levels
+and 64 requests, and a session to 1024 live requests. A request counts as live until it is resolved
+and its delivery turn has ended. Replies whose delivery turns have not ended share a 16 MiB storage
+budget, including their prompts. A reply that exceeds the remaining budget is refused with
+`conflict`; the request remains unanswered. Requests do not survive a session restart.
 
 ### Watch agents talk
 
@@ -491,10 +502,11 @@ received it. Turn this off with `animations.agent_handoff`. A run that answered 
 Done mark, sound, or notification, since its answer went to the agent that asked.
 
 **Agent conversations…** in the command palette (`agent-conversations`) lists the session's
-requests, each chain together with the requests asked while answering another nested under it,
-and the ones still waiting first. `Enter` draws a chain as a sequence diagram: a lifeline per
-agent, a bar while an agent owes an answer, and a dashed arrow back when it answers, fails, or is
-cancelled. `Ctrl+G` goes to the agent a request was sent to. Neither shows what was asked or
+requests by conversation, the ones still waiting first: the first exchange, then each follow-up and
+each request asked while answering another nested under it. An answer the agent did not give
+with `agents reply` is marked `last message` or `from terminal`, by where it was read. `Enter` draws the conversation as a
+sequence diagram: a lifeline per agent, a bar while an agent owes an answer, and a dashed arrow back
+when it answers, fails, or is cancelled. `Ctrl+G` goes to the agent a request was sent to. Neither shows what was asked or
 answered; read that with `agents request <ID>`.
 
 ### Report state from agent hooks

@@ -790,11 +790,15 @@ impl SessionServer {
                 target,
                 prompt,
                 parent,
+                follows,
+                asker_label,
             } => self.ask_agent(
                 self.caller_agent(request.source_session.as_ref(), request.source_pane),
                 target,
                 prompt,
                 parent.as_deref(),
+                follows.as_deref(),
+                asker_label,
             ),
             ControlCommand::AgentReply { id, text } => self.reply_to_request(
                 self.caller_agent(request.source_session.as_ref(), request.source_pane),

@@ -205,6 +205,12 @@
     "AgentRequestSummary": {
       "description": "A request without its prompt and answer, as `agent-requests` lists it.",
       "properties": {
+        "conversation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "created_at_unix_ms": {
           "format": "uint64",
           "minimum": 0,
@@ -238,6 +244,29 @@
         "reason": {
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "response_complete": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "response_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentResponseSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the answer came from, so a list shows a terminal fallback without reading each one."
+        },
+        "response_truncated": {
+          "type": [
+            "boolean",
             "null"
           ]
         },
@@ -3668,9 +3697,23 @@
         {
           "description": "Ask another agent of the caller's session, without waiting: the session delivers the prompt\nwhen the agent is ready and keeps the answer. The caller is derived from the request's\n`source_session` and `source_pane`. `parent` names the request the caller asks on behalf\nof; without it, the session infers it when the caller owes exactly one.",
           "properties": {
+            "asker_label": {
+              "description": "Who is asking, as the caller describes itself, when it is not an agent of this\nsession. Shown only, and always marked as coming from outside the session.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "cmd": {
               "const": "agent-ask",
               "type": "string"
+            },
+            "follows": {
+              "description": "An earlier request whose conversation this one continues, for an asker the session\ncannot place in one itself: a person, a script, or a caller on another host.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "parent": {
               "type": [
@@ -9099,6 +9142,7 @@
   "description": "Control frames exchanged between a rozi session server and its clients, CLI callers, and remote proxies. Generated; see dev/wire-compatibility.md for the rules every change to it follows.",
   "title": "Rozi session wire protocol",
   "x-rozi-capabilities": [
+    "agent-conversations",
     "agent-reply-later",
     "agent-request-updates",
     "agent-requests",

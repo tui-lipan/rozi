@@ -58,11 +58,15 @@ pub enum Capability {
     /// [`super::PaneMeta::program_title`] carries the program's own title, so a client can tell it
     /// from a name the user gave the pane. Without it, `title` is the only title there is.
     PaneProgramTitle,
+    /// The server groups agent requests into conversations: `AgentRequestInfo::conversation`,
+    /// and `agent-ask` with `follows`, which joins an asker with no agent to an earlier one.
+    AgentConversations,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 10] = [
+    pub const ALL: [Capability; 11] = [
+        Capability::AgentConversations,
         Capability::AgentReplyLater,
         Capability::AgentRequestUpdates,
         Capability::AgentRequests,
@@ -88,6 +92,7 @@ impl Capability {
             Capability::AgentReplyLater => "agent-reply-later",
             Capability::AgentRequestUpdates => "agent-request-updates",
             Capability::PaneProgramTitle => "pane-program-title",
+            Capability::AgentConversations => "agent-conversations",
         }
     }
 
@@ -102,6 +107,7 @@ impl Capability {
             Self::DragAndDrop => "0.0.46",
             Self::AgentRequests => "0.0.47",
             Self::AgentReplyLater | Self::AgentRequestUpdates | Self::PaneProgramTitle => "0.0.48",
+            Self::AgentConversations => "0.0.50",
         }
     }
 

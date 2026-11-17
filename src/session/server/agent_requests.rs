@@ -312,14 +312,14 @@ impl AgentRequestStore {
             .map(|(info, _)| of(info)))
     }
 
-    /// How `agent` was recorded in the latest exchange of `conversation` it took part in, on
-    /// either side.
+    /// How `agent` was recorded in the latest request of `conversation` it took part in, on
+    /// either side, including one asked on another's behalf: it held the conversation there too.
     fn last_held(&self, conversation: &str, agent: &protocol::AgentInstance) -> Option<Party<'_>> {
         self.requests
             .iter()
             .rev()
             .map(|stored| &stored.info)
-            .filter(|info| info.parent.is_none() && info.conversation() == conversation)
+            .filter(|info| info.conversation() == conversation)
             .find_map(|info| {
                 if info.to.instance() == *agent {
                     Some(Party::new(&info.to, info.to_native_session.as_deref()))

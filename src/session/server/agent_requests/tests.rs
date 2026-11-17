@@ -7,6 +7,8 @@ use crate::session::protocol::DetectedAgentState;
 struct Rig {
     server: SessionServer,
     typed: HashMap<PaneId, mpsc::Receiver<TerminalPtyEvent>>,
+    /// Integration reports sent, for their sequence numbers.
+    reports: u64,
 }
 
 impl Rig {
@@ -36,7 +38,11 @@ impl Rig {
             assert!(read_until(&received, "ready"));
             typed.insert(id, received);
         }
-        Self { server, typed }
+        Self {
+            server,
+            typed,
+            reports: 0,
+        }
     }
 
     fn agent(&self, pane: PaneId) -> protocol::AgentRef {
@@ -86,6 +92,27 @@ impl Rig {
             None,
             None,
         )
+    }
+
+    /// Pane `pane`'s agent reports that it is in native conversation `native_session` now, as
+    /// after a `/clear`.
+    fn move_to(&mut self, pane: PaneId, native_session: &str) {
+        self.reports += 1;
+        let update = super::super::runtime::AgentIntegrationUpdate {
+            agent: Some("claude".into()),
+            integration: "hooks".into(),
+            state: Some(protocol::AgentState::Idle),
+            reason: None,
+            native_session: Some(native_session.into()),
+            unless_quiet: None,
+            ended: false,
+            seq: self.reports,
+            response: None,
+        };
+        let generation = self.server.panes[&pane].generation;
+        self.server
+            .apply_agent_integration(None, pane, generation, update)
+            .unwrap();
     }
 
     fn request(&self, id: &str) -> AgentRequestInfo {
@@ -875,25 +902,7 @@ fn exchanges_between_the_same_two_agents_make_one_conversation() {
 #[test]
 fn a_new_native_conversation_ends_the_conversation_for_good() {
     let mut rig = Rig::new(&[2, 3]);
-    let generation = rig.server.panes[&3].generation;
-    let mut seq = 0;
-    let mut move_to = |rig: &mut Rig, native_session: &str| {
-        seq += 1;
-        let update = super::super::runtime::AgentIntegrationUpdate {
-            agent: Some("claude".into()),
-            integration: "hooks".into(),
-            state: Some(protocol::AgentState::Idle),
-            reason: None,
-            native_session: Some(native_session.into()),
-            unless_quiet: None,
-            ended: false,
-            seq,
-            response: None,
-        };
-        rig.server
-            .apply_agent_integration(None, 3, generation, update)
-            .unwrap();
-    };
+    let move_to = |rig: &mut Rig, native_session: &str| rig.move_to(3, native_session);
     let follows = |rig: &mut Rig, id: &str| {
         rig.server.ask_agent(
             None,
@@ -927,6 +936,32 @@ fn a_new_native_conversation_ends_the_conversation_for_good() {
         code(follows(&mut rig, &outside.id)),
         Some(ControlErrorCode::InvalidArgument)
     );
+}
+
+#[test]
+fn following_a_delegated_request_respects_a_new_native_conversation() {
+    let mut rig = Rig::new(&[2, 3, 4]);
+    rig.move_to(4, "x");
+    // 3, answering 2, asks 4 on that request's behalf; then both finish.
+    let request = rig.ask(Some(2), 3, "plan the release");
+    let delegated = rig.ask(Some(3), 4, "check the changelog");
+    assert_eq!(delegated.parent.as_deref(), Some(request.id.as_str()));
+    assert!(rig.reply(4, &delegated.id, "fine").ok);
+    assert!(rig.reply(3, &request.id, "done").ok);
+    rig.run_turn(4);
+    rig.run_turn(3);
+
+    rig.move_to(4, "y");
+    let asker = rig.agent(3);
+    let follows = rig.server.ask_agent(
+        Some(asker),
+        AgentTarget::Pane(4),
+        "and the release notes?".into(),
+        None,
+        Some(&delegated.id),
+        None,
+    );
+    assert_eq!(code(follows), Some(ControlErrorCode::InvalidArgument));
 }
 
 #[test]

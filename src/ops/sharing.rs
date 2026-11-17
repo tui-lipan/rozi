@@ -248,7 +248,8 @@ fn send_control(ctx: &mut Context<AppRoot>, command: ControlCommand, kind: Shari
     );
 }
 
-#[cfg(test)]
+// Sharing between accounts is Unix-only; elsewhere `OpenSharing` stays disabled.
+#[cfg(all(test, unix))]
 mod tests {
     use tui_lipan::TestBackend;
 

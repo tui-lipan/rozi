@@ -667,7 +667,12 @@ impl SessionServer {
                             && (pane.agent_resume.is_some()
                                 || (pane.keep_open && pane.launch.is_some()));
                         if !keep_open {
-                            pane.exited = Some(code);
+                            if owner.is_none() {
+                                self.retire_session_publishers(id);
+                            }
+                            if let Some(pane) = self.pane_mut(owner, id) {
+                                pane.exited = Some(code);
+                            }
                         }
                         self.send_outbound(
                             owner,

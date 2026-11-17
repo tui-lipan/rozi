@@ -1348,6 +1348,7 @@ impl SessionServer {
         {
             let _ = pty.kill();
         }
+        self.retire_session_publishers(target);
         self.mark_dirty();
         self.resolve_agent_waits();
 

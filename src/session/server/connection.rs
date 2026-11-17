@@ -1064,6 +1064,7 @@ impl SessionServer {
                         let _ = pty.kill();
                     }
                     if owner.is_none() {
+                        self.retire_session_publishers(pane_id);
                         self.mark_dirty();
                     }
                 }

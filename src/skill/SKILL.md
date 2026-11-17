@@ -232,7 +232,7 @@ rozi sessions kill agent-<TASK>
   choose another name rather than reusing a session you did not create.
 - Kill the session when you are done, unless the user wants to keep it.
 
-A pane created this way receives `ROZI` and `ROZI_PANE`, but no `ROZI_SOCKET` or `ROZI_BIN`,
+A pane created this way receives `ROZI`, `ROZI_PANE`, and `ROZI_BIN`, but no `ROZI_SOCKET`,
 because no UI exists. A split through a session endpoint applies the current `[[rules]]`, and is
 refused while an attached client holds layout control.
 

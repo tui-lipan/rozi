@@ -168,11 +168,11 @@ one on another machine and one that attaches later.
 On Windows, pass the discovery-entry path to the CLI. Do not read the entry or construct a pipe
 name yourself.
 
-Every pane receives `ROZI=1`, `ROZI_PANE`, `ROZI_TERMINAL=1`, `TERM_PROGRAM=rozi`, and
-`TERM_PROGRAM_VERSION`, and a
-local pane also receives `ROZI_SOCKET` and `ROZI_BIN` when control is available. A session pane also receives `ROZI_SESSION_INSTANCE`, an opaque id of the session
+Every pane receives `ROZI=1`, `ROZI_PANE`, `ROZI_TERMINAL=1`, `TERM_PROGRAM=rozi`,
+`TERM_PROGRAM_VERSION`, and `ROZI_BIN`, the path to a `rozi` on the machine the pane runs on.
+A local pane also receives `ROZI_SOCKET` when control is available. A session pane also receives `ROZI_SESSION_INSTANCE`, an opaque id of the session
 server it runs in, so a UI holding several sessions can tell whose pane is asking. It is empty in
-a scratch or popup pane. Remote panes do not receive the local client's `ROZI_SOCKET` or `ROZI_BIN`, and
+a scratch or popup pane. Remote panes do not receive the local client's `ROZI_SOCKET`, and
 neither does a pane opened by `rozi --session <NAME> split` or restored after a restart, because
 there is no UI for them to name. Commands from such a pane reach the UI showing its session once one
 attaches, its statuses and agent reports reach the session without one, and `rozi --here` reaches
@@ -608,7 +608,7 @@ A session endpoint refuses `split` when:
 - **The session has an invalid layout.** Restore a valid session snapshot before adding panes.
 
 A pane opened this way receives `ROZI`, `ROZI_PANE`, `ROZI_SESSION_INSTANCE`, `ROZI_TERMINAL`,
-`TERM_PROGRAM`, and `TERM_PROGRAM_VERSION`. It does not get `ROZI_SOCKET` or `ROZI_BIN`, since there is no UI, or anything
+`TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, and `ROZI_BIN`. It does not get `ROZI_SOCKET`, since there is no UI, or anything
 `[environment] forward` adds from the short-lived CLI process. It has no SSH variables such as
 `SSH_CONNECTION`, even when an SSH connection started the session, except that a pane opened with
 `--here` gets the calling pane's `SSH_CONNECTION`. On Linux with a systemd user session,

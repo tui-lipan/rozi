@@ -104,6 +104,25 @@ impl SessionServer {
             pane: pane_id,
             publisher: protocol::publisher_id(None, name.as_deref()),
         };
+        // The same limit the UI holds a pane to, and refused as it does - when the stream opens,
+        // so a publisher over it knows at once rather than at its first rows.
+        let open = self
+            .session_publishers
+            .streams
+            .iter()
+            .filter(|(other, stream)| {
+                other.pane == pane_id && **other != key && stream.generation == generation
+            })
+            .count();
+        if open >= protocol::MAX_PANE_PUBLISHERS {
+            return ControlResponse::error_with(
+                ControlErrorCode::Conflict,
+                format!(
+                    "pane {pane_id} already has {} publishers",
+                    protocol::MAX_PANE_PUBLISHERS
+                ),
+            );
+        }
         // A second stream for the same publisher means the first is stale - a publisher that
         // restarted, say. It takes over the rows; the old connection is closed and can no longer
         // touch them.
@@ -225,6 +244,32 @@ impl SessionServer {
             Vec::new(),
         ) {
             self.broadcast_control(&message);
+        }
+    }
+
+    /// Pane `pane_id` is ending - it exited, or it is being closed - and every stream that spoke
+    /// for it is over. Called while the pane is still live where it can be, so the rows go the
+    /// ordinary way and its exit stays the last thing said about it.
+    pub(super) fn retire_session_publishers(&mut self, pane_id: PaneId) {
+        let connections: Vec<ClientId> = self
+            .session_publishers
+            .streams
+            .iter()
+            .filter(|(key, _)| key.pane == pane_id)
+            .map(|(_, stream)| stream.connection)
+            .collect();
+        for connection in connections {
+            self.close_session_publisher(connection);
+            self.enqueue(
+                connection,
+                Target::Sender,
+                ServerMessage::Error {
+                    code: "pane-exited".to_string(),
+                    message: format!("pane {pane_id} has exited"),
+                    peer: None,
+                },
+            );
+            self.set_close_after_flush(connection);
         }
     }
 

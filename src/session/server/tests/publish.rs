@@ -167,3 +167,58 @@ fn activation_reaches_the_publisher_only_for_a_shown_row_from_a_client_that_may_
     activate(&mut server, controller, 4, "a");
     assert_eq!(activations(&server, publisher), ["a"]);
 }
+
+/// A pane that exits takes its publishers' rows with it, even when the publisher hangs up only
+/// afterwards, and the stream is closed rather than left to find out at its next write.
+#[test]
+fn a_pane_that_exits_takes_its_publishers_rows_and_streams_with_it() {
+    let mut server = SessionServer::new_named("dev");
+    server.panes.insert(3, test_pane(4));
+    let publisher = open_publisher(&mut server, 3, "jobs");
+    publish(&mut server, publisher, &["a"]);
+    server.handle_event(ServerEvent::Pty(None, 3, 4, TerminalPtyEvent::Exited(0)));
+    assert!(server.panes[&3].exited.is_some());
+    assert!(server.client(publisher).unwrap().close_after_flush);
+    server.remove_client(publisher);
+    assert!(shown(&server, 3).is_empty());
+}
+
+/// A pane holds no more publishers than the UI allows it, and the one over the limit hears so when
+/// it opens.
+#[test]
+fn a_publisher_over_the_pane_limit_is_refused_when_it_opens() {
+    let mut server = SessionServer::new_named("dev");
+    server.panes.insert(3, test_pane(4));
+    for n in 0..protocol::MAX_PANE_PUBLISHERS {
+        open_publisher(&mut server, 3, &format!("p{n}"));
+    }
+    // Replacing one that is already open is not one more.
+    open_publisher(&mut server, 3, "p0");
+    let (id, stream) = add_client(&mut server);
+    std::mem::forget(stream);
+    server.process_client_frame(
+        id,
+        Frame::Control(ClientMessage::SessionControl {
+            capabilities: Some(Capabilities::current()),
+            session: server.session_name.clone(),
+            protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: PROTOCOL_VERSION,
+            request: ControlRequest {
+                command: ControlCommand::Publish {
+                    kind: PublisherKind::Activity,
+                    name: Some("one-more".into()),
+                },
+                source_pane: Some(3),
+                source_session: Some(server.instance_id().clone()),
+                extension: None,
+                caller_context: None,
+                credential: None,
+            },
+        }),
+    );
+    assert!(matches!(
+        decode_outbox_controls(server.client(id).unwrap()).as_slice(),
+        [ServerMessage::SessionControlResult { response, .. }] if !response.ok
+    ));
+    assert!(!server.session_publishers.holds(id));
+}

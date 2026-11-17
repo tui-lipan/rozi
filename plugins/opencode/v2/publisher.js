@@ -3,8 +3,10 @@ import { createInterface } from "node:readline"
 import { activate, SessionRows } from "./rows.js"
 import { SessionResponses } from "./responses.js"
 
+// A pane with no UI to publish through - a guest's, a restored one, one on a remote session - has no
+// ROZI_SOCKET; `rozi publish` then reaches the pane's session by its instance.
 function insideRozi(env) {
-  return env.ROZI === "1" && env.ROZI_BIN && env.ROZI_PANE && env.ROZI_SOCKET && env.ROZI_SESSION_INSTANCE
+  return env.ROZI === "1" && env.ROZI_PANE && env.ROZI_SESSION_INSTANCE
 }
 
 function readActivation(line) {
@@ -21,7 +23,7 @@ export function startPublisher(context, { env = process.env, launch = spawn, int
   // Each row is an OpenCode session, so this publisher declares itself an agent: its rows are
   // listed by `rozi agents` and stand in for screen detection. The name keeps it apart from any
   // other publisher in the same pane.
-  const child = launch(env.ROZI_BIN, ["publish", "--kind", "agent", "--name", "opencode"], {
+  const child = launch(env.ROZI_BIN || "rozi", ["publish", "--kind", "agent", "--name", "opencode"], {
     env,
     stdio: ["pipe", "pipe", "ignore"],
   })

@@ -5,7 +5,7 @@ use crate::pane::id::PaneId;
 use crate::runtime_metrics::ServerRuntimeMetrics;
 use crate::session::origin::SessionOrigin;
 use crate::session::protocol::pane_runtime::{
-    PaneMeta, PaneRuntimeState, PublishedRow, WirePalette,
+    PaneMeta, PaneRuntimeState, PublishedRow, RowKey, WirePalette,
 };
 
 /// A cell size as the wire carries it. Zero in either dimension means the sender had none.
@@ -430,6 +430,21 @@ pub enum ClientMessage {
     /// End the session's panes and discard its snapshot, leaving its deployments for whatever
     /// starts under this name next.
     ShutdownForRestart,
+    /// One row update from a `publish` stream the session server holds, on the connection that
+    /// opened it with [`ClientMessage::SessionControl`]. The stream already names its pane,
+    /// generation, and publisher, so the update carries only what changed.
+    PublishRows {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        responses: Vec<crate::control::PublishedAgentResponse>,
+        #[serde(default)]
+        rows: Vec<PublishedRow>,
+    },
+    /// Ask the publisher of `row`, a stream the session server holds, to bring it on screen.
+    ActivatePublishedRow {
+        pane_id: PaneId,
+        generation: u64,
+        row: RowKey,
+    },
     /// Any `type` this build does not know: a request from a newer peer that skipped the send gate.
     ///
     /// Decoded so the connection survives, answered with
@@ -945,6 +960,11 @@ pub enum ServerMessage {
     SessionSubscribeRecord {
         record: crate::session::protocol::SessionSubscribeRecord,
     },
+    /// A row a user activated, for the `publish` stream the session server holds for its
+    /// publisher. Written to the publisher as `{"activate": row}`.
+    PublishActivation {
+        row: String,
+    },
     /// Any `type` this build does not know: a message from a newer server that skipped the send
     /// gate. Decoded so the connection survives, logged once, ignored, and never sent.
     #[serde(other)]
@@ -1005,6 +1025,9 @@ impl ClientMessage {
             | ClientMessage::DepartForHandoff { .. }
             | ClientMessage::AbortHandoff { .. } => Some(super::Capability::ClientHandoff),
             ClientMessage::DragAndDrop { .. } => Some(super::Capability::DragAndDrop),
+            ClientMessage::PublishRows { .. } | ClientMessage::ActivatePublishedRow { .. } => {
+                Some(super::Capability::SessionPublish)
+            }
             ClientMessage::Unknown => {
                 debug_assert!(false, "ClientMessage::Unknown is never sent");
                 None
@@ -1060,7 +1083,10 @@ impl ClientMessage {
             | ClientMessage::ReportPaneRows { .. }
             | ClientMessage::MarkedInput { .. }
             | ClientMessage::Attachment { .. }
-            | ClientMessage::DragAndDrop { .. } => Permission::Input,
+            | ClientMessage::DragAndDrop { .. }
+            | ClientMessage::PublishRows { .. }
+            // Activating a row makes the publisher, a program in the pane, act.
+            | ClientMessage::ActivatePublishedRow { .. } => Permission::Input,
             ClientMessage::RequestControl => Permission::Layout,
             // Logging writes a pane's output to a file in the owner's account.
             ClientMessage::SetPaneLogging { .. }
@@ -1127,6 +1153,7 @@ impl ServerMessage {
             ServerMessage::AgentRequestsChanged { .. } => {
                 Some(super::Capability::AgentRequestUpdates)
             }
+            ServerMessage::PublishActivation { .. } => Some(super::Capability::SessionPublish),
             ServerMessage::Unknown => {
                 debug_assert!(false, "ServerMessage::Unknown is never sent");
                 None

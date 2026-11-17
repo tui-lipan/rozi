@@ -39,7 +39,8 @@ The plugin launches the matching `ROZI_BIN publish --kind agent --name opencode`
 the pane's environment, and keeps reading activation requests. Its rows are agents: they appear in
 rozi's Agents view and `rozi agents`, and replace screen detection for the pane while listed. It sends changed snapshots and coalesces them if the bridge
 cannot keep up. Plugin unload, bridge failure, or client exit closes the stream and withdraws its
-rows. Outside a pane with the current rozi environment contract, the plugin does nothing.
+rows. It needs `ROZI=1`, `ROZI_PANE`, and `ROZI_SESSION_INSTANCE`, and runs `rozi` from `PATH` when
+`ROZI_BIN` is unset; outside a rozi pane, the plugin does nothing.
 
 The CLI process owns the bridge, so a shared OpenCode server never chooses a rozi pane for other
 clients. A CLI plugin can also connect to a remote OpenCode server, but worktree grouping requires

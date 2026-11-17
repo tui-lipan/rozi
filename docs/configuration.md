@@ -190,8 +190,8 @@ Nerd Font Git marks. With it off, those badges use `⌁`, `∞`, and `⋈`, dire
 `▼`, the explorer prefix uses `⌕`, pane titles drop the icon, and Files and Git use Unicode
 expansion arrows and text Git marks.
 
-New local panes receive `ROZI=1`, `ROZI_PANE`, `ROZI_SESSION_INSTANCE`, `TERM_PROGRAM=rozi`,
-`TERM_PROGRAM_VERSION`, and, when available, `ROZI_SOCKET` and `ROZI_BIN`.
+New panes receive `ROZI=1`, `ROZI_PANE`, `ROZI_SESSION_INSTANCE`, `ROZI_BIN`, `TERM_PROGRAM=rozi`,
+`TERM_PROGRAM_VERSION`, and, when a rozi UI on this machine serves the pane, `ROZI_SOCKET`.
 See [Scripting](scripting.md) and [Control CLI](control.md).
 
 <a id="shell-integration-settings"></a>

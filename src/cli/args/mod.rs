@@ -193,6 +193,7 @@ impl ControlEndpoint {
 /// line-delimited JSON on stdin and stdout.
 #[derive(Debug)]
 pub(crate) struct PublishCli {
+    /// The UI named with `--socket`: the only endpoint tried when given.
     pub(super) socket: Option<PathBuf>,
     /// The `publish` request, carrying the declared `--kind` and `--name`.
     pub(super) command: control::ControlCommand,
@@ -1083,6 +1084,14 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     }
                 }
                 let command = control::ControlCommand::Publish { kind, name };
+                // A publisher speaks for the pane it runs in, and reaches that pane's UI or session
+                // on its own; naming another session would publish into a pane it is not in.
+                if cli.here || cli.attach_session.is_some() || cli.remote.is_some() {
+                    return Err(
+                        "publish runs inside the pane it publishes for and finds its UI or session itself; drop --here, --session, and --remote"
+                            .to_string(),
+                    );
+                }
                 return Ok(ParsedCli::Publish(PublishCli {
                     socket: ui_stream_socket(&cli, socket, &command)?,
                     command,
@@ -3044,7 +3053,7 @@ mod tests {
             ),
             (
                 vec!["--session", "dev", "publish"],
-                "publish belongs to the pane",
+                "publish runs inside the pane it publishes for",
             ),
         ] {
             let error = parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect())

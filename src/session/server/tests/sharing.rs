@@ -535,6 +535,11 @@ fn headless_session_control_gates_commands_by_guest_role() {
         ControlCommand::AgentResponse {
             target: crate::control::AgentTarget::Pane(1),
         },
+        // Publishing a pane's rows writes its state, as typing would.
+        ControlCommand::Publish {
+            kind: crate::session::protocol::PublisherKind::Agent,
+            name: None,
+        },
     ] {
         let denied = send_headless(&mut server, command);
         assert_eq!(denied.code, Some(ControlErrorCode::NotPermitted));

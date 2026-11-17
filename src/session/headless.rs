@@ -303,8 +303,9 @@ pub fn run_session_control(
     connection.run(request)
 }
 
-/// Open a subscription against the named session server and return the open connection and initial response.
-pub fn run_session_subscribe(
+/// Open a long-lived control stream - a subscription or a `publish` - against the named session
+/// server, and return the open connection with the server's answer to the request.
+pub fn open_session_stream(
     name: &str,
     request: ControlRequest,
 ) -> std::result::Result<(IpcConnection, ControlResponse), SessionControlError> {

@@ -64,6 +64,7 @@ pub(crate) use resurrect::{
 };
 mod responses;
 mod runtime;
+mod session_publishers;
 mod sharing;
 mod shutdown;
 mod subscriptions;
@@ -280,6 +281,7 @@ pub struct SessionServer {
     /// The pane mid-spawn, which raises no runtime events until it has been announced.
     spawning_pane: Option<PaneId>,
     shares: sharing::Shares,
+    session_publishers: session_publishers::SessionPublishers,
 }
 
 #[derive(Clone, Debug)]
@@ -1876,6 +1878,7 @@ impl SessionServer {
             undelivered_ui_events: VecDeque::new(),
             spawning_pane: None,
             shares: sharing::Shares::default(),
+            session_publishers: session_publishers::SessionPublishers::default(),
             settings,
         }
     }

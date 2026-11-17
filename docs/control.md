@@ -1226,6 +1226,10 @@ An empty row list or a closed stream withdraws the rows. Use stable IDs. A proce
 live pane when the stream opens. A stream opened by an extension closes when rozi reloads its
 configuration or disables the extension.
 
+The stream goes to the rozi UI that serves the pane. A pane no UI on this machine serves, such as a
+pane a guest opened, a restored pane, or a pane on a remote session, publishes to its own session
+instead, if that session runs rozi 0.0.50 or later. With `--socket`, only that UI is tried.
+
 Published rows are activities by default: they appear in Activity, but not in the Agents view or
 `rozi agents`, and they do not keep the host awake. A program whose rows are agents, such as a
 coding-agent client listing its sessions, declares it:

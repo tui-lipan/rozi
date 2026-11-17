@@ -15,7 +15,7 @@ use super::args::{
 };
 use super::output::{OutputStyles, format_control_text};
 use crate::control;
-use crate::platform::ipc::{EndpointRegistry, IpcEndpoint};
+use crate::platform::ipc::{EndpointRegistry, IpcConnection, IpcEndpoint};
 
 /// The UI a control command goes to when none is named with `--socket`.
 ///
@@ -84,38 +84,92 @@ pub(crate) fn live_extension_runtime() -> Option<control::ExtensionRuntimeReport
 /// Runs until either side closes: rozi withdraws the pane's rows on EOF, so a publisher that
 /// exits or crashes cleans up by construction and never has to say so.
 pub(crate) fn run_publish_cli(command: PublishCli) -> Result<()> {
-    let path = match discover_socket(command.socket) {
-        Ok(path) => path,
-        Err(err) => {
-            eprintln!("{err}");
-            std::process::exit(2);
-        }
-    };
-    let source_pane = std::env::var("ROZI_PANE")
-        .ok()
-        .and_then(|value| value.parse::<crate::pane::id::PaneId>().ok());
-    let mut stream = match IpcEndpoint::at_path(&path).connect() {
-        Ok(stream) => stream,
-        Err(err) => {
-            eprintln!("could not connect to {}: {err}", path.display());
-            std::process::exit(2);
-        }
-    };
-    let mut request = control_request(command.command);
-    request.source_pane = source_pane;
-    writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
-
-    let reader_stream = stream.try_clone()?;
-    let mut reader = BufReader::new(reader_stream);
-    let reply = read_socket_line(&mut reader)?;
-    let value: serde_json::Value = serde_json::from_str(&reply).unwrap_or_default();
-    if value.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-        if let Some(error) = value.get("error").and_then(|v| v.as_str()) {
-            eprintln!("{error}");
-        }
-        std::process::exit(1);
+    let PublishCli { socket, command } = command;
+    let request = control_request(command);
+    // An explicit `--socket` is the endpoint: never a fallback for one that does not answer.
+    if let Some(path) = socket {
+        return match open_ui_publish(&path, &request) {
+            Ok(stream) => bridge_ui_publish(stream),
+            Err(refusal) => refusal.exit(),
+        };
     }
+    // The UI that opened the pane, or the one showing its session, holds the stream when there is
+    // one. A pane no UI on this machine serves - a guest's, a restored or headless one, one on a
+    // remote session - publishes to its own session server instead.
+    let instance = request.source_session.clone();
+    let refusal = match discover_socket(None) {
+        Ok(path) => match open_ui_publish(&path, &request) {
+            Ok(stream) => return bridge_ui_publish(stream),
+            Err(refusal) => refusal,
+        },
+        Err(error) => UiPublishRefusal::Unreachable(error),
+    };
+    match (instance, refusal) {
+        (
+            Some(instance),
+            UiPublishRefusal::Unreachable(_) | UiPublishRefusal::SessionNotAttached(_),
+        ) => run_session_publish(&instance, request),
+        (_, refusal) => refusal.exit(),
+    }
+}
 
+/// Why a UI did not take a `publish` stream.
+enum UiPublishRefusal {
+    /// No UI answered.
+    Unreachable(String),
+    /// The UI answered, but does not have the calling pane's session attached.
+    SessionNotAttached(String),
+    /// The UI refused the stream itself.
+    Refused(String),
+}
+
+impl UiPublishRefusal {
+    fn exit(self) -> ! {
+        match self {
+            Self::Unreachable(message) => {
+                eprintln!("{message}");
+                std::process::exit(2);
+            }
+            Self::SessionNotAttached(message) | Self::Refused(message) => {
+                eprintln!("{message}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+/// Open a `publish` stream on the UI at `path`, returning the connection once the UI accepted it.
+fn open_ui_publish(
+    path: &std::path::Path,
+    request: &control::ControlRequest,
+) -> std::result::Result<(IpcConnection, BufReader<IpcConnection>), UiPublishRefusal> {
+    let mut stream = IpcEndpoint::at_path(path).connect().map_err(|err| {
+        UiPublishRefusal::Unreachable(format!("could not connect to {}: {err}", path.display()))
+    })?;
+    let unreachable = |err: std::io::Error| UiPublishRefusal::Unreachable(err.to_string());
+    writeln!(stream, "{}", serde_json::to_string(request).unwrap()).map_err(unreachable)?;
+    let mut reader = BufReader::new(stream.try_clone().map_err(unreachable)?);
+    let reply = read_socket_line(&mut reader).map_err(unreachable)?;
+    let response: control::ControlResponse = serde_json::from_str(&reply).map_err(|err| {
+        UiPublishRefusal::Unreachable(format!("unexpected answer from {}: {err}", path.display()))
+    })?;
+    if response.ok {
+        return Ok((stream, reader));
+    }
+    let message = response.error.unwrap_or_default();
+    Err(
+        if response.code == Some(control::ControlErrorCode::SessionNotAttached) {
+            UiPublishRefusal::SessionNotAttached(message)
+        } else {
+            UiPublishRefusal::Refused(message)
+        },
+    )
+}
+
+/// Carry a UI `publish` stream: the publisher's lines to the UI, activations back to stdout.
+fn bridge_ui_publish(
+    (mut stream, mut reader): (IpcConnection, BufReader<IpcConnection>),
+) -> Result<()> {
     // Activations arrive whenever the user clicks; forward them as they come rather than pairing
     // them with anything this process writes.
     std::thread::spawn(move || {
@@ -135,6 +189,84 @@ pub(crate) fn run_publish_cli(command: PublishCli) -> Result<()> {
     let mut stdin = BufReader::new(std::io::stdin().lock());
     while let Some(line) = crate::control::read_control_line(&mut stdin)? {
         writeln!(stream, "{line}")?;
+    }
+    Ok(())
+}
+
+/// One line a publisher writes: its rows, and the responses that go with them.
+#[derive(serde::Deserialize)]
+struct PublishLine {
+    #[serde(default)]
+    responses: Vec<control::PublishedAgentResponse>,
+    #[serde(default)]
+    rows: Vec<crate::session::protocol::PublishedRow>,
+}
+
+/// Carry a `publish` stream on the calling pane's own session server, which holds it when no UI
+/// can: each line the publisher writes becomes a row update, and each activation a line back.
+fn run_session_publish(
+    instance: &crate::session::protocol::SessionInstanceId,
+    request: control::ControlRequest,
+) -> Result<()> {
+    use crate::session::protocol::{self, ClientMessage, ServerMessage};
+    let session = match crate::session::discovery::session_with_instance(instance) {
+        Ok(crate::session::discovery::InstanceLookup::Found(session)) => session,
+        _ => {
+            eprintln!("could not find the session this pane runs in, and no rozi UI serves it");
+            std::process::exit(2);
+        }
+    };
+    let (stream, response) = match crate::session::headless::open_session_stream(&session, request)
+    {
+        Ok(opened) => opened,
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+    };
+    if !response.ok {
+        eprintln!("{}", response.error.unwrap_or_default());
+        std::process::exit(1);
+    }
+    let mut reader = stream.try_clone()?;
+    std::thread::spawn(move || {
+        loop {
+            match protocol::read_frame::<_, ServerMessage>(&mut reader) {
+                Ok(ServerMessage::PublishActivation { row }) => {
+                    let line = serde_json::json!({ "activate": row }).to_string();
+                    let mut stdout = std::io::stdout().lock();
+                    if writeln!(stdout, "{line}")
+                        .and_then(|()| stdout.flush())
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                // A refused update is the publisher's bug or a limit it hit; say so and keep the
+                // stream, so its next good list still lands.
+                Ok(ServerMessage::Error { message, .. }) => eprintln!("{message}"),
+                Ok(_) => {}
+                // The session closed the stream: it stopped, or the pane went away.
+                Err(_) => std::process::exit(0),
+            }
+        }
+    });
+    let mut writer = stream;
+    let mut stdin = BufReader::new(std::io::stdin().lock());
+    while let Some(line) = crate::control::read_control_line(&mut stdin)? {
+        if line.trim().is_empty() {
+            continue;
+        }
+        // A malformed line is skipped rather than ending the stream, as the UI does.
+        let Ok(PublishLine { responses, rows }) = serde_json::from_str(&line) else {
+            continue;
+        };
+        let update = ClientMessage::PublishRows { responses, rows };
+        if protocol::control_frame_wire_bytes(&update) > protocol::MAX_FRAME_SIZE {
+            eprintln!("publish update is too large for a session frame; skipped");
+            continue;
+        }
+        protocol::write_frame(&mut writer, &update)?;
     }
     Ok(())
 }
@@ -266,7 +398,7 @@ fn run_ui_subscribe_cli(socket: Option<PathBuf>, events: Vec<String>) -> Result<
 
 fn run_session_subscribe_cli(session: &str, request: control::ControlRequest) -> Result<()> {
     let (mut stream, response) =
-        match crate::session::headless::run_session_subscribe(session, request) {
+        match crate::session::headless::open_session_stream(session, request) {
             Ok(res) => res,
             Err(err) => {
                 eprintln!("{err}");

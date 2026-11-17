@@ -283,6 +283,31 @@ impl RowKey {
 /// A publish stream lives in one UI client, so the same identity from two attached clients is two
 /// publishers: neither can replace or withdraw the other's rows, and a client's rows go when it
 /// leaves. UI publisher identities never contain `/`.
+/// The namespace of the publishers a session server holds itself, for panes with no UI to publish
+/// through. Client ids start at 1, so it never meets a client's own publishers.
+pub const SESSION_PUBLISHER_NAMESPACE: crate::layout::shared::ClientId = 0;
+
+/// Longest `--name` a publisher may give itself.
+pub const MAX_PUBLISHER_NAME: usize = 64;
+
+/// Whether `name` is an acceptable publisher name: the same alphabet as extension ids.
+pub fn publisher_name_is_valid(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_PUBLISHER_NAME
+        && name.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
+        })
+}
+
+/// The stable identity a publisher has within its pane, before the server qualifies it.
+pub fn publisher_id(extension: Option<&str>, name: Option<&str>) -> String {
+    match (extension, name) {
+        (Some(extension), None) => extension.to_string(),
+        (Some(extension), Some(name)) => format!("{extension}.{name}"),
+        (None, name) => format!("publish:{}", name.unwrap_or("default")),
+    }
+}
+
 pub fn qualified_publisher(client: crate::layout::shared::ClientId, publisher: &str) -> String {
     format!("{client}/{publisher}")
 }

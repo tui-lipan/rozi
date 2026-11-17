@@ -231,6 +231,7 @@ impl SessionServer {
             owner.is_none().then_some(&self.instance_id),
         );
         crate::platform::environment::fill_host_desktop_environment(&mut request.env);
+        crate::platform::environment::fill_default_locale(&mut request.env);
         let effective_cwd = effective_spawn_cwd(request.cwd.as_deref());
         // Built per attempt rather than once, because a native agent resume that cannot start gets
         // a second one - the interactive shell - from the same directory and environment.

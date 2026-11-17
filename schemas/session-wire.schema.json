@@ -1241,6 +1241,26 @@
               },
               "type": "array"
             },
+            "spawn_env": {
+              "description": "The part of `env` the pane asked for itself, such as a filename passed to its command,\nas opposed to what the client adds from its own environment. A server uses only this\nfor a guest's pane, which runs in the owner's environment. Absent from older clients.",
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "type": "array"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
             "title": {
               "type": [
                 "string",

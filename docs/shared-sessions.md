@@ -216,8 +216,10 @@ rozi opens no network port for sessions.
 
 Anyone who can attach as a writable client can type into panes, including followers unless input
 lock is on. Typing runs commands as the session owner's account, so an `editor` or `controller`
-guest has that account's access to the machine. A writable client on the owner's own account can
-also stop the session, even when another client controls the layout and even with input lock on.
+guest has that account's access to the machine. A pane a guest opens also runs as the owner, with
+the owner's shell, command runner, and environment; the guest chooses only the command, its working
+directory, and values passed to the command. A writable client on the owner's own account can also
+stop the session, even when another client controls the layout and even with input lock on.
 
 A `viewer` cannot type, but sees everything the panes show, including scrollback, and what rozi
 knows about each pane: its working directory and project, the command it runs, and the state of

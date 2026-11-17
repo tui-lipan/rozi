@@ -55,6 +55,7 @@ fn spawn_pane(controller: &mut crate::common::TestConnection) {
         command_shell,
         cell_width: 0,
         cell_height: 0,
+        spawn_env: None,
     });
     read_until(controller, |frame| {
         matches!(

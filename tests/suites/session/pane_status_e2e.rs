@@ -39,6 +39,7 @@ fn pane_status_broadcasts_and_survives_detach_reattach() {
         command_shell,
         cell_width: 0,
         cell_height: 0,
+        spawn_env: None,
     });
     read_until(&mut controller, |frame| {
         matches!(

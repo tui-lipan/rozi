@@ -775,6 +775,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
         keep_open,
         replay,
         custom_title: title,
+        env: spawn_env,
         ..
     } = identity;
     // A replay command (see `PaneIdentity::replay`) spawns a plain interactive shell and is
@@ -814,6 +815,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
         rows,
         keep_open,
         env,
+        spawn_env,
         title,
         palette,
         shell,

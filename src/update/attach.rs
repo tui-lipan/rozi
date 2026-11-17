@@ -256,6 +256,7 @@ pub(crate) fn spawn_state_panes_on_session(
                 rows: pane.terminal.rows,
                 keep_open: pane.identity.keep_open,
                 env,
+                spawn_env: pane.identity.env.clone(),
                 title: pane.identity.custom_title.clone(),
                 palette: pane.terminal.last_palette.unwrap_or(fallback_palette),
                 shell: shell.clone(),

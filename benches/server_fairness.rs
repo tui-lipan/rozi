@@ -287,6 +287,7 @@ impl FairnessFixture {
                 palette: TerminalColorPalette::default(),
                 shell,
                 command_shell: Vec::new(),
+                spawn_env: Vec::new(),
             });
             wait_for_fairness_pane(&events, pane_id);
         }
@@ -476,6 +477,7 @@ impl SnapshotFixture {
                     history_rows.to_string(),
                 ],
                 command_shell: Vec::new(),
+                spawn_env: Vec::new(),
             });
             wait_for_snapshot_pane(&events, pane_id);
         }

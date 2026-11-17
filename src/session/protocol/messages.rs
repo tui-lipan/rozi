@@ -156,6 +156,11 @@ pub enum ClientMessage {
         /// See `cell_width`.
         #[serde(default)]
         cell_height: u16,
+        /// The part of `env` the pane asked for itself, such as a filename passed to its command,
+        /// as opposed to what the client adds from its own environment. A server uses only this
+        /// for a guest's pane, which runs in the owner's environment. Absent from older clients.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        spawn_env: Option<Vec<(String, String)>>,
     },
     Resize {
         pane_id: PaneId,

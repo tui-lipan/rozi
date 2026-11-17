@@ -1074,3 +1074,93 @@ fn an_answer_held_across_a_downgrade_is_authorized_again_before_it_goes() {
     assert_eq!(response.code, Some(ControlErrorCode::NotPermitted));
     assert!(response.data.is_none());
 }
+
+/// A guest's pane runs as the owner and outlives the guest, so the owner's config decides its shell
+/// and runner and the guest's own environment stays behind. What the guest asked for - the command,
+/// where it runs, and values of its own - still arrives. The owner's own panes are unchanged.
+#[test]
+fn a_guest_pane_runs_with_the_owner_shell_runner_and_environment() {
+    crate::test_support::isolate_user_dirs();
+    let _config = crate::test_support::lock_config_file();
+    std::fs::write(
+        crate::config::config_path(),
+        "shell = [\"/bin/sh\"]\ncommand_shell = [\"/bin/sh\", \"-c\"]\n",
+    )
+    .unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let cwd = cwd.path().to_str().unwrap().to_string();
+    let spawn = |pane_id, shell: &str, runner: &str| ClientMessage::SpawnPane {
+        placement: None,
+        pane_id,
+        local: true,
+        generation: 1,
+        launch: Some(crate::pane::launch::PaneLaunch::shell("sleep 5")),
+        cwd: Some(cwd.clone()),
+        cols: 20,
+        rows: 5,
+        keep_open: false,
+        env: vec![
+            ("CLIENT_AMBIENT".into(), "1".into()),
+            ("ROZI_BIN".into(), "/home/client/bin/rozi".into()),
+            ("ROZI_SOCKET".into(), "/run/client/rozi.sock".into()),
+            ("PER_SPAWN".into(), "a file name".into()),
+        ],
+        title: None,
+        palette: crate::session::protocol::WirePalette::from(
+            tui_lipan::TerminalColorPalette::default(),
+        ),
+        shell: vec![shell.to_string()],
+        command_shell: vec![runner.to_string(), "-c".to_string()],
+        cell_width: 0,
+        cell_height: 0,
+        spawn_env: Some(vec![("PER_SPAWN".into(), "a file name".into())]),
+    };
+    let value = |env: &[(String, String)], key: &str| {
+        env.iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.clone())
+    };
+
+    let (mut server, _dir) = shared_test_server("dev");
+    grant_user(&mut server, bob_uid(), "bob", SessionRole::Editor);
+    let (bob, _b_stream) = attach_guest(&mut server, bob_uid(), "alice/dev", false);
+    clear_outboxes(&mut server, &[bob]);
+    // The guest's runner does not exist: the spawn can only succeed with the owner's.
+    send_frame(
+        &mut server,
+        bob,
+        spawn(1, "/home/bob/bin/fish", "/home/bob/bin/runner"),
+    );
+    assert!(
+        outbox_controls(&server, bob)
+            .iter()
+            .any(|reply| matches!(reply, ServerMessage::SpawnResult { ok: true, .. }))
+    );
+    let pane = &server.local_panes[&(bob, 1)];
+    assert_eq!(pane.shell, ["/bin/sh"]);
+    assert_eq!(pane.cwd.as_deref(), Some(cwd.as_str()));
+    assert_eq!(
+        value(&pane.env, "PER_SPAWN").as_deref(),
+        Some("a file name")
+    );
+    assert_eq!(value(&pane.env, "ROZI_PANE").as_deref(), Some("1"));
+    for client_only in ["CLIENT_AMBIENT", "ROZI_BIN", "ROZI_SOCKET"] {
+        assert_eq!(value(&pane.env, client_only), None, "{client_only}");
+    }
+
+    let (owner, _o_stream) = attach_client(&mut server);
+    send_frame(&mut server, owner, spawn(2, "/bin/bash", "/bin/sh"));
+    let pane = &server.local_panes[&(owner, 2)];
+    assert_eq!(pane.shell, ["/bin/bash"]);
+    assert_eq!(value(&pane.env, "CLIENT_AMBIENT").as_deref(), Some("1"));
+    assert_eq!(
+        value(&pane.env, "ROZI_BIN").as_deref(),
+        Some("/home/client/bin/rozi")
+    );
+
+    for pane in server.local_panes.values() {
+        if let Some(pty) = &pane.pty {
+            let _ = pty.kill();
+        }
+    }
+}

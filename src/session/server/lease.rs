@@ -621,7 +621,6 @@ impl SessionServer {
         self.drop_client_drags(id);
         self.release_recording_replies(id);
         self.session_subscribers.remove(&id);
-        self.held_permissions.retain(|(client, _), _| *client != id);
         if self.origin_seed_client == Some(id) {
             self.origin_seed_client = None;
         }

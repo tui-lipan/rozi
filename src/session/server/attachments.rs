@@ -510,6 +510,7 @@ impl SessionServer {
         let reply = ReplyTo::Headless {
             capabilities: protocol::Capabilities::current(),
             effective_protocol: protocol::PROTOCOL_VERSION,
+            permission: crate::session::protocol::Permission::View,
         };
         let chunk = AgentAttachmentChunk {
             transfer,
@@ -946,6 +947,7 @@ mod delivery_tests {
         let reply = ReplyTo::Headless {
             capabilities: protocol::Capabilities::current(),
             effective_protocol: protocol::PROTOCOL_VERSION,
+            permission: crate::session::protocol::Permission::View,
         };
         fn chunk(offset: u64, data: &str, last: bool) -> AgentAttachmentChunk<'_> {
             AgentAttachmentChunk {

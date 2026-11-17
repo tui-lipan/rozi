@@ -99,7 +99,8 @@ mod tests {
                     },
                     &ReplyTo::StreamingHeadless {
                         capabilities: Capabilities::current(),
-                        effective_protocol: PROTOCOL_VERSION
+                        effective_protocol: PROTOCOL_VERSION,
+                        permission: crate::session::protocol::Permission::View,
                     }
                 )
                 .is_none()

@@ -832,7 +832,10 @@ mod tests {
                     Some(crate::control::CaptureRender::Text),
                     false,
                     if attached {
-                        ReplyTo::Attached { request_id: 42 }
+                        ReplyTo::Attached {
+                            request_id: 42,
+                            permission: crate::session::protocol::Permission::View,
+                        }
                     } else {
                         headless()
                     },
@@ -948,7 +951,10 @@ mod tests {
                     Some(crate::control::CaptureRender::Text),
                     true,
                     if attached {
-                        ReplyTo::Attached { request_id: 42 }
+                        ReplyTo::Attached {
+                            request_id: 42,
+                            permission: crate::session::protocol::Permission::View,
+                        }
                     } else {
                         headless()
                     },
@@ -1044,7 +1050,10 @@ mod tests {
                         None,
                         None,
                         true,
-                        ReplyTo::Attached { request_id: 43 },
+                        ReplyTo::Attached {
+                            request_id: 43,
+                            permission: crate::session::protocol::Permission::View,
+                        },
                     )
                     .unwrap();
                 let mut switched = report(3, "another conversation");
@@ -1090,6 +1099,7 @@ mod tests {
                 ReplyTo::Headless {
                     capabilities: protocol::Capabilities::default(),
                     effective_protocol: PROTOCOL_VERSION,
+                    permission: crate::session::protocol::Permission::View,
                 },
             )
             .expect("idle agent should resolve immediately");
@@ -1164,6 +1174,7 @@ mod tests {
                 ReplyTo::Headless {
                     capabilities: protocol::Capabilities::default(),
                     effective_protocol: PROTOCOL_VERSION,
+                    permission: crate::session::protocol::Permission::View,
                 },
             )
             .expect("already-gone wait should complete");
@@ -1175,6 +1186,7 @@ mod tests {
         ReplyTo::Headless {
             capabilities: protocol::Capabilities::default(),
             effective_protocol: PROTOCOL_VERSION,
+            permission: crate::session::protocol::Permission::View,
         }
     }
 
@@ -1241,7 +1253,10 @@ mod tests {
                         AgentTarget::Pane(3),
                         AgentWaitCondition::Idle,
                         Some(60_000),
-                        ReplyTo::Attached { request_id },
+                        ReplyTo::Attached {
+                            request_id,
+                            permission: crate::session::protocol::Permission::View
+                        },
                     )
                     .is_none()
             );
@@ -1287,6 +1302,7 @@ mod tests {
                 ReplyTo::Headless {
                     capabilities: protocol::Capabilities::default(),
                     effective_protocol: PROTOCOL_VERSION,
+                    permission: crate::session::protocol::Permission::View,
                 },
             )
             .unwrap();

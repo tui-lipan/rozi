@@ -1035,33 +1035,40 @@ fn an_answer_held_across_a_downgrade_is_authorized_again_before_it_goes() {
     pane.agent.sync_references(&pane.runtime);
     server.panes.insert(3, pane);
     grant_user(&mut server, bob_uid(), "bob", SessionRole::Editor);
+    let (bob, _stream) = attach_guest(&mut server, bob_uid(), "alice/dev", false);
+    clear_outboxes(&mut server, &[bob]);
 
-    let (bob, _stream) = add_guest_client(&mut server, bob_uid());
-    send_frame(
-        &mut server,
-        bob,
-        ClientMessage::SessionControl {
-            capabilities: Some(Capabilities::current()),
-            session: "alice/dev".into(),
-            protocol_version: PROTOCOL_VERSION,
-            min_protocol_version: PROTOCOL_VERSION,
-            request: control_req(ControlCommand::AgentWait {
-                target: AgentTarget::Pane(3),
-                until: AgentWaitCondition::Idle,
-                timeout_ms: None,
-            }),
+    // Two answers held at once under one request id, by different parts of the server: the
+    // second, which a viewer may read, must not lend its permission to the first.
+    for command in [
+        ControlCommand::AgentWait {
+            target: AgentTarget::Pane(3),
+            until: AgentWaitCondition::Idle,
+            timeout_ms: None,
         },
-    );
-    assert!(outbox_controls(&server, bob).is_empty(), "the wait is held");
+        ControlCommand::ExtensionsStatus,
+    ] {
+        send_frame(
+            &mut server,
+            bob,
+            ClientMessage::AttachedControl {
+                request_id: 7,
+                request: control_req(command),
+            },
+        );
+    }
+    let held = outbox_controls(&server, bob);
+    assert!(held.is_empty(), "both answers are held: {held:?}");
 
     grant_user(&mut server, bob_uid(), "bob", SessionRole::Viewer);
+    clear_outboxes(&mut server, &[bob]);
     let pane = server.panes.get_mut(&3).unwrap();
     pane.runtime.detected_agent.as_mut().unwrap().state = DetectedAgentState::Idle;
     pane.agent.sync_references(&pane.runtime);
     server.resolve_agent_waits();
 
     let controls = outbox_controls(&server, bob);
-    let [ServerMessage::SessionControlResult { response, .. }] = controls.as_slice() else {
+    let [ServerMessage::AttachedControlResult { response, .. }] = controls.as_slice() else {
         panic!("{controls:?}");
     };
     assert_eq!(response.code, Some(ControlErrorCode::NotPermitted));

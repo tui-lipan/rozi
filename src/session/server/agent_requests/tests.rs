@@ -1036,6 +1036,7 @@ fn an_await_answers_once_and_never_holds_up_its_request() {
     let reply = ReplyTo::Headless {
         capabilities: protocol::Capabilities::current(),
         effective_protocol: PROTOCOL_VERSION,
+        permission: crate::session::protocol::Permission::View,
     };
     assert!(
         rig.server

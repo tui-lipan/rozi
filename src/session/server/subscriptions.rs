@@ -340,6 +340,7 @@ mod tests {
         ReplyTo::StreamingHeadless {
             capabilities: Capabilities::current(),
             effective_protocol: PROTOCOL_VERSION,
+            permission: crate::session::protocol::Permission::View,
         }
     }
 
@@ -518,7 +519,10 @@ mod tests {
             .handle_subscribe_command(
                 client,
                 options(&[], false, None),
-                &ReplyTo::Attached { request_id: 1 },
+                &ReplyTo::Attached {
+                    request_id: 1,
+                    permission: crate::session::protocol::Permission::View,
+                },
             )
             .expect("the request is refused");
 

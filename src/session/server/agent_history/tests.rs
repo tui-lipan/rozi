@@ -186,11 +186,15 @@ impl Rig {
                 Some(CaptureRender::Text),
                 true,
                 if attached {
-                    ReplyTo::Attached { request_id: 42 }
+                    ReplyTo::Attached {
+                        request_id: 42,
+                        permission: crate::session::protocol::Permission::View,
+                    }
                 } else {
                     ReplyTo::Headless {
                         capabilities: protocol::Capabilities::default(),
                         effective_protocol: PROTOCOL_VERSION,
+                        permission: crate::session::protocol::Permission::View,
                     }
                 },
             )

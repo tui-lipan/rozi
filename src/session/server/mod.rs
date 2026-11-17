@@ -269,9 +269,6 @@ pub struct SessionServer {
     settings: ServerSettings,
     sleep_policy: power::AgentSleepPolicy,
     session_subscribers: HashMap<ClientId, subscriptions::SessionSubscriber>,
-    /// What each held answer's request needed, keyed by client and [`headless::ReplyTo::hold_id`].
-    /// A role can shrink while an answer is held, so the answer is authorized again when it goes.
-    held_permissions: HashMap<(ClientId, u64), protocol::Permission>,
     /// Extensions this session was asked to run itself. Kept across restarts and removed only when
     /// the session is explicitly deleted.
     deployments: deployments::SessionDeployments,
@@ -1872,7 +1869,6 @@ impl SessionServer {
             pending_listener: None,
             sleep_policy: power::AgentSleepPolicy::default(),
             session_subscribers: HashMap::new(),
-            held_permissions: HashMap::new(),
             deployments,
             deployment_worker: None,
             automation: None,

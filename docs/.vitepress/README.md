@@ -45,11 +45,12 @@ page renamed out from under a cross-reference.
 
 ### The hero
 
-The landing hero plays `assets/captures/hero.mp4`, a recording of the real rozi made by the
-`hero` clip in `tools/docs-captures/`; regenerate it there, never by hand. The video is the window
+The landing hero plays `assets/captures/hero.mp4`, a recording of the real rozi. It is the
+`tiling` scene of the promo video, recorded with rozi's recorder, with the window's title bar
+stacked on top. The `agents`, `sessions`, and `worktrees` showcase clips come from the same
+recordings. The `hero` clip in `tools/docs-captures/` still records a stand-in. The video is the window
 alone — title bar and terminal — and `ClipGallery`'s `bare` mode gives it the rounded corners,
-border, shadow, and glow in CSS, so the glow can spread past the video's edges. The same run writes
-the repository README's `assets/demo.gif`, which carries that styling in the image itself.
+border, shadow, and glow in CSS, so the glow can spread past the video's edges. The repository README's `assets/demo.gif` is the same recording as a GIF.
 
 ### Links that leave `docs/`
 

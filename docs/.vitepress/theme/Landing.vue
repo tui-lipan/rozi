@@ -9,8 +9,10 @@ import heroClip from "../../assets/captures/hero.mp4";
 import heroPoster from "../../assets/captures/hero-poster.webp";
 import clipAgents from "../../assets/captures/agents.mp4";
 import posterAgents from "../../assets/captures/agents-poster.webp";
-import clipRemote from "../../assets/captures/remote.mp4";
-import posterRemote from "../../assets/captures/remote-poster.webp";
+import clipSessions from "../../assets/captures/sessions.mp4";
+import posterSessions from "../../assets/captures/sessions-poster.webp";
+import clipWorktrees from "../../assets/captures/worktrees.mp4";
+import posterWorktrees from "../../assets/captures/worktrees-poster.webp";
 import clipGraphics from "../../assets/captures/graphics.mp4";
 import posterGraphics from "../../assets/captures/graphics-poster.webp";
 import captureClip from "../../assets/captures/record-demo.mp4";
@@ -59,14 +61,14 @@ const facts: [string, string][] = [
   ["3", "supported platforms"],
 ];
 
-/* The three things a screenshot of panes cannot show, each recorded working. They share one
+/* The four things a screenshot of panes cannot show, each recorded working. They share one
    stage: the cards above it are its tabs, and the clips play through in turn. */
 const showcase = [
   {
     eyebrow: "Coding agents",
     title: "See which agent needs you",
     blurb: "Working, blocked, or done, on every pane at a glance.",
-    body: `rozi reads what coding-agent CLIs draw and marks each pane working, blocked, or done. Activity groups them by repository and branch, and the Agents view, on Alt+A, lists the one waiting on you first: Enter takes you there. ${stats.agents} agents are built in.`,
+    body: `rozi reads what coding-agent CLIs draw and marks each pane working, blocked, or done, on this machine and on every connected host. The Agents view, on Alt+A, lists the one waiting on you first, and Enter takes you there. Agents can use rozi too: one can ask another a question and wait for its answer. ${stats.agents} agents are built in.`,
     link: "/agents",
     linkText: "Agent detection",
     window: "~/src — agents",
@@ -74,22 +76,37 @@ const showcase = [
       src: clipAgents,
       poster: posterAgents,
       label: "Agents",
-      alt: "Claude Code in two checkouts of rozi and Codex in a shop service, grouped in the Activity sidebar by repository and branch. One stops to ask before editing a file and turns blocked; the Agents view lists it first, Enter jumps to it and approves, and all three finish.",
+      alt: "Claude Code in two checkouts of rozi and opencode in tui-lipan, grouped in the Agents sidebar by repository and branch. One Claude Code stops to ask before creating a file and turns blocked; the Agents view jumps to it. Then one Claude Code sends the other a request through rozi, and the answer comes back to the first.",
     },
   },
   {
-    eyebrow: "Remote sessions",
-    title: "Other machines, same rozi",
-    blurb: "Sessions on another host, listed beside your local ones.",
-    body: "Open a host from Sessions and its sessions sit beside your local ones. The panes run on the host; your theme, keys, and clipboard stay with you. rozi installs itself there if you allow it and reconnects after a dropped link.",
+    eyebrow: "Sessions",
+    title: "Here or over SSH",
+    blurb: "Local and SSH sessions in one picker, still running when you return.",
+    body: "Named sessions keep their panes running after you leave, and Sessions switches between them without closing any. Hosts reached over SSH sit beside your local sessions. The panes run on the host; your theme, keys, and clipboard stay with you, a file path you click there opens on your machine, and a localhost link opens through a forwarded port.",
     link: "/remote",
     linkText: "Remote sessions",
-    window: "~/src/rozi — dev → workbox",
+    window: "~/src/rozi — live",
     clip: {
-      src: clipRemote,
-      poster: posterRemote,
-      label: "Remote",
-      alt: "The Sessions picker opens Remote hosts, connects to workbox, and attaches to its api session: a shell whose prompt names workbox, an editor, and a git log. git status runs there, and Sessions then shows Local and workbox tabs side by side.",
+      src: clipSessions,
+      poster: posterSessions,
+      label: "Sessions",
+      alt: "A live session with a server log, btop, and test watchers. Remote hosts connects to workbox and attaches to its api session over SSH, with lazygit and a git log running on that host. Sessions then switches to a local notes session: yazi, the README in an editor, and a guide.",
+    },
+  },
+  {
+    eyebrow: "Worktrees",
+    title: "A session for every branch",
+    blurb: "Each Git worktree gets its own panes and processes.",
+    body: "Open a worktree from the Worktrees tab or picker and rozi gives it a named session of its own, with its own shells and running processes. Move between branches without stashing; each row shows the branch's pull request and CI status.",
+    link: "/worktrees",
+    linkText: "Worktrees",
+    window: "~/src/rozi — worktrees",
+    clip: {
+      src: clipWorktrees,
+      poster: posterWorktrees,
+      label: "Worktrees",
+      alt: "The Worktrees sidebar lists master and three feature branches with their pull request status. The Worktrees picker opens feat/agent-handoffs, and rozi switches to its own session with lazygit, a test watcher, and a shell in that checkout.",
     },
   },
   {
@@ -127,14 +144,14 @@ const features = [
     linkText: "Sessions",
   },
   {
-    title: "A session per branch",
-    body: "Open a Git worktree from the Worktrees picker and rozi gives it a named session of its own, with its own shells and running processes. Move between branches without stashing; each row shows the branch's pull request and CI status.",
-    link: "/worktrees",
-    linkText: "Worktrees",
+    title: "SSH without the friction",
+    body: "rozi installs itself on a host, uses your OpenSSH config, and reconnects when the link drops. Click a file path in a remote pane and it opens on your machine; paste or drop files onto it and they are uploaded.",
+    link: "/remote",
+    linkText: "Remote sessions",
   },
   {
     title: "Share a session",
-    body: "Several clients can attach to one named session and see the same panes and layout, while each keeps its own focus, theme, and scrollback. One controls the layout and the others follow, or join read-only.",
+    body: "Several clients can attach to one named session and see the same panes and layout, while each keeps its own focus, theme, and scrollback. One controls the layout and the others follow, or join read-only, including from another account on the same machine.",
     link: "/shared-sessions",
     linkText: "Shared sessions",
   },
@@ -146,7 +163,7 @@ const features = [
   },
   {
     title: "A complete terminal in every pane",
-    body: "True color, inline images, mouse support, scrollback search, and a vi-style copy mode. With shell integration, new panes open in the directory you are working in.",
+    body: "True color, Kitty graphics, mouse support, drag and drop, scrollback search, and a vi-style copy mode. With shell integration, new panes open in the directory you are working in.",
     link: "/terminal",
     linkText: "Terminal features",
   },
@@ -211,6 +228,8 @@ const catalog: {
       "scrollback search",
       "vi copy mode",
       "clipboard and OSC 52",
+      "drag and drop",
+      "clickable file paths",
       "hints",
       "edit scrollback",
       "shell integration",
@@ -227,11 +246,33 @@ const catalog: {
       "temporary sessions",
       "several windows per session",
       "shared sessions",
+      "share with other accounts",
       "remote over SSH",
+      "open remote files locally",
+      "upload on paste",
+      "SSH port forwarding",
+      "worktree sessions",
       "restore after reboot",
       "autosave",
       "profiles",
       "session picker",
+    ],
+  },
+  {
+    title: "Coding agents",
+    link: "/agents",
+    linkText: "Agent definitions",
+    names: [
+      `${stats.agents} agents detected`,
+      "working, blocked, and done",
+      "every connected host",
+      "Agents view",
+      "Projects tab",
+      "agent-to-agent requests",
+      "files with requests",
+      "resume after restore",
+      "keep the system awake",
+      "agent skill",
     ],
   },
   {
@@ -273,7 +314,8 @@ const catalog: {
       "services",
       "user commands",
       "extensions",
-      "agent skill",
+      "extensions on the remote host",
+      "extension gallery",
       "Vim and Neovim navigation",
     ],
   },
@@ -471,7 +513,7 @@ const HERO_CLIP = [
     src: heroClip,
     poster: heroPoster,
     label: "rozi",
-    alt: "An editor alone in rozi. Lazygit, yazi, and a git log tile beside it, the layout changes to Master and Grid, and the log floats, is dragged around the screen, and goes fullscreen. The left sidebar opens, then the right, a theme previews and is put back, and the view slides to a second workspace and back before the panes close again.",
+    alt: "Neovim alone in rozi. Yazi, lazygit, and a git log tile beside it as each one opens. The layout changes from Master to Grid to Scrollable and back to Dwindle, a pane floats and is dragged, and the view moves to a second workspace and back.",
   },
 ];
 
@@ -595,9 +637,9 @@ restart = "on-failure"`);
           </p>
           <p class="lp-sub">
             rozi arranges panes as you open them, keeps named sessions running
-            after you leave, reaches other machines over SSH, and shows which
-            coding agents need you. Change any of it live, from inside rozi. On
-            Linux, macOS, and Windows.
+            after you leave, works on other machines over SSH as if they were
+            here, and shows which of your coding agents need you. Change any of
+            it live, from inside rozi. On Linux, macOS, and Windows.
           </p>
 
           <InstallTabs />

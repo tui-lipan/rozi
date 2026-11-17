@@ -31,7 +31,7 @@ after you leave, and everything you can do by hand, you can also script.
   the screen. Floating and fullscreen panes, nine workspaces per session.
 - A mouse that works everywhere: focus, resize splits, drag floating panes, click hints.
 - Themes, frames, layouts, and keys preview live as you browse them and save to one config file.
-  30 themes are built in.
+  31 themes are built in.
 
 ### Coding agents
 

@@ -135,29 +135,21 @@ fn read_message<T: serde::de::DeserializeOwned>(reader: &mut impl Read) -> io::R
 ///
 /// The client polls every [`INTERVAL`], but one whose connection died without closing, as when
 /// this host slept, never sends again, and a read waiting for it would block forever. So
-/// `on_idle` runs, on another thread, once no request has arrived for `idle_limit` outside the
-/// time spent answering one. It has to end the wait itself.
+/// `on_idle` runs, on another thread, once no request has arrived for `idle_limit`, and it has to
+/// end the wait itself. Answering a request does not pause that clock: the client stops waiting
+/// for an answer after [`DEADLINE`], so a request still unanswered at `idle_limit` has no reader.
 pub(crate) fn serve(
     reader: &mut impl Read,
     writer: &mut impl Write,
     idle_limit: Duration,
     on_idle: impl FnOnce() + Send + 'static,
 ) -> io::Result<()> {
-    // `true` when a request arrives, `false` once it is answered. Dropping the sender when serving
-    // ends stops the watchdog.
-    let (busy, activity) = mpsc::channel::<bool>();
+    // One message per request. Dropping the sender when serving ends stops the watchdog.
+    let (arrived, arrivals) = mpsc::channel::<()>();
     std::thread::spawn(move || {
-        let mut answering = false;
         loop {
-            let next = if answering {
-                activity
-                    .recv()
-                    .map_err(|_| mpsc::RecvTimeoutError::Disconnected)
-            } else {
-                activity.recv_timeout(idle_limit)
-            };
-            match next {
-                Ok(next) => answering = next,
+            match arrivals.recv_timeout(idle_limit) {
+                Ok(()) => {}
                 Err(mpsc::RecvTimeoutError::Timeout) => return on_idle(),
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
             }
@@ -183,7 +175,7 @@ pub(crate) fn serve(
         if reader.read(&mut request)? == 0 {
             return Ok(());
         }
-        let _ = busy.send(true);
+        let _ = arrived.send(());
         if request[0] == b'p' {
             let query: PullRequestQuery = read_message(reader)?;
             let lookup = pull_requests
@@ -195,7 +187,6 @@ pub(crate) fn serve(
                     repositories: lookup.results(),
                 },
             )?;
-            let _ = busy.send(false);
             continue;
         }
         if request[0] != b'?' {
@@ -232,7 +223,6 @@ pub(crate) fn serve(
                 sessions: serde_json::from_str(&json).map_err(io::Error::other)?,
             },
         )?;
-        let _ = busy.send(false);
     }
 }
 
@@ -762,6 +752,8 @@ mod tests {
             Err(mpsc::TryRecvError::Empty),
             "gave up on a polling client"
         );
+        // The connection dies partway through a request: the host still gives up.
+        client.write_all(b"p").unwrap();
         gave_up.recv_timeout(Duration::from_secs(5)).unwrap();
     }
 

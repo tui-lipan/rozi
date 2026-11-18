@@ -16,6 +16,8 @@ const VERSION: u32 = 1;
 const MAX_MESSAGE: usize = 1024 * 1024;
 const INTERVAL: Duration = Duration::from_secs(2);
 const DEADLINE: Duration = Duration::from_secs(10);
+/// How long the host serves a watch channel whose client has stopped polling.
+pub(crate) const IDLE_LIMIT: Duration = Duration::from_secs(60);
 /// What both ends must have for a host to be supervised at all. A peer missing one of these is
 /// refused with a reason rather than half-supervised: a monitor that cannot list sessions or prove
 /// the channel is alive has nothing left to do.
@@ -130,7 +132,29 @@ fn read_message<T: serde::de::DeserializeOwned>(reader: &mut impl Read) -> io::R
 }
 
 /// Serve one SSH stdio channel until the client closes it. Each request is also a health check.
-pub(crate) fn serve(reader: &mut impl Read, writer: &mut impl Write) -> io::Result<()> {
+///
+/// The client polls every [`INTERVAL`], but one whose connection died without closing, as when
+/// this host slept, never sends again, and a read waiting for it would block forever. So
+/// `on_idle` runs, on another thread, once no request has arrived for `idle_limit`, and it has to
+/// end the wait itself. Answering a request does not pause that clock: the client stops waiting
+/// for an answer after [`DEADLINE`], so a request still unanswered at `idle_limit` has no reader.
+pub(crate) fn serve(
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    idle_limit: Duration,
+    on_idle: impl FnOnce() + Send + 'static,
+) -> io::Result<()> {
+    // One message per request. Dropping the sender when serving ends stops the watchdog.
+    let (arrived, arrivals) = mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        loop {
+            match arrivals.recv_timeout(idle_limit) {
+                Ok(()) => {}
+                Err(mpsc::RecvTimeoutError::Timeout) => return on_idle(),
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+        }
+    });
     let hello: Hello = read_message(reader)?;
     hello.validate()?;
     // Optional, so an older client that cannot deserialize summaries is served without them
@@ -151,6 +175,7 @@ pub(crate) fn serve(reader: &mut impl Read, writer: &mut impl Write) -> io::Resu
         if reader.read(&mut request)? == 0 {
             return Ok(());
         }
+        let _ = arrived.send(());
         if request[0] == b'p' {
             let query: PullRequestQuery = read_message(reader)?;
             let lookup = pull_requests
@@ -309,6 +334,7 @@ pub(crate) fn start(
             if stopped.try_recv() != Err(mpsc::TryRecvError::Empty) {
                 break;
             }
+            let mut delivered = false;
             let result = watch(
                 &target,
                 &config,
@@ -316,10 +342,13 @@ pub(crate) fn start(
                 &wanted,
                 &stopped,
                 &report,
-                &mut attempt,
+                &mut delivered,
             );
             shared.lock().unwrap().take();
             let Err(error) = result else { break };
+            if delivered {
+                attempt = 0;
+            }
             let unsupported = matches!(
                 error.kind(),
                 io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied
@@ -329,7 +358,13 @@ pub(crate) fn start(
             } else {
                 error.to_string()
             };
-            report(Err(message));
+            // A channel that was answering gets one reconnect before its loss is reported. The
+            // host ends a channel that has gone a minute without a request, as when this machine
+            // slept, and reporting that would drop the host's live rows, agents, and attention
+            // marks until the reconnect restores them.
+            if !delivered {
+                report(Err(message));
+            }
             if unsupported {
                 break;
             }
@@ -349,7 +384,7 @@ fn watch(
     wanted: &Mutex<Vec<String>>,
     stopped: &mpsc::Receiver<()>,
     report: &impl Fn(Result<HostSnapshot, String>),
-    attempt: &mut u32,
+    delivered: &mut bool,
 ) -> io::Result<()> {
     let (mut connection, stderr) = connect(target, config)?;
     *shared.lock().unwrap() = Some(connection.try_clone()?);
@@ -376,7 +411,7 @@ fn watch(
             asked = !repositories.is_empty();
             rows.pull_requests = pull_requests(&mut connection, repositories)?;
         }
-        *attempt = 0;
+        *delivered = true;
         if previous.as_ref() != Some(&rows) {
             report(Ok(rows.clone()));
             previous = Some(rows);
@@ -490,6 +525,80 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn reconnect_process_case() {
+        let Ok(reply) = std::env::var("ROZI_MONITOR_RECONNECT_REPLY") else {
+            return;
+        };
+        let mut bytes = Vec::new();
+        write_message(&mut bytes, &Hello::current()).unwrap();
+        write_message(&mut bytes, &serde_json::json!({ "sessions": [] })).unwrap();
+        std::fs::write(reply, bytes).unwrap();
+        let target = RemoteTarget::Alias("monitor-reconnect-fixture".into());
+        let config = crate::config::RemoteConfig::default();
+        super::super::binary::remember(
+            &target,
+            &config,
+            "rozi".into(),
+            super::super::bootstrap::RemoteFamily::Posix,
+        )
+        .unwrap();
+        let (send, receive) = mpsc::channel();
+        let monitor = start(target, 1, config, move |result| {
+            let _ = send.send(result.is_ok());
+        });
+        let reports: Vec<bool> = (0..3)
+            .map(|_| receive.recv_timeout(Duration::from_secs(10)).unwrap())
+            .collect();
+        assert_eq!(
+            reports,
+            [true, true, false],
+            "ok, quiet reconnect, then offline"
+        );
+        drop(monitor);
+    }
+
+    /// A host that ends a channel the client was polling, as after this machine slept, is
+    /// reconnected without a failure in between. One that cannot be reached again is reported.
+    #[cfg(unix)]
+    #[test]
+    fn a_dropped_channel_reconnects_once_before_reporting_the_host_offline() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let reply = root.path().join("reply");
+        let ssh = root.path().join("ssh");
+        // The first two channels answer the handshake and one poll, then close; the host is
+        // unreachable after that.
+        let script = format!(
+            "#!/bin/sh\ncase \"$*\" in *watch*) ;; *) exit 255 ;; esac\n\
+             count=$(cat '{dir}/count' 2>/dev/null || echo 0)\n\
+             echo $((count + 1)) > '{dir}/count'\n\
+             if [ \"$count\" -ge 2 ]; then echo 'ssh: connect to host fixture port 22: Connection timed out' >&2; exit 255; fi\n\
+             cat '{reply}'\nsleep 1\n",
+            dir = root.path().display(),
+            reply = reply.display(),
+        );
+        std::fs::write(&ssh, script).unwrap();
+        std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "session::remote::monitor::tests::reconnect_process_case",
+                "--nocapture",
+            ])
+            .env("ROZI_MONITOR_RECONNECT_REPLY", &reply)
+            .env("PATH", format!("{}:/usr/bin:/bin", root.path().display()))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     #[test]
     fn capabilities_are_additive_and_required_features_are_checked() {
         let mut hello = Hello::current();
@@ -517,7 +626,7 @@ mod tests {
         write_message(&mut request, &hello).unwrap();
         request.push(b'?');
         let mut response = Vec::new();
-        serve(&mut request.as_slice(), &mut response).unwrap();
+        serve(&mut request.as_slice(), &mut response, IDLE_LIMIT, || {}).unwrap();
         let mut response = response.as_slice();
         read_message::<Hello>(&mut response)
             .unwrap()
@@ -561,7 +670,7 @@ mod tests {
         write_message(&mut request, &Hello::current()).unwrap();
         request.extend_from_slice(b"??");
         let mut response = Vec::new();
-        serve(&mut request.as_slice(), &mut response).unwrap();
+        serve(&mut request.as_slice(), &mut response, IDLE_LIMIT, || {}).unwrap();
         let mut response = response.as_slice();
         read_message::<Hello>(&mut response)
             .unwrap()
@@ -598,28 +707,61 @@ mod tests {
         }
     }
 
+    struct Channel(std::io::PipeReader, std::io::PipeWriter);
+    impl Read for Channel {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.0.read(buf)
+        }
+    }
+    impl Write for Channel {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.1.write(buf)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.1.flush()
+        }
+    }
+
+    /// A host serving `serve` on its own thread, and the client end of its channel.
+    fn host(
+        idle_limit: Duration,
+        on_idle: impl FnOnce() + Send + 'static,
+    ) -> (std::thread::JoinHandle<io::Result<()>>, Channel) {
+        let (mut host_in, client_out) = std::io::pipe().unwrap();
+        let (client_in, mut host_out) = std::io::pipe().unwrap();
+        let host =
+            std::thread::spawn(move || serve(&mut host_in, &mut host_out, idle_limit, on_idle));
+        (host, Channel(client_in, client_out))
+    }
+
+    /// A client whose connection died without closing, as when the host slept, never polls
+    /// again. The host gives up on it instead of waiting forever, but not while it still polls.
+    #[test]
+    fn the_host_gives_up_on_a_client_that_stops_polling() {
+        let (idle, gave_up) = mpsc::channel();
+        let (_host, mut client) = host(Duration::from_millis(300), move || {
+            let _ = idle.send(());
+        });
+        handshake(&mut client).unwrap();
+        for _ in 0..6 {
+            pull_requests(&mut client, Vec::new()).unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(
+            gave_up.try_recv(),
+            Err(mpsc::TryRecvError::Empty),
+            "gave up on a polling client"
+        );
+        // The connection dies partway through a request: the host still gives up.
+        client.write_all(b"p").unwrap();
+        gave_up.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
+
     /// A client asks the host's watch channel about pull requests between snapshots: the host
     /// answers as its lookups complete and stops looking once asked about nothing.
     #[test]
     fn the_host_answers_pull_request_queries_on_the_watch_channel() {
-        struct Channel(std::io::PipeReader, std::io::PipeWriter);
-        impl Read for Channel {
-            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-                self.0.read(buf)
-            }
-        }
-        impl Write for Channel {
-            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-                self.1.write(buf)
-            }
-            fn flush(&mut self) -> io::Result<()> {
-                self.1.flush()
-            }
-        }
-        let (mut host_in, client_out) = std::io::pipe().unwrap();
-        let (client_in, mut host_out) = std::io::pipe().unwrap();
-        let host = std::thread::spawn(move || serve(&mut host_in, &mut host_out));
-        let mut client = Channel(client_in, client_out);
+        let (host, mut client) = host(IDLE_LIMIT, || {});
         let peer = handshake(&mut client).unwrap();
         assert!(peer.supports(PULL_REQUESTS));
 

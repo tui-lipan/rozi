@@ -1732,9 +1732,22 @@ fn switch_back_to_a_session_that_gained_a_pane(
     for message in while_parked {
         backend.dispatch(message).expect("parked event");
     }
+    // `update_level` runs the switch without draining what it spawned. A reconnect it starts
+    // really dials `dev`, which no server answers here; moving it to a fresh epoch with a test
+    // client turns that dial's failure into a stale frame, so the test decides how it lands.
     backend
-        .dispatch(crate::Msg::SessionPickerActivate(0))
+        .update_level(crate::Msg::SessionPickerActivate(0))
         .expect("switch back to the parked session");
+    let state = backend.state_mut();
+    if state.current().pending_session_attach.is_some() {
+        let epoch = state.mint_attachment_id();
+        state.runtime_epoch = epoch;
+        state.current_mut().epoch = epoch;
+        let (client, _rx) = SessionClient::test_channel();
+        let pending = state.current_mut().pending_session_attach.as_mut().unwrap();
+        pending.epoch = epoch;
+        pending.client = Some(client);
+    }
     (backend, layout)
 }
 
@@ -1782,77 +1795,70 @@ fn a_disconnected_parked_session_takes_its_layout_from_the_reconnect() {
 }
 
 /// The server keeps a pane that exited placed; closing it is this client's job. A pane that exited
-/// while its session was parked and then disconnected still closes once the reconnect lands.
+/// while its session was parked and then disconnected still closes once the reconnect lands,
+/// whether the server kept its layout or a replacement server attaches empty and is reseeded from
+/// this client's panes.
 #[test]
 fn a_pane_that_exited_while_parked_closes_after_the_reconnect() {
     crate::test_support::on_large_stack(|| {
-        let generation = |layout: &crate::layout::shared::SharedLayout, id| {
-            layout.workspaces[0]
-                .panes
-                .iter()
-                .find(|pane| pane.pane_id == id)
-                .expect("placed pane")
-                .generation
-        };
         let pane_one = tui_lipan::TestBackend::new(crate::AppRoot::default())
             .state()
             .current()
             .workspaces[0]
             .panes[0]
             .pty_generation;
-        let exited = crate::Msg::SessionExited {
-            epoch: 2,
-            pane_id: 1,
-            local: false,
-            generation: pane_one,
-            code: 0,
-        };
-        let (mut backend, layout) =
-            switch_back_to_a_session_that_gained_a_pane(vec![exited, parked_disconnect()]);
-        assert!(
-            !crate::pane::lifecycle::find_pane(backend.state(), 1)
-                .unwrap()
-                .closing
-        );
+        for server_kept_layout in [true, false] {
+            let exited = crate::Msg::SessionExited {
+                epoch: 2,
+                pane_id: 1,
+                local: false,
+                generation: pane_one,
+                code: 0,
+            };
+            let (mut backend, layout) =
+                switch_back_to_a_session_that_gained_a_pane(vec![exited, parked_disconnect()]);
+            assert!(
+                !crate::pane::lifecycle::find_pane(backend.state(), 1)
+                    .unwrap()
+                    .closing
+            );
 
-        let epoch = backend.state().runtime_epoch;
-        let (client, _rx) = crate::session::client::SessionClient::test_channel();
-        if let Some(pending) = backend
-            .state_mut()
-            .current_mut()
-            .pending_session_attach
-            .as_mut()
-        {
-            pending.client = Some(client);
+            let epoch = backend.state().runtime_epoch;
+            let (panes, layout) = if server_kept_layout {
+                let mut exited_meta =
+                    crate::session::protocol::PaneMeta::for_test(1, pane_one, 1000);
+                exited_meta.exited = Some(0);
+                let added = layout.workspaces[0].panes[1].generation;
+                let added = crate::session::protocol::PaneMeta::for_test(2, added, 1000);
+                (vec![exited_meta, added], Some(layout))
+            } else {
+                (Vec::new(), None)
+            };
+            backend
+                .dispatch(crate::Msg::SessionAttached {
+                    epoch,
+                    session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
+                    session: "dev".to_string(),
+                    client_id: 1,
+                    panes,
+                    layout_rev: 6,
+                    layout,
+                    controller: Some(1),
+                    clients: Vec::new(),
+                    input_locked: false,
+                    allow_takeover: true,
+                    read_only: false,
+                    origin: crate::session::origin::SessionOrigin::default(),
+                    handoff_claimed: None,
+                })
+                .expect("reconnect lands");
+
+            assert!(
+                crate::pane::lifecycle::find_pane(backend.state(), 1)
+                    .is_none_or(|pane| pane.closing),
+                "the exited pane is open after the reconnect (server kept layout: {server_kept_layout})"
+            );
         }
-        let mut exited_meta = crate::session::protocol::PaneMeta::for_test(1, pane_one, 1000);
-        exited_meta.exited = Some(0);
-        backend
-            .dispatch(crate::Msg::SessionAttached {
-                epoch,
-                session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
-                session: "dev".to_string(),
-                client_id: 1,
-                panes: vec![
-                    exited_meta,
-                    crate::session::protocol::PaneMeta::for_test(2, generation(&layout, 2), 1000),
-                ],
-                layout_rev: 6,
-                layout: Some(layout),
-                controller: Some(1),
-                clients: Vec::new(),
-                input_locked: false,
-                allow_takeover: true,
-                read_only: false,
-                origin: crate::session::origin::SessionOrigin::default(),
-                handoff_claimed: None,
-            })
-            .expect("reconnect lands");
-
-        assert!(
-            crate::pane::lifecycle::find_pane(backend.state(), 1).is_none_or(|pane| pane.closing),
-            "the exited pane is still open after the reconnect"
-        );
     });
 }
 

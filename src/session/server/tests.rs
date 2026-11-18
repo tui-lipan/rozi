@@ -3757,6 +3757,22 @@ fn a_spawn_reopens_a_conversation_by_the_agent_definition() {
         Some("Stub Agent"),
         "the pane must run the agent's resume command, not its launch"
     );
+    assert_eq!(
+        super::resurrect::resume_target(pane),
+        Some(("stub".to_string(), "conversation-1".to_string(), false)),
+        "a snapshot taken before the agent reports must still name the conversation"
+    );
+    let (other, _other_stream) = attach_client(&mut server);
+    for (owner, pane_id) in [(client, 3), (other, 1)] {
+        let responses = server.handle_message(owner, spawn(pane_id, "stub"));
+        assert!(
+            matches!(
+                responses.as_slice(),
+                [(Target::Sender, ServerMessage::SpawnResult { ok: false, .. })]
+            ),
+            "one conversation opens in one pane: {responses:?}"
+        );
+    }
 
     let responses = server.handle_message(client, spawn(2, "plain"));
     assert!(
@@ -5848,6 +5864,7 @@ fn a_resume_command_that_cannot_start_still_leaves_a_working_shell() {
         launch: Some(crate::pane::launch::PaneLaunch::shell("true")),
         agent_resume: Some(AgentResumeLaunch {
             label: "Claude Code".to_string(),
+            conversation: test_conversation(),
             launch: crate::pane::launch::PaneLaunch::direct(vec![
                 "/nonexistent/rozi-test/claude".to_string(),
                 "--resume".to_string(),
@@ -5908,6 +5925,7 @@ fn a_failed_agent_resume_names_the_failure_and_leaves_a_usable_shell() {
         launch: Some(crate::pane::launch::PaneLaunch::shell("true")),
         agent_resume: Some(AgentResumeLaunch {
             label: "Claude Code".to_string(),
+            conversation: test_conversation(),
             launch: crate::pane::launch::PaneLaunch::direct(vec![
                 "/bin/sh".to_string(),
                 "-c".to_string(),
@@ -5991,6 +6009,7 @@ fn a_refused_agent_resume_falls_back_to_attaching() {
         launch: Some(crate::pane::launch::PaneLaunch::shell("true")),
         agent_resume: Some(AgentResumeLaunch {
             label: "Claude Code".to_string(),
+            conversation: test_conversation(),
             launch: crate::pane::launch::PaneLaunch::direct(sh(
                 "printf 'running in the background\\n' >&2; exit 1",
             ))
@@ -6064,6 +6083,7 @@ fn pane_after_refused_resume(attach: Vec<String>) -> SessionServer {
         launch: Some(crate::pane::launch::PaneLaunch::shell("true")),
         agent_resume: Some(AgentResumeLaunch {
             label: "Claude Code".to_string(),
+            conversation: test_conversation(),
             launch: crate::pane::launch::PaneLaunch::direct(sh("exit 1")).expect("resume argv"),
             attach: Some(attach),
         }),
@@ -10229,4 +10249,14 @@ fn a_pane_whose_program_exits_forgets_what_it_registered() {
     wait_until(&mut server, |server| {
         server.panes[&1].exited.is_some() && server.panes[&1].runtime.drag_and_drop.is_empty()
     });
+}
+
+/// The conversation a hand-built resume in these tests reopens.
+fn test_conversation() -> RetainedResume {
+    RetainedResume {
+        agent: "claude".to_string(),
+        session: "opaque-session-123".to_string(),
+        reported_at: 1,
+        reported: false,
+    }
 }

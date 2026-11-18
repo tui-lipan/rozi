@@ -276,6 +276,7 @@ impl SessionServer {
         let resume = request.agent_resume.take();
         let mut agent_resume = resume.as_ref().map(|resume| PaneResume {
             label: resume.label.clone(),
+            conversation: resume.conversation.clone(),
             attach: resume.attach.clone(),
             attached: false,
             started: Instant::now(),

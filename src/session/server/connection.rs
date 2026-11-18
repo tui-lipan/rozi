@@ -966,12 +966,24 @@ impl SessionServer {
                 };
                 // A conversation the agent definitions cannot reopen fails the spawn: a plain shell
                 // in its place would look like the conversation opened and was empty.
+                // Two panes in one conversation would both write into its history.
                 let agent_resume = match agent_resume {
                     None => None,
                     Some(resume) => {
-                        match self.agent_resume_launch(&resume.agent, &resume.session, false) {
-                            Some(launch) => Some(launch),
-                            None => {
+                        let launch = if self.conversation_is_open(&resume.agent, &resume.session) {
+                            Err("this conversation is already open in a pane".to_string())
+                        } else {
+                            self.agent_resume_launch(&resume.agent, &resume.session, false)
+                                .ok_or_else(|| {
+                                    format!(
+                                        "agent `{}` cannot reopen this conversation",
+                                        resume.agent
+                                    )
+                                })
+                        };
+                        match launch {
+                            Ok(launch) => Some(launch),
+                            Err(error) => {
                                 return vec![(
                                     Target::Sender,
                                     ServerMessage::SpawnResult {
@@ -980,10 +992,7 @@ impl SessionServer {
                                         generation,
                                         pid: None,
                                         ok: false,
-                                        error: Some(format!(
-                                            "agent `{}` cannot reopen this conversation",
-                                            resume.agent
-                                        )),
+                                        error: Some(error),
                                     },
                                 )];
                             }

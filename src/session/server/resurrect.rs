@@ -335,7 +335,8 @@ struct SnapshotAgentResume {
 ///
 /// What the pane's live state names, from [`live_agent_resume`], ahead of a conversation retained
 /// from agent rows whose window has since left - unless no agent rows are listed and the live
-/// answer is a hook report no newer than those rows, which they had already outranked.
+/// answer is a hook report no newer than those rows, which they had already outranked. With
+/// neither, the conversation the pane's running resume command reopens.
 fn agent_resume(pane: &ServerPane) -> Option<SnapshotAgentResume> {
     let live = live_agent_resume(pane);
     let retained = pane.agent.retained_resume.as_ref();
@@ -351,7 +352,8 @@ fn agent_resume(pane: &ServerPane) -> Option<SnapshotAgentResume> {
             retained.clone()
         }
         (Some(live), _) => live,
-        (None, retained) => retained?.clone(),
+        (None, Some(retained)) => retained.clone(),
+        (None, None) => pane.agent_resume.as_ref()?.conversation.clone(),
     };
     Some(SnapshotAgentResume {
         agent: resume.agent,
@@ -979,6 +981,16 @@ impl SessionServer {
         Some(launch)
     }
 
+    /// Whether a pane of this session already has `agent`'s conversation `session`: running it,
+    /// or still starting the command that reopens it. One conversation, one pane, as in a restore.
+    pub(super) fn conversation_is_open(&self, agent: &str, session: &str) -> bool {
+        self.panes
+            .values()
+            .chain(self.local_panes.values())
+            .filter_map(resume_target)
+            .any(|(open_agent, open_session, _)| open_agent == agent && open_session == session)
+    }
+
     /// How the agent definitions this server has loaded reopen `session`, or `None` when `agent`
     /// declares no resume command or the reference is not one to pass to a program.
     /// `reported` picks the command for a conversation the agent's own hooks reported.
@@ -1007,6 +1019,12 @@ impl SessionServer {
         };
         Some(AgentResumeLaunch {
             label: definition.label().to_string(),
+            conversation: RetainedResume {
+                agent: agent.to_string(),
+                session: session.to_string(),
+                reported_at: crate::runtime_metrics::unix_time_millis(),
+                reported,
+            },
             launch: crate::pane::launch::PaneLaunch::direct(argv).ok()?,
             attach: definition.attach_command(session),
         })
@@ -3874,6 +3892,12 @@ mod tests {
         let mut pane = reporting_agent_pane(&server.instance_id);
         pane.agent_resume = Some(PaneResume {
             label: "Claude Code".to_string(),
+            conversation: RetainedResume {
+                agent: "claude".to_string(),
+                session: "resumed-conversation".to_string(),
+                reported_at: 1,
+                reported: false,
+            },
             attach: None,
             attached: false,
             started: Instant::now(),

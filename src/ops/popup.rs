@@ -483,4 +483,48 @@ mod tests {
             );
         });
     }
+
+    /// A popup runs on the session server as a pane of this client's connection, and the server
+    /// ends it when that connection goes. Reconnecting must not leave it on screen taking input.
+    #[test]
+    fn losing_the_session_connection_closes_the_popup() {
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+            let (client, _rx) = crate::session::client::SessionClient::test_channel();
+            let epoch = {
+                let state = backend.state_mut();
+                let current = state.current_mut();
+                current.session_name = Some("dev".into());
+                current.session_attached = true;
+                current.connection = crate::state::ConnectionState::Connected;
+                current.session_client = Some(client);
+                current.pending_session_attach = None;
+                state.runtime_epoch
+            };
+            let (reply, response) = std::sync::mpsc::channel();
+            let request = serde_json::from_str(r#"{"cmd":"popup","command":"true"}"#).unwrap();
+            backend
+                .dispatch(crate::Msg::ControlRequest(
+                    crate::control::ControlEnvelope::local(request, reply),
+                ))
+                .expect("open a popup");
+            assert!(response.recv().expect("popup reply").ok);
+            assert!(backend.state().popup.is_some());
+
+            // `update_level` runs the disconnect and the reconnect it starts, and delivers nothing
+            // that reconnect's own attempt sends back.
+            backend
+                .update_level(crate::Msg::SessionDisconnected {
+                    epoch,
+                    name: "dev".into(),
+                })
+                .expect("lose the connection");
+            assert_ne!(backend.state().runtime_epoch, epoch, "a reconnect started");
+            assert!(
+                backend.state().popup.is_none(),
+                "the popup outlived the connection that ran it"
+            );
+        });
+    }
 }

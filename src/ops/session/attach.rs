@@ -435,6 +435,12 @@ fn begin_current_session_reconnect(
         .on_host(ctx.state.current().remote_target.clone())
         .with_access(access)
         .with_prompting(prompting);
+    // The popup ran on the server as a pane of the client that just went, and went with it. Nothing
+    // brings it back, so do not leave it on screen taking input.
+    if ctx.state.popup_is_present() {
+        crate::ops::popup::kill_if_open(ctx);
+        crate::ops::focus::request_current_pane_focus(ctx);
+    }
     let epoch = ctx.state.mint_attachment_id();
     ctx.state.runtime_epoch = epoch;
     ctx.state.current_mut().epoch = epoch;

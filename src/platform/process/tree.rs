@@ -27,6 +27,15 @@ pub struct ProcessTable {
     children: HashMap<u32, Vec<usize>>,
 }
 
+/// The result of one walk: its members, and whether every descendant was examined.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Walk<T> {
+    pub members: Vec<TreeMember<T>>,
+    /// `false` when the walk stopped at [`MAX_TREE_PROCESSES`] with descendants left unexamined,
+    /// so what it holds is only a prefix of the tree.
+    pub complete: bool,
+}
+
 /// One process reached by [`ProcessTable::descendants`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TreeMember<T> {
@@ -64,12 +73,12 @@ impl ProcessTable {
     /// process named as its parent cannot be that process's child: its parent exited and the PID
     /// went to a later process. Such a process is left out with its own descendants. A process
     /// is examined at most once, so a parent cycle ends the walk, and at most
-    /// [`MAX_TREE_PROCESSES`] are examined.
+    /// [`MAX_TREE_PROCESSES`] are examined, after which the walk says it is incomplete.
     pub fn descendants<T>(
         &self,
         root: u32,
         mut observe: impl FnMut(&TableEntry) -> (T, Option<u64>),
-    ) -> Option<Vec<TreeMember<T>>> {
+    ) -> Option<Walk<T>> {
         let root_entry = &self.entries[*self.by_pid.get(&root)?];
         let mut seen = HashSet::from([root]);
         let mut examined = 1;
@@ -83,7 +92,10 @@ impl ProcessTable {
         while let Some((parent, parent_started)) = queue.pop_front() {
             for &index in self.children.get(&parent).into_iter().flatten() {
                 if examined == MAX_TREE_PROCESSES {
-                    return Some(members);
+                    return Some(Walk {
+                        members,
+                        complete: false,
+                    });
                 }
                 let entry = &self.entries[index];
                 if !seen.insert(entry.pid) {
@@ -104,7 +116,10 @@ impl ProcessTable {
                 queue.push_back((entry.pid, started));
             }
         }
-        Some(members)
+        Some(Walk {
+            members,
+            complete: true,
+        })
     }
 }
 
@@ -126,8 +141,9 @@ mod tests {
 
     /// `(pid, parent)` pairs of the walk from `root`, every process started at time 0.
     fn walk(table: &ProcessTable, root: u32) -> Option<Vec<(u32, Option<u32>)>> {
-        table.descendants(root, |_| ((), Some(0))).map(|members| {
-            members
+        table.descendants(root, |_| ((), Some(0))).map(|walk| {
+            assert!(walk.complete);
+            walk.members
                 .into_iter()
                 .map(|member| (member.pid, member.parent_pid))
                 .collect()
@@ -171,15 +187,16 @@ mod tests {
         let rows: Vec<_> = (2..1000).map(|pid| (pid, 1)).chain([(1, 0)]).collect();
         let table = table(&rows);
         let mut examined = 0;
-        let members = table
+        let walk = table
             .descendants(1, |_| {
                 examined += 1;
                 ((), None)
             })
             .unwrap();
         assert_eq!(examined, MAX_TREE_PROCESSES);
-        assert_eq!(members.len(), MAX_TREE_PROCESSES);
-        assert_eq!(members.last().unwrap().pid, 128);
+        assert_eq!(walk.members.len(), MAX_TREE_PROCESSES);
+        assert_eq!(walk.members.last().unwrap().pid, 128);
+        assert!(!walk.complete, "a walk cut at the cap says so");
     }
 
     #[test]
@@ -191,6 +208,7 @@ mod tests {
         let pids: Vec<_> = table
             .descendants(10, |entry| ((), started.get(&entry.pid).copied()))
             .unwrap()
+            .members
             .into_iter()
             .map(|member| member.pid)
             .collect();

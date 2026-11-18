@@ -17,8 +17,8 @@ use std::sync::OnceLock;
 
 use tui_lipan::prelude::TerminalPty;
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_INSUFFICIENT_BUFFER, ERROR_INVALID_PARAMETER, FILETIME, GetLastError,
-    HANDLE, INVALID_HANDLE_VALUE, STILL_ACTIVE,
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_INSUFFICIENT_BUFFER, ERROR_INVALID_PARAMETER, FILETIME,
+    GetLastError, HANDLE, INVALID_HANDLE_VALUE, STILL_ACTIVE,
 };
 use windows_sys::Win32::System::Threading::{
     GetExitCodeProcess, GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -80,7 +80,7 @@ impl ProcessSnapshot {
 
     /// `root` and its descendants, each read through a limited-information handle.
     fn descendant_set(&self, root: u32) -> Option<AgentProcessSet> {
-        let members = self.table.descendants(root, |entry| {
+        let walk = self.table.descendants(root, |entry| {
             let process = observe(entry);
             let started = process.started;
             (process, started)
@@ -88,7 +88,9 @@ impl ProcessSnapshot {
         Some(AgentProcessSet {
             root_pid: root,
             topology: ProcessTopology::DescendantTree,
-            processes: members
+            complete: walk.complete,
+            processes: walk
+                .members
                 .into_iter()
                 .map(|member| ObservedProcess {
                     process: member.observed,
@@ -132,7 +134,7 @@ fn observe(entry: &TableEntry) -> ForegroundProcess {
         argv: Vec::new(),
         agent_hint: None,
     };
-    if let Some(handle) = LimitedHandle::open(entry.pid) {
+    if let Ok(handle) = LimitedHandle::open(entry.pid) {
         process.started = handle.creation_time();
         process.executable = handle.image_path();
         process.argv = handle.argv();
@@ -144,14 +146,23 @@ fn observe(entry: &TableEntry) -> ForegroundProcess {
 struct LimitedHandle(HANDLE);
 
 impl LimitedHandle {
-    fn open(pid: u32) -> Option<Self> {
-        // PID 0 is the idle process, which `OpenProcess` refuses with a misleading error.
+    /// The handle, or the error `OpenProcess` failed with. The error is read before anything
+    /// else can run on this thread, since any later call, a `CloseHandle` included, may replace
+    /// it. PID 0 is the idle process, which `OpenProcess` refuses with a misleading error, so it
+    /// fails as `ERROR_ACCESS_DENIED`.
+    fn open(pid: u32) -> Result<Self, u32> {
         if pid == 0 {
-            return None;
+            return Err(ERROR_ACCESS_DENIED);
         }
-        // SAFETY: plain FFI call; a null result is the failure value.
-        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-        (!handle.is_null()).then_some(Self(handle))
+        // SAFETY: plain FFI call; a null result is the failure value, with the reason in this
+        // thread's last error, read at once.
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle.is_null() {
+                return Err(GetLastError());
+            }
+            Ok(Self(handle))
+        }
     }
 
     /// The process's creation time as a FILETIME (100 ns intervals since 1601).
@@ -349,9 +360,9 @@ pub(super) fn process_gone(pid: u32, started: Option<u64>) -> bool {
     if pid == 0 {
         return false;
     }
-    let Some(handle) = LimitedHandle::open(pid) else {
-        // SAFETY: plain FFI call reading this thread's last error.
-        return unsafe { GetLastError() } == ERROR_INVALID_PARAMETER;
+    let handle = match LimitedHandle::open(pid) {
+        Ok(handle) => handle,
+        Err(error) => return error == ERROR_INVALID_PARAMETER,
     };
     let mut code = 0;
     // SAFETY: the handle is open and `code` is a live `u32`.
@@ -427,5 +438,11 @@ mod tests {
                 .is_some_and(|path| path.to_ascii_lowercase().ends_with("\\powershell.exe")),
             "{found:#?}"
         );
+
+        // Killed, reaped, and with every handle to it closed, the process no longer exists.
+        drop(handle);
+        drop(child);
+        assert!(process_gone(pid, None), "an exited child is gone");
+        assert!(process_gone(pid, Some(started)));
     }
 }

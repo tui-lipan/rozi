@@ -44,6 +44,9 @@ pub(super) fn identify_set<'a, 's>(
         .flatten();
     match shell_agent {
         Some(definition) => pick(&|candidate| candidate.identity.id == definition.identity.id),
+        // The agent a cut-off tree leaves out could be the one in use, so its prefix names only
+        // an agent the shell or a hint already said which.
+        None if !set.complete => None,
         None => pick(&|_| true),
     }
 }

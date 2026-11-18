@@ -319,6 +319,7 @@ mod tests {
         AgentProcessSet {
             root_pid: processes[0].0,
             topology: ProcessTopology::DescendantTree,
+            complete: true,
             processes: processes
                 .iter()
                 .map(|&(pid, parent_pid, argv)| ObservedProcess {
@@ -345,6 +346,14 @@ mod tests {
             (4, Some(3), &["rg.exe"]),
         ]);
         assert_eq!(identify_tree(&pi, None), Some(("pi".into(), 2)));
+
+        // Cut off at the walk's cap, the rest of the tree could hold the agent in use.
+        let cut = AgentProcessSet {
+            complete: false,
+            ..pi
+        };
+        assert_eq!(identify_tree(&cut, None), None);
+        assert_eq!(identify_tree(&cut, Some("pi")), Some(("pi".into(), 2)));
     }
 
     /// Nothing in a tree says which of two unrelated agents holds the terminal, such as a

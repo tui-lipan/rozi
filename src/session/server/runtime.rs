@@ -6456,6 +6456,7 @@ mod tests {
         let set = AgentProcessSet {
             root_pid: 1,
             topology: ProcessTopology::DescendantTree,
+            complete: true,
             processes: vec![
                 observed(1, None, "pwsh.exe"),
                 observed(2, Some(1), "node.exe"),

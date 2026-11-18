@@ -53,6 +53,10 @@ pub struct AgentProcessSet {
     /// for [`ProcessTopology::DescendantTree`].
     pub root_pid: u32,
     pub topology: ProcessTopology,
+    /// Whether every process in the tree is listed. A descendant tree too large to walk whole is
+    /// only a prefix of itself, and a choice made on a prefix could pass over the process that
+    /// matters. Always `true` for a foreground group.
+    pub complete: bool,
     /// Parents before their children for a descendant tree; the group leader first for a group.
     pub processes: Vec<ObservedProcess>,
 }
@@ -77,6 +81,7 @@ impl AgentProcessSet {
         Self {
             root_pid: job.process_group_id,
             topology: ProcessTopology::ForegroundGroup,
+            complete: true,
             processes: job
                 .processes
                 .iter()

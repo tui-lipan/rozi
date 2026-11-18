@@ -473,6 +473,9 @@ pub struct State {
     /// it fires.
     pub(crate) welcome_due: bool,
     pub show_welcome: bool,
+    /// This client claimed the usage count notice and shows it once a session is on screen and no
+    /// dialog covers it. Cleared when it fires.
+    pub(crate) usage_count_notice_due: bool,
     /// Replacing this client with another build: the dialog planning it, and the restore a
     /// relaunched client works through.
     pub relaunch: RelaunchState,
@@ -830,6 +833,7 @@ impl State {
             show_release_notes: false,
             defer_startup_picker: false,
             welcome_due: false,
+            usage_count_notice_due: false,
             show_welcome: false,
             relaunch: RelaunchState::default(),
             self_update: SelfUpdateState::default(),

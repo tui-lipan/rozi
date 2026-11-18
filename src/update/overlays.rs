@@ -776,21 +776,35 @@ pub(super) fn update_available(
 /// Tell the user, once per install, that rozi counts it in the weekly usage count and how to opt
 /// out, then record that it was shown. Only this records it: a client that exits before getting
 /// here leaves the notice for the next launch. The first report waits at least a day after this.
-pub(super) fn usage_count_notice(ctx: &mut Context<AppRoot>) -> Update {
+///
+/// Waits, like the welcome card, for a session on screen, and then for every dialog to close, so it
+/// never lands on top of the welcome card. A click only closes it; the docs page is named, not
+/// opened.
+pub(super) fn usage_count_notice_if_due(ctx: &mut Context<AppRoot>) -> bool {
+    if !ctx.state.usage_count_notice_due
+        || ctx.state.welcome_due
+        || ctx.state.has_modal_overlay()
+        || !ctx.state.current().session_attached
+    {
+        return false;
+    }
+    ctx.state.usage_count_notice_due = false;
     crate::pane::pty_events::notify_announcement(
         ctx,
         "Anonymous usage count",
-        "Once a week, rozi adds this install to a public count of active installs. \
-         It sends no ID and no personal data.\n\
-         \n\
-         First count  tomorrow at the earliest\n\
-         Opt out      `[updates] count_usage = false`\n\
-         Details      click this notice",
+        format!(
+            "Once a week, rozi adds this install to a public count of active installs. \
+             It sends no ID and no personal data.\n\
+             \n\
+             First count  tomorrow at the earliest\n\
+             Opt out      `[updates] count_usage = false`\n\
+             Details      {}",
+            crate::ops::usage_count::DOCS_PAGE
+        ),
         "[updates]\ncount_usage = false",
-        Msg::OpenUsageCountDocs,
     );
     crate::ops::usage_count::notice_shown();
-    Update::full()
+    true
 }
 
 pub(super) fn theme_error(ctx: &mut Context<AppRoot>, message: String) -> Update {
@@ -1146,11 +1160,23 @@ mod tests {
     }
 
     #[test]
-    fn the_usage_count_notice_says_how_to_opt_out() {
+    fn the_usage_count_notice_waits_for_the_welcome_and_says_how_to_opt_out() {
         crate::test_support::on_large_stack(|| {
             crate::test_support::isolate_user_dirs();
             let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().current_mut().session_attached = true;
+            backend.state_mut().show_welcome = true;
             backend.dispatch(Msg::UsageCountNotice).unwrap();
+            assert!(
+                backend.state().replaceable_toasts.is_empty(),
+                "the welcome card keeps the notice back"
+            );
+            assert!(
+                !crate::ops::usage_count::notice_recorded_for_test(),
+                "a notice not yet shown is not recorded"
+            );
+
+            backend.dispatch(Msg::CloseWelcome).unwrap();
             assert!(
                 crate::ops::usage_count::notice_recorded_for_test(),
                 "showing the notice records it as shown"
@@ -1158,7 +1184,7 @@ mod tests {
             let toast = last_toast(&backend);
             assert!(toast.starts_with("Anonymous usage count"), "{toast}");
             assert!(toast.contains("`[updates] count_usage = false`"), "{toast}");
-            assert!(toast.ends_with("click this notice"), "{toast}");
+            assert!(toast.ends_with("rozi.tui-lipan.dev/usage-count"), "{toast}");
         });
     }
 

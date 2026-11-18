@@ -28,10 +28,18 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let home = PathBuf::from(std::env::var_os("USERPROFILE").unwrap());
     if name == "scp" {
-        let source = &args[args.len() - 2];
-        let destination = &args[args.len() - 1];
+        let [.., recursive, source, destination] = args.as_slice() else {
+            panic!("expected recursive SCP upload arguments");
+        };
+        assert_eq!(recursive, "-r");
+        let source = PathBuf::from(source);
         let remote_name = destination.split_once(':').unwrap().1;
-        std::fs::copy(source, home.join(remote_name)).unwrap();
+        let destination = home.join(remote_name).join(source.file_name().unwrap());
+        std::fs::create_dir(&destination).unwrap();
+        for entry in std::fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(entry.path(), destination.join(entry.file_name())).unwrap();
+        }
         return;
     }
     let marker = args.iter().position(|arg| arg == "--").unwrap();
@@ -89,6 +97,7 @@ fn managed(data_home: &Path) -> PathBuf {
     data_home
         .join("rozi")
         .join("remote")
+        .join("versions")
         .join(env!("CARGO_PKG_VERSION"))
         .join("rozi.exe")
 }
@@ -257,7 +266,8 @@ fn bootstrap_windows_child() {
             assert!(error.contains("refuse_non_regular"), "{error}");
         }
         "failed_stage" => {
-            assert!(ensure_remote_binary(&target, &config, true).is_err());
+            let error = ensure_remote_binary(&target, &config, true).unwrap_err();
+            assert!(error.contains("remote install finalize failed"), "{error}");
             let leftovers = std::fs::read_dir(&home)
                 .unwrap()
                 .filter_map(Result::ok)

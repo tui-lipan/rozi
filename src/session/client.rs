@@ -289,6 +289,8 @@ pub struct SpawnPaneRequest {
     pub palette: TerminalColorPalette,
     pub shell: Vec<String>,
     pub command_shell: Vec<String>,
+    /// [`crate::state::PaneIdentity::agent_resume`].
+    pub agent_resume: Option<protocol::SpawnAgentResume>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -838,6 +840,7 @@ impl SessionClient {
             cell_width: self.cell.width,
             cell_height: self.cell.height,
             spawn_env: Some(request.spawn_env),
+            agent_resume: request.agent_resume,
         });
     }
 

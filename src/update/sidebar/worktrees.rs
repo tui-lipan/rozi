@@ -22,26 +22,6 @@ pub(crate) fn worktrees_active(ctx: &Context<AppRoot>) -> bool {
             .any(|id| id.as_str() == TAB_ID)
 }
 
-/// Whether the pointer or the keyboard cursor is in a Worktrees tab, where holding Ctrl changes
-/// what a click opens and the rows say so.
-pub(crate) fn ctrl_preview_active(state: &crate::state::State) -> bool {
-    state.modal_overlay().is_none()
-        && state
-            .sidebar
-            .panels
-            .iter()
-            .enumerate()
-            .any(|(index, panel)| {
-                state.sidebar_panel_visible(index)
-                    && matches!(
-                        state.active_sidebar_tab(index),
-                        Some(crate::config::SidebarTab::Worktrees)
-                    )
-                    && ((panel.hovered_row.is_some() && !panel.suppress_row_hover)
-                        || (state.sidebar.focused && state.sidebar.active_panel_index() == index))
-            })
-}
-
 /// Whether the repository the tab lists is still the focused pane's. Compared by borrow: this runs
 /// after every message, so the steady state must not allocate.
 pub(crate) fn source_is_current(ctx: &Context<AppRoot>) -> bool {

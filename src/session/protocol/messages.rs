@@ -161,6 +161,11 @@ pub enum ClientMessage {
         /// for a guest's pane, which runs in the owner's environment. Absent from older clients.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         spawn_env: Option<Vec<(String, String)>>,
+        /// A conversation to reopen in the new pane in place of its launch. The server runs the
+        /// resume command its own agent definitions give. Sent only to a server with
+        /// [`super::Capability::SpawnAgentResume`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_resume: Option<SpawnAgentResume>,
     },
     Resize {
         pane_id: PaneId,
@@ -1202,6 +1207,14 @@ pub enum AttachmentOperation {
     /// A step from a newer peer this build does not know. Never sent.
     #[serde(other)]
     Unknown,
+}
+
+/// The agent conversation a new pane reopens: the agent's definition id and its native session.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct SpawnAgentResume {
+    pub agent: String,
+    pub session: String,
 }
 
 /// An optimistic document publication committed atomically with a shared pane spawn.

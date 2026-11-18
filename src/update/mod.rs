@@ -505,7 +505,10 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::AgentConversationsGoTo(id) => crate::ops::agent_conversations::go_to(ctx, id),
         Msg::AgentPickerQueryChanged(query) => crate::ops::agents::query_changed(ctx, query),
         Msg::AgentPickerSelect(location) => crate::ops::agents::select(ctx, location),
-        Msg::AgentPickerActivate(location) => crate::ops::agents::activate(ctx, location),
+        Msg::AgentPickerActivate(location) => crate::ops::agents::activate(ctx, location, false),
+        Msg::AgentPickerActivateOther(location) => {
+            crate::ops::agents::activate(ctx, location, true)
+        }
         Msg::CloseRemotePicker => crate::ops::session::remotes::close_remote_picker(ctx),
         Msg::RemotePickerHostQueryChanged(query) => {
             crate::ops::session::remotes::host_query_changed(ctx, query)
@@ -1256,7 +1259,7 @@ pub(crate) fn sync_modifier_key_reporting(ctx: &mut Context<AppRoot>) {
         .keybindings
         .as_ref()
         .is_some_and(|state| !matches!(state.stage, crate::state::KeybindingEditorStage::List));
-    let worktree_preview = sidebar::worktrees::ctrl_preview_active(&ctx.state);
+    let worktree_preview = sidebar::ctrl_preview_active(&ctx.state);
     ctx.set_modifier_key_reporting(capturing || (picker && !editing_binding) || worktree_preview);
     // Pickers and the sidebar let Shift pause reporting so a Shift+drag host selection survives
     // its release.

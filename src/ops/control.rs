@@ -157,7 +157,7 @@ pub(crate) fn handle_control_request(
         ControlCommand::AgentGo { location } => {
             match crate::ops::agents::location_from_spec(&ctx.state, &location) {
                 Ok(location) => {
-                    let update = crate::ops::agents::activate_from_sidebar(ctx, location);
+                    let update = crate::ops::agents::go_to(ctx, location);
                     let _ = envelope.reply.send(ControlResponse::empty());
                     return update;
                 }

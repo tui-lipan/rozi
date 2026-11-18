@@ -262,6 +262,7 @@ pub(crate) fn spawn_state_panes_on_session(
                 palette: pane.terminal.last_palette.unwrap_or(fallback_palette),
                 shell: shell.clone(),
                 command_shell: command_shell.clone(),
+                agent_resume: None,
             });
             targets.push((pane.id, generation));
         }

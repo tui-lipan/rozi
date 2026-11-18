@@ -389,3 +389,30 @@ pub(crate) fn resize_panel_split(ctx: &mut Context<AppRoot>, down: bool) -> Upda
     weights[boundary + 1] -= delta;
     resize_weights(ctx, side, weights)
 }
+
+/// Whether the pointer or the keyboard cursor is in a tab whose rows open a second way with Ctrl:
+/// checkouts in Worktrees, and background agent runs wherever agent rows are listed. There, holding
+/// Ctrl makes the rows say what Ctrl+click does.
+pub(crate) fn ctrl_preview_active(state: &crate::state::State) -> bool {
+    use crate::config::SidebarTab;
+    state.modal_overlay().is_none()
+        && state
+            .sidebar
+            .panels
+            .iter()
+            .enumerate()
+            .any(|(index, panel)| {
+                state.sidebar_panel_visible(index)
+                    && matches!(
+                        state.active_sidebar_tab(index),
+                        Some(
+                            SidebarTab::Worktrees
+                                | SidebarTab::Agents { .. }
+                                | SidebarTab::Activity { .. }
+                                | SidebarTab::Projects
+                        )
+                    )
+                    && ((panel.hovered_row.is_some() && !panel.suppress_row_hover)
+                        || (state.sidebar.focused && state.sidebar.active_panel_index() == index))
+            })
+}

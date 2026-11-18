@@ -1135,6 +1135,17 @@
         },
         {
           "properties": {
+            "agent_resume": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SpawnAgentResume"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A conversation to reopen in the new pane in place of its launch. The server runs the\nresume command its own agent definitions give. Sent only to a server with\n[`super::Capability::SpawnAgentResume`]."
+            },
             "cell_height": {
               "default": 0,
               "description": "See `cell_width`.",
@@ -8471,6 +8482,22 @@
       ],
       "type": "object"
     },
+    "SpawnAgentResume": {
+      "description": "The agent conversation a new pane reopens: the agent's definition id and its native session.",
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent",
+        "session"
+      ],
+      "type": "object"
+    },
     "SpawnPlacementCommit": {
       "description": "An optimistic document publication committed atomically with a shared pane spawn.",
       "properties": {
@@ -9419,7 +9446,8 @@
     "project-summaries",
     "runtime-metrics",
     "session-publish",
-    "session-sharing"
+    "session-sharing",
+    "spawn-agent-resume"
   ],
   "x-rozi-shared-layout-version": 4,
   "x-rozi-wire-generation": 52,

@@ -119,6 +119,7 @@ fn restart_restores_layout_and_pane_replay(migrate_v2: bool) {
         cell_width: 0,
         cell_height: 0,
         spawn_env: None,
+        agent_resume: None,
     });
     read_until(&mut client, |frame| {
         matches!(
@@ -424,6 +425,7 @@ fn a_restored_shell_reruns_the_command_it_was_holding() {
         cell_width: 0,
         cell_height: 0,
         spawn_env: None,
+        agent_resume: None,
     });
     read_until(&mut client, |frame| {
         matches!(

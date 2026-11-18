@@ -605,7 +605,7 @@ pub(crate) fn open_selected(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 /// Whether this client may add a pane to the session it shows.
-fn can_spawn_pane(state: &crate::state::State) -> bool {
+pub(crate) fn can_spawn_pane(state: &crate::state::State) -> bool {
     state.is_controller()
         && !state.scratch_visible
         && state.current().session_client.is_some()

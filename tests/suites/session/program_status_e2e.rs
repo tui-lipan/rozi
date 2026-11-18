@@ -39,6 +39,7 @@ fn spawn(client: &mut TestConnection, id: u32, command: &str, keep_open: bool) {
         cell_width: 0,
         cell_height: 0,
         spawn_env: None,
+        agent_resume: None,
     });
     read_until(client, |f| {
         if let Frame::Control(ServerMessage::SpawnResult {

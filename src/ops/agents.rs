@@ -133,13 +133,24 @@ pub(crate) fn select(ctx: &mut Context<AppRoot>, location: AgentLocation) -> Upd
     Update::full()
 }
 
-/// Go to the agent this row describes, wherever it is running.
+/// Go to the agent this row describes, wherever it is running, or reopen it in a new pane; see
+/// [`open_in_pane`]. `alternate` is Ctrl+Enter, which does what the `open` setting does not.
 ///
 /// A pane in the session on screen is a focus change and nothing more. Anywhere else, the session
 /// has to arrive first, so the destination is recorded and [`land_on_pending_agent`] finishes the
 /// gesture — immediately when the session was merely parked in the background, and after the
 /// attach lands otherwise.
-pub(crate) fn activate(ctx: &mut Context<AppRoot>, location: AgentLocation) -> Update {
+pub(crate) fn activate(
+    ctx: &mut Context<AppRoot>,
+    location: AgentLocation,
+    alternate: bool,
+) -> Update {
+    if let Some(conversation) = conversation_to_open(&ctx.state, &location, alternate) {
+        // Closed first, so the focus the close hands back is not the new pane's. The spawn's own
+        // update carries the timers that reveal the pane.
+        let _ = close_agent_picker(ctx);
+        return open_in_pane(ctx, conversation);
+    }
     match location.clone() {
         AgentLocation::Here { pane, row } => {
             // Landed on before the overlay closes, so the focus the close returns to the "current"
@@ -156,10 +167,23 @@ pub(crate) fn activate(ctx: &mut Context<AppRoot>, location: AgentLocation) -> U
     }
 }
 
-/// Go to the agent a sidebar row describes. The same destination as [`activate`], from a surface
-/// that stays on screen: there is no overlay to close, and none whose survival could say the
-/// attach was refused.
-pub(crate) fn activate_from_sidebar(ctx: &mut Context<AppRoot>, location: AgentLocation) -> Update {
+/// Activate an agent row in the sidebar: [`go_to`] it, or reopen it in a new pane as [`activate`]
+/// does.
+pub(crate) fn activate_from_sidebar(
+    ctx: &mut Context<AppRoot>,
+    location: AgentLocation,
+    alternate: bool,
+) -> Update {
+    match conversation_to_open(&ctx.state, &location, alternate) {
+        Some(conversation) => open_in_pane(ctx, conversation),
+        None => go_to(ctx, location),
+    }
+}
+
+/// Go to the agent `location` describes. The same destination as [`activate`], from a surface that
+/// stays on screen: there is no overlay to close, and none whose survival could say the attach was
+/// refused.
+pub(crate) fn go_to(ctx: &mut Context<AppRoot>, location: AgentLocation) -> Update {
     match location {
         AgentLocation::Here { pane, row } => {
             if land_on_pane(ctx, pane, row.as_ref()) {
@@ -396,6 +420,151 @@ fn pending_agent_has_arrived(state: &crate::state::State) -> bool {
 /// `false` when the pane is not in this client's layout — what a summary taken by a poll before the
 /// pane exited looks like from here. The session is still opened either way, which is the half of
 /// the request that survives its destination going away.
+/// A conversation an agent row stands for that runs in the background of its pane, as the session
+/// server's resume command for its agent reopens it.
+pub(crate) struct BackgroundConversation {
+    /// The host of the session the row is in.
+    target: Option<crate::session::remote::RemoteTarget>,
+    /// Whether the pane's directory is on a machine other than its session's, as in an ssh login.
+    elsewhere: bool,
+    cwd: Option<String>,
+    resume: crate::session::protocol::SpawnAgentResume,
+}
+
+/// The conversation activating `location` reopens in a new pane, when the `open` setting (or, for
+/// `alternate`, the other choice) says to and the row is one. A row that is not a background
+/// conversation has nothing to reopen and is gone to as usual: the program's own agent, the
+/// conversation its pane shows, and a row whose conversation id nobody published.
+fn conversation_to_open(
+    state: &crate::state::State,
+    location: &AgentLocation,
+    alternate: bool,
+) -> Option<BackgroundConversation> {
+    let mut open = state.config.sidebar.agents_config().open;
+    if alternate {
+        open = open.other();
+    }
+    if open != crate::config::AgentRowOpen::Pane {
+        return None;
+    }
+    background_conversation(state, location)
+}
+
+/// What activating `location` does when `open` applies to it, as a row or the Agents view names it.
+pub(crate) fn open_label(
+    location: &AgentLocation,
+    open: crate::config::AgentRowOpen,
+) -> &'static str {
+    match open {
+        crate::config::AgentRowOpen::Pane => "new pane",
+        crate::config::AgentRowOpen::Switch
+            if matches!(location, AgentLocation::OtherSession { .. }) =>
+        {
+            "open there"
+        }
+        crate::config::AgentRowOpen::Switch => "go to",
+    }
+}
+
+/// What Ctrl+click on a sidebar row does, while Ctrl is held over it. `None` unless the row is a
+/// background run, the only agent row Ctrl+click treats differently.
+pub(crate) fn ctrl_hint(
+    state: &crate::state::State,
+    location: &AgentLocation,
+) -> Option<&'static str> {
+    (state.sidebar.ctrl_held
+        && crate::update::sidebar::ctrl_preview_active(state)
+        && background_conversation(state, location).is_some())
+    .then(|| open_label(location, state.config.sidebar.agents_config().open.other()))
+}
+
+/// See [`BackgroundConversation`]. `None` for a row of a session this client holds no connection
+/// to, whose panes it cannot read.
+pub(crate) fn background_conversation(
+    state: &crate::state::State,
+    location: &AgentLocation,
+) -> Option<BackgroundConversation> {
+    let row = location.row()?;
+    let attachment = match location {
+        AgentLocation::Here { .. } => state.current(),
+        AgentLocation::OtherSession {
+            target, session, ..
+        } => state.navigation_attachments().find(|attachment| {
+            attachment.remote_target == *target
+                && attachment.session_name.as_deref() == Some(session.as_str())
+        })?,
+    };
+    let pane = attachment
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.panes.iter())
+        .find(|pane| pane.id == location.pane())?;
+    let published =
+        pane.terminal.published_rows.iter().find(|published| {
+            published.has_key(row) && published.is_agent() && !published.active
+        })?;
+    let session = published.native_session.clone()?;
+    // The agent whose definition reopens the conversation is the one running the pane, as its
+    // hooks report it or detection finds it. A row's own identity is no definition when neither
+    // does: it is named after the row.
+    let agent = pane
+        .terminal
+        .agent_integration
+        .as_ref()
+        .map(|report| report.identity.id.clone())
+        .or_else(|| {
+            pane.terminal
+                .detected_agent
+                .as_ref()
+                .map(|detected| detected.agent.id.clone())
+        })?;
+    let place = pane.agent_place(Some(row));
+    Some(BackgroundConversation {
+        target: attachment.remote_target.clone(),
+        elsewhere: place.host.is_some(),
+        cwd: place.cwd,
+        resume: crate::session::protocol::SpawnAgentResume { agent, session },
+    })
+}
+
+/// Reopen a background conversation in a new pane of the current session, beside the focused one,
+/// where its agent's resume command runs it. Its own pane keeps running whatever it shows.
+fn open_in_pane(ctx: &mut Context<AppRoot>, conversation: BackgroundConversation) -> Update {
+    let capability = crate::session::protocol::Capability::SpawnAgentResume;
+    let current = ctx.state.current();
+    let refusal = if conversation.elsewhere || conversation.target != current.remote_target {
+        Some("The conversation runs on another machine".to_string())
+    } else if !crate::ops::worktrees::can_spawn_pane(&ctx.state) {
+        Some("A pane cannot be opened in this session".to_string())
+    } else {
+        crate::input::capability_disabled_reason(
+            Some(capability),
+            current
+                .session_client
+                .as_ref()
+                .map(|client| client.capabilities()),
+        )
+    };
+    if let Some(reason) = refusal {
+        crate::pane::pty_events::notify_error(ctx, "Open failed", &reason);
+        return Update::full();
+    }
+    let workspace = ctx.state.current().active_workspace;
+    let source = ctx.state.current().workspaces[workspace].focused_pane;
+    ctx.state.current_mut().engaged = true;
+    crate::pane::lifecycle::spawn_interactive_pane(
+        ctx,
+        workspace,
+        source,
+        crate::state::PaneIdentity {
+            cwd: conversation.cwd,
+            agent_resume: Some(conversation.resume),
+            ..Default::default()
+        },
+    )
+    .1
+}
+
 fn land_on_pane(
     ctx: &mut Context<AppRoot>,
     pane: crate::pane::id::PaneId,
@@ -1432,6 +1601,89 @@ mod tests {
                     .count(),
                 1,
                 "{frame}"
+            );
+        });
+    }
+
+    /// A run its pane keeps in the background reopens in a pane of its own by the way Enter does
+    /// not, through its agent's resume command on the session server. The run its pane shows has
+    /// nothing to reopen, and is gone to either way.
+    #[test]
+    fn ctrl_enter_reopens_a_background_run_in_a_new_pane() {
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use crate::session::protocol::ClientMessage;
+        use crate::session::protocol::DetectedAgentState::Idle;
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = session_with_agents(&[(2, "Claude", Idle)], 2);
+            let (client, outbound) = SessionClient::test_channel();
+            let run = |id: &str, active| crate::session::protocol::PublishedRow {
+                publisher: "sessions".into(),
+                kind: crate::session::protocol::PublisherKind::Agent,
+                live_session: None,
+                reported: false,
+                id: id.into(),
+                title: format!("run {id}"),
+                status: "idle".into(),
+                reason: None,
+                active,
+                work_started_at: None,
+                cwd: Some(format!("/x/rozi-{id}")),
+                project: None,
+                native_session: Some(format!("conversation-{id}")),
+            };
+            let current = backend.state_mut().current_mut();
+            current.session_client = Some(client);
+            current.session_attached = true;
+            let mut shared = crate::state::SharedSessionState::new(1);
+            shared.controller = Some(1);
+            current.shared = Some(shared);
+            current.workspaces[0].panes[1].terminal.published_rows =
+                vec![run("behind", false), run("shown", true)];
+            let location = |id: &str| AgentLocation::Here {
+                pane: 2,
+                row: Some(crate::session::protocol::RowKey {
+                    publisher: "sessions".into(),
+                    id: id.into(),
+                }),
+            };
+            let spawned = |backend: &mut TestBackend<AppRoot>, msg| {
+                backend.dispatch(msg).unwrap();
+                outbound
+                    .try_iter()
+                    .filter_map(|message| match message {
+                        ClientOutbound::Control(ClientMessage::SpawnPane {
+                            cwd,
+                            agent_resume,
+                            ..
+                        }) => Some((cwd, agent_resume)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                spawned(&mut backend, Msg::AgentPickerActivate(location("behind"))),
+                Vec::new()
+            );
+            assert_eq!(
+                spawned(
+                    &mut backend,
+                    Msg::AgentPickerActivateOther(location("shown"))
+                ),
+                Vec::new()
+            );
+            assert_eq!(
+                spawned(
+                    &mut backend,
+                    Msg::AgentPickerActivateOther(location("behind"))
+                ),
+                vec![(
+                    Some("/x/rozi-behind".to_string()),
+                    Some(crate::session::protocol::SpawnAgentResume {
+                        agent: "claude".into(),
+                        session: "conversation-behind".into(),
+                    })
+                )]
             );
         });
     }

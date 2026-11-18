@@ -9,7 +9,7 @@ use tui_lipan::prelude::*;
 
 use super::row::{Priority, Row, Shape, SidebarRow};
 use crate::AppRoot;
-use crate::state::{SidebarTone, State, TreeItem, TreeLine};
+use crate::state::{RowTarget, SidebarTone, State, TreeItem, TreeLine};
 
 pub(super) fn tree_rows(state: &State, items: Vec<TreeItem>) -> Vec<SidebarRow> {
     let mut rows = Vec::with_capacity(items.len());
@@ -314,16 +314,14 @@ pub(super) fn tab(
         }))
         .on_pointer_move(super::callback(ctx, move |_| {
             crate::Msg::SidebarPointerMoved(panel)
-        }));
-    // Only the Worktrees tab has a second way to open a row; elsewhere Ctrl stays a plain click.
-    if matches!(tab, crate::config::SidebarTab::Worktrees) {
-        tree = tree.on_ctrl_activate(super::callback(ctx, move |event: TreeEvent| {
+        }))
+        // Checkouts and agent rows open a second way; any other row takes it as a plain click.
+        .on_ctrl_activate(super::callback(ctx, move |event: TreeEvent| {
             crate::Msg::SidebarRowCtrlActivate {
                 panel,
                 index: event.index,
             }
         }));
-    }
     if let Some(index) = cursor {
         tree = tree.selected(index);
     }
@@ -354,9 +352,19 @@ fn node(
     } else {
         ListItemRole::Header
     });
+    // Holding Ctrl over a background run says what Ctrl+click does with it.
+    let ctrl_hint = match &row.target {
+        RowTarget::Agent(location) => crate::ops::agents::ctrl_hint(&ctx.state, location),
+        _ => None,
+    };
     let mut node = TreeNode::new(metadata);
     node = match row.kind {
-        super::row::RowKind::Item(row) => {
+        super::row::RowKind::Item(mut row) => {
+            if let Some(hint) = ctrl_hint {
+                *row = row
+                    .hover_badge_text(hint, super::super::fg_only(&ctx.state.theme.accent))
+                    .priority(Priority::Description);
+            }
             let parts = row.parts(ctx, selected, hovered, close);
             // Content styles are app policy; Tree owns the row geometry and interactions.
             node.content(parts.content)

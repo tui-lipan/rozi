@@ -75,11 +75,14 @@ pub enum Capability {
     /// [`super::ClientMessage::ActivatePublishedRow`] to it as
     /// [`super::ServerMessage::PublishActivation`].
     SessionPublish,
+    /// The server reopens an agent conversation in a new pane: it takes
+    /// [`super::ClientMessage::SpawnPane`] with `agent_resume`.
+    SpawnAgentResume,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 14] = [
+    pub const ALL: [Capability; 15] = [
         Capability::AgentAttachments,
         Capability::AgentConversations,
         Capability::AgentReplyLater,
@@ -94,6 +97,7 @@ impl Capability {
         Capability::RuntimeMetrics,
         Capability::SessionPublish,
         Capability::SessionSharing,
+        Capability::SpawnAgentResume,
     ];
 
     /// The name this capability travels under.
@@ -113,6 +117,7 @@ impl Capability {
             Capability::SessionPublish => "session-publish",
             Capability::AgentConversations => "agent-conversations",
             Capability::AgentAttachments => "agent-attachments",
+            Capability::SpawnAgentResume => "spawn-agent-resume",
         }
     }
 
@@ -131,6 +136,7 @@ impl Capability {
             | Self::AgentAttachments
             | Self::SessionSharing
             | Self::SessionPublish => "0.0.50",
+            Self::SpawnAgentResume => "0.1.1",
         }
     }
 

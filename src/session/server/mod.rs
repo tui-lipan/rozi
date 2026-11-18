@@ -2287,6 +2287,9 @@ fn wire_local(owner: Option<ClientId>) -> bool {
 pub struct PaneResume {
     /// The agent's display label, for the notice shown if the resume fails.
     pub label: String,
+    /// The conversation being reopened. A snapshot names it until the agent says which
+    /// conversation it is in, so a pane whose agent has not reported yet still restores into it.
+    pub conversation: RetainedResume,
     /// What reaches the conversation when the resume is refused because it is still running
     /// elsewhere. Spent once tried.
     pub attach: Option<Vec<String>>,
@@ -2305,6 +2308,8 @@ pub struct PaneResume {
 pub(super) struct AgentResumeLaunch {
     /// The agent's display label, for the notice shown if the resume command fails.
     pub(super) label: String,
+    /// The conversation `launch` reopens.
+    pub(super) conversation: RetainedResume,
     pub(super) launch: crate::pane::launch::PaneLaunch,
     /// What reaches the conversation when `launch` is refused because it is still running
     /// elsewhere. A held line chains it behind `launch` with `||`; a launched pane runs it when
@@ -2317,8 +2322,8 @@ struct SpawnRequest {
     owner: Option<ClientId>,
     generation: u64,
     launch: Option<crate::pane::launch::PaneLaunch>,
-    /// Runs in place of `launch` without replacing it. Only resurrection sets this; see
-    /// [`AgentResumeLaunch`].
+    /// Runs in place of `launch` without replacing it, for resurrection or a client reopening a
+    /// conversation; see [`AgentResumeLaunch`].
     agent_resume: Option<AgentResumeLaunch>,
     cwd: Option<String>,
     title: Option<String>,

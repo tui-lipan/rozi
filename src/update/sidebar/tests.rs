@@ -2978,6 +2978,7 @@ fn the_agents_tab_can_name_each_repository_once() {
         let tab = SidebarTab::Agents {
             config: crate::config::SidebarAgentsConfig {
                 worktrees: crate::config::WorktreeLayout::Repository,
+                ..Default::default()
             },
         };
         let mut backend = focused_sidebar_backend(vec![tab.clone()]);

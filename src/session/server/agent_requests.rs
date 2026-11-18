@@ -31,6 +31,17 @@ const QUIET_WINDOW: Duration = Duration::from_secs(2);
 /// How long after delivery a stopped agent that was never seen leaving its stopped state counts
 /// as having answered anyway, so a turn too short to observe cannot hold its slot forever.
 const UNDETECTED_TURN: Duration = Duration::from_secs(60);
+/// How long after delivery an agent that has neither started a turn nor shown the request is
+/// checked for having taken it at all. A program still starting, or busy redrawing, can drop
+/// what is typed into it without a trace.
+const DELIVERY_CHECK: Duration = Duration::from_secs(10);
+/// How many times a request is typed into an agent that shows no trace of it.
+const MAX_DELIVERY_ATTEMPTS: u8 = 2;
+/// The trailing lines of a pane, visible screen and scrollback, searched for a delivered request.
+const RECENT_LINES: usize = 500;
+/// Why a request fails when its agent never took it.
+const NOT_TAKEN: &str =
+    "the agent did not take the request: it never appeared on the agent's screen";
 
 pub(super) struct AgentRequestStore {
     /// Oldest first.
@@ -45,6 +56,7 @@ pub(super) struct AgentRequestStore {
     stopped_since: HashMap<protocol::AgentRef, Instant>,
     pub(super) quiet: Duration,
     undetected_turn: Duration,
+    delivery_check: Duration,
     /// Bumped on every change to `requests`, so attached clients are told only when it moves.
     revision: u64,
     /// The revision attached clients were last sent, and what they were sent.
@@ -62,6 +74,7 @@ impl Default for AgentRequestStore {
             stopped_since: HashMap::new(),
             quiet: QUIET_WINDOW,
             undetected_turn: UNDETECTED_TURN,
+            delivery_check: DELIVERY_CHECK,
             revision: 0,
             sent_revision: 0,
             sent: Vec::new(),
@@ -137,9 +150,27 @@ fn shown_in_asker_label(c: char) -> bool {
 struct DeliverySlot {
     request: String,
     tracker: AgentTurnTracker,
+    /// When the request was last typed.
     delivered: Instant,
     /// Whether the agent has been seen leaving its stopped state since delivery.
     departed: bool,
+    /// Whether the request has been seen on the agent's screen, so it is known to have arrived.
+    shown: bool,
+    /// How many times the request has been typed.
+    attempts: u8,
+    /// The pane's recent text just before the request was last typed, to tell a delivery that
+    /// left no trace at all from a screen that moved on to something else.
+    before: u64,
+}
+
+/// What became of a delivered request its agent has neither started nor answered.
+enum Delivery {
+    /// It is on the agent's screen.
+    Shown,
+    /// Nothing on the pane changed: what was typed was dropped.
+    Lost,
+    /// The pane changed, but never showed it.
+    Missing,
 }
 
 struct PendingAwait {
@@ -1099,11 +1130,102 @@ impl SessionServer {
             .expect("listed slot");
         slot.tracker.adopt_native_session(native_session);
         slot.departed |= !stopped;
-        let ended = slot.tracker.turn_ended(stopped, Some(runtime.state))
-            || (stopped && !slot.departed && slot.delivered.elapsed() >= undetected_turn);
-        if ended {
+        let elapsed = slot.delivered.elapsed();
+        let turn_ended = slot.tracker.turn_ended(stopped, Some(runtime.state));
+        let unconfirmed = stopped && !slot.departed && !slot.shown && !turn_ended;
+        let undetected = stopped && !slot.departed && elapsed >= undetected_turn;
+        let id = slot.request.clone();
+        // Neither a turn, a reply, nor the screen has shown that the agent took the request.
+        if unconfirmed
+            && (undetected || elapsed >= self.agent_requests.delivery_check)
+            && self.awaiting_delivery(&id)
+        {
+            match self.delivery(target) {
+                Delivery::Shown => {
+                    self.agent_requests
+                        .slots
+                        .get_mut(target)
+                        .expect("listed slot")
+                        .shown = true;
+                }
+                // Until the turn is given up on, a dropped request is typed again.
+                Delivery::Lost if !undetected && self.retype_request(target) => return,
+                Delivery::Lost | Delivery::Missing => {
+                    return self.finish_request_turn(target, TurnOutcome::Failed(NOT_TAKEN.into()));
+                }
+            }
+        }
+        if turn_ended || undetected {
             self.answer_request_from_screen(target);
         }
+    }
+
+    /// Whether request `id` still needs proof its agent took it: it is unanswered, and its agent
+    /// has not promised a later reply, which it could only do having read it.
+    fn awaiting_delivery(&self, id: &str) -> bool {
+        self.agent_requests
+            .get(id)
+            .is_some_and(|stored| stored.info.state == AgentRequestState::Active && !stored.later)
+    }
+
+    /// Whether `target`'s pane shows the request it was given, and if not, whether anything on
+    /// it changed since the request was typed.
+    fn delivery(&self, target: &protocol::AgentRef) -> Delivery {
+        let slot = self.agent_requests.slots.get(target).expect("listed slot");
+        let Some(text) = self.recent_pane_text(target.pane.pane_id) else {
+            return Delivery::Missing;
+        };
+        if shows_request(&text, &slot.request) {
+            Delivery::Shown
+        } else if fingerprint(&text) == slot.before {
+            Delivery::Lost
+        } else {
+            Delivery::Missing
+        }
+    }
+
+    /// Type `target`'s request again after the first typing left no trace, when nothing stops a
+    /// delivery now. False when it cannot be retyped, having been typed as often as it may be.
+    fn retype_request(&mut self, target: &protocol::AgentRef) -> bool {
+        let slot = self.agent_requests.slots.get(target).expect("listed slot");
+        if slot.attempts >= MAX_DELIVERY_ATTEMPTS {
+            return false;
+        }
+        let id = slot.request.clone();
+        let blocked = self.input_locked
+            || self.validate_agent_input_reference(target).is_err()
+            || self.refuse_unannounced_dialog(target.pane.pane_id).is_err();
+        if blocked {
+            // Typed nowhere yet; the next pump looks again, until the turn is given up on.
+            return true;
+        }
+        let request = &self.agent_requests.get(&id).expect("slot request").info;
+        let frame = self.request_frame(request);
+        let before = self
+            .recent_pane_text(target.pane.pane_id)
+            .map(|text| fingerprint(&text));
+        let typed = self
+            .session_prompt_bytes(target.pane.pane_id, &frame)
+            .and_then(|bytes| self.session_write_input(target.pane.pane_id, bytes));
+        if typed.is_err() {
+            return false;
+        }
+        let slot = self
+            .agent_requests
+            .slots
+            .get_mut(target)
+            .expect("listed slot");
+        slot.attempts += 1;
+        slot.delivered = Instant::now();
+        slot.before = before.unwrap_or_default();
+        true
+    }
+
+    /// The trailing [`RECENT_LINES`] of pane `pane`, scrollback included.
+    fn recent_pane_text(&self, pane: PaneId) -> Option<String> {
+        let screen = self.panes.get(&pane)?.screen();
+        let total = screen.total_text_lines();
+        Some(screen.export_text(total.saturating_sub(RECENT_LINES), total))
     }
 
     /// Answer `target`'s request from what its turn left on the terminal. The slot stays occupied
@@ -1317,6 +1439,10 @@ impl SessionServer {
         let fence = self
             .agent_responses
             .fence(self.response_native_session(&to));
+        let before = self
+            .recent_pane_text(to.pane.pane_id)
+            .map(|text| fingerprint(&text))
+            .unwrap_or_default();
         // The delivery may end without the agent ever leaving its stopped state, so the next
         // request waits out a fresh quiet window instead of inheriting the one before it.
         self.agent_requests.stopped_since.remove(&to);
@@ -1327,6 +1453,9 @@ impl SessionServer {
                 tracker: AgentTurnTracker::new(true, Some(state), false, Some(fence)),
                 delivered: Instant::now(),
                 departed: false,
+                shown: false,
+                attempts: 1,
+                before,
             },
         );
         if let Err(response) = self.session_write_input(to.pane.pane_id, bytes) {
@@ -1394,6 +1523,19 @@ impl SessionServer {
             }
         }
     }
+}
+
+/// Whether `text` shows request `id`: its id, which the typed request opens with, even where the
+/// terminal wrapped it across rows.
+fn shows_request(text: &str, id: &str) -> bool {
+    text.contains(id) || text.replace('\n', "").contains(id)
+}
+
+fn fingerprint(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn state_name(state: AgentRequestState) -> &'static str {

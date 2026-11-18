@@ -329,7 +329,9 @@ rozi agents ask --target <PANE_ID> --wait --timeout 30m --format text -- 'Review
   `source: "terminal"` answer: its screen, not its reply. Start Codex with
   `-c sandbox_workspace_write.network_access=true`, or outside the sandbox.
 - Rozi types the request into the target only once it is stopped, shows no dialog, and nobody has
-  typed into its pane for two seconds; until then it is `queued`, with a `reason`.
+  typed into its pane for two seconds; until then it is `queued`, with a `reason`. A request the
+  agent never shows is typed once more, then fails with `the agent did not take the request`;
+  ask again once the agent is ready.
 - Without `--wait`, `ask` returns the request and its `id` at once; `rozi agents await <ID>
   --timeout <DUR>` waits for it later. A timeout leaves the request in place, so await again.
 - `agents prompt` types exact text, such as a slash command, and its `--result` falls back to the

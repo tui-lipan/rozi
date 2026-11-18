@@ -438,6 +438,59 @@ fn a_run_that_answers_a_request_counts_apart() {
 }
 
 #[test]
+fn a_request_that_leaves_no_trace_is_typed_once_more_then_fails() {
+    let mut rig = Rig::new(&[3]);
+    rig.server.agent_requests.delivery_check = Duration::ZERO;
+    // The server's copy of the screen never shows what the fake agent echoes: as far as it can
+    // tell, the program dropped the request without a trace, like one still starting up.
+    let request = rig.ask(None, 3, "What is 2+3?");
+    let typed = format!("Request {}", request.id);
+    assert!(rig.typed_into(3, &typed));
+    rig.server.pump_agent_requests();
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
+    assert!(rig.typed_into(3, &typed), "typed again");
+
+    rig.server.pump_agent_requests();
+    let failed = rig.request(&request.id);
+    assert_eq!(failed.state, AgentRequestState::Failed);
+    assert_eq!(failed.reason.as_deref(), Some(NOT_TAKEN));
+    assert!(rig.server.agent_requests.slots.is_empty());
+}
+
+#[test]
+fn only_a_pane_showing_the_request_counts_as_having_taken_it() {
+    let mut rig = Rig::new(&[3, 4]);
+    rig.server.agent_requests.delivery_check = Duration::ZERO;
+    let show = |rig: &mut Rig, pane: PaneId, text: &str| {
+        rig.server
+            .panes
+            .get_mut(&pane)
+            .unwrap()
+            .screen_mut()
+            .process_bytes(text.as_bytes());
+    };
+
+    // Shown, here wrapped across two rows: it arrived, so it waits for its turn as before.
+    let shown = rig.ask(None, 3, "What is 2+3?");
+    let (head, tail) = shown.id.split_at(6);
+    show(&mut rig, 3, &format!("Request {head}\r\n{tail}:\r\n"));
+    rig.server.pump_agent_requests();
+    assert_eq!(rig.request(&shown.id).state, AgentRequestState::Active);
+    let slot = &rig.server.agent_requests.slots[&rig.agent(3)];
+    assert!(slot.shown);
+    assert_eq!(slot.attempts, 1);
+
+    // The pane moved on to something else without showing it: typing it again could land
+    // anywhere, so it fails instead.
+    let missing = rig.ask(None, 4, "What is 2+3?");
+    show(&mut rig, 4, "Do you trust this folder?\r\n");
+    rig.server.pump_agent_requests();
+    let failed = rig.request(&missing.id);
+    assert_eq!(failed.state, AgentRequestState::Failed);
+    assert_eq!(failed.reason.as_deref(), Some(NOT_TAKEN));
+}
+
+#[test]
 fn requests_reach_a_target_one_turn_at_a_time() {
     let mut rig = Rig::new(&[2, 3, 4]);
 
@@ -1110,6 +1163,9 @@ fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
                 tracker: AgentTurnTracker::new(true, Some(protocol::AgentState::Idle), false, None),
                 delivered: Instant::now(),
                 departed: true,
+                shown: true,
+                attempts: 1,
+                before: 0,
             },
         );
     }

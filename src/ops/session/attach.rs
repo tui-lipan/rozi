@@ -149,8 +149,10 @@ pub(crate) fn switch_to_parked(
     ctx.state.commands_dirty = true;
     // Snap to the restored session's geometry rather than interpolating from the previous view.
     ctx.state.animation = crate::layout::anim::GeometryAnimation::None;
-    // Transitions still under way when this session was parked lost their timers while it was.
-    // Taken before the missed layout is applied: panes it adds come with timers of their own.
+    // A transition still under way when this session was parked lost any timer that fired while it
+    // was. One that had not fired yet stays valid alongside its replacement; every stage is a no-op
+    // the second time. Taken before the missed layout is applied: panes it adds come with timers of
+    // their own.
     let rearmed = crate::pane::lifecycle::rearm_pane_transitions(&ctx.state);
     // The layout carries the open timers of panes added while parked; without them those panes
     // never finish opening, so they stay hidden and cannot take focus.

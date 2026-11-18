@@ -184,10 +184,9 @@ pub(super) fn finish_open(
     }
     let opened = match find_pane_mut(&mut ctx.state, id) {
         Some(pane) if pane.pty_generation != generation => return Update::none(),
-        Some(pane) if !pane.closing => {
-            pane.opening = false;
-            true
-        }
+        // Only the timer that ends the opening counts. A pane whose transition was armed again
+        // (a session coming back from the background) can hear a second one.
+        Some(pane) if !pane.closing => std::mem::replace(&mut pane.opening, false),
         _ => false,
     };
     if opened {
@@ -893,7 +892,16 @@ mod tests {
                 state.config.animations,
                 pane
             ));
+            // A newer pane event, which a repeated open timer must not overwrite.
+            state.animation = crate::layout::anim::GeometryAnimation::Close;
         }
+        backend
+            .dispatch(crate::Msg::FinishOpen(0, id, generation))
+            .expect("repeated open timer");
+        assert_eq!(
+            backend.state().animation,
+            crate::layout::anim::GeometryAnimation::Close
+        );
 
         backend
             .dispatch(crate::Msg::ActivatePane(0, id, generation))

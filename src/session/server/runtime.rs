@@ -2235,6 +2235,7 @@ fn compute_pane_runtime(
     let agent_processes = with_escaped_agents(
         agent_processes,
         pane.runtime_marker.as_deref(),
+        semantic.executable.as_deref(),
         agents,
         inspector,
         scan,
@@ -2440,17 +2441,21 @@ fn foreground_job_evidence(
 }
 
 /// `set` with the agents started from its pane that left the pane's process tree, found by the
-/// pane's `marker`, when the tree itself holds no agent.
+/// pane's `marker`.
 ///
-/// Git for Windows' bash starts a program it `exec`s outside its own tree, which leaves the tree
-/// with nothing to recognize. Each escaped process that is the outermost of its own tree is
+/// Git for Windows' bash can start a program outside its own tree, such as an npm shim run from a
+/// forked shell that then exits. Each escaped process that is the outermost of its own tree is
 /// attached under the pane's root, so naming the agent weighs it like any other descendant: two
-/// unrelated escaped agents are as ambiguous as two in the tree. Looking costs reading other
-/// processes, so it happens only for a descendant tree, only when nothing in it is an agent, and
-/// only for a pane spawned with a marker.
+/// unrelated agents are as ambiguous whether they escaped or not.
+///
+/// An agent in the tree does not settle it, because it may be a background job while the program
+/// in use escaped. Only the shell reporting that very agent does, and then the lookup, which reads
+/// other processes, is skipped. It is also skipped for anything but a descendant tree, and for a
+/// pane spawned without a marker.
 fn with_escaped_agents(
     set: Option<AgentProcessSet>,
     marker: Option<&str>,
+    shell_program: Option<&str>,
     agents: Option<&AgentCatalog>,
     inspector: &impl ProcessInspector,
     scan: &mut LazyProcessScan,
@@ -2459,12 +2464,14 @@ fn with_escaped_agents(
     let (Some(marker), Some(agents)) = (marker, agents) else {
         return Some(set);
     };
-    if set.topology != ProcessTopology::DescendantTree
-        || set
-            .processes
-            .iter()
-            .any(|observed| crate::agent_detection::is_agent_process(agents, &observed.process))
-    {
+    let corroborated = shell_program
+        .and_then(|program| agents.by_name(program))
+        .is_some_and(|reported| {
+            set.processes.iter().any(|observed| {
+                crate::agent_detection::process_is_agent(agents, &observed.process, reported.id())
+            })
+        });
+    if set.topology != ProcessTopology::DescendantTree || corroborated {
         return Some(set);
     }
     let escaped = inspector.marked_processes_in(
@@ -6543,36 +6550,59 @@ mod tests {
             processes: vec![observed(1, None, &["bash.exe"])],
         };
         let catalog = catalog();
-        let run = |set: AgentProcessSet, marker: Option<&str>, escaped: Vec<ObservedProcess>| {
+        let run = |set: AgentProcessSet,
+                   marker: Option<&str>,
+                   shell: Option<&str>,
+                   escaped: Vec<ObservedProcess>| {
             let inspector = Escaped(escaped, Cell::new(0));
             let set = with_escaped_agents(
                 Some(set),
                 marker,
+                shell,
                 Some(&catalog),
                 &inspector,
                 &mut LazyProcessScan::default(),
             )
             .unwrap();
-            let named = crate::agent_detection::identify(&catalog, Some(&set), None)
+            let named = crate::agent_detection::identify(&catalog, Some(&set), shell)
                 .map(|(definition, process)| (definition.id().to_string(), process.pid));
             (inspector.1.get(), named)
         };
 
-        assert_eq!(run(bash(), None, claude()), (0, None), "an unmarked pane");
-        let mut codex = bash();
-        codex.processes.push(observed(2, Some(1), &["codex.exe"]));
         assert_eq!(
-            run(codex, Some("m"), claude()),
-            (0, Some(("codex".into(), 2))),
-            "an agent already in the tree"
+            run(bash(), None, None, claude()),
+            (0, None),
+            "an unmarked pane"
         );
         assert_eq!(
-            run(bash(), Some("m"), claude()),
+            run(bash(), Some("m"), None, claude()),
             (1, Some(("claude".into(), 20)))
         );
         let mut two = claude();
         two.push(observed(30, None, &["codex.exe"]));
-        assert_eq!(run(bash(), Some("m"), two), (1, None));
+        assert_eq!(run(bash(), Some("m"), None, two), (1, None));
+
+        // A Codex in the tree, possibly a background job, while the program in use escaped.
+        let with_codex = || {
+            let mut set = bash();
+            set.processes.push(observed(2, Some(1), &["codex.exe"]));
+            set
+        };
+        assert_eq!(
+            run(with_codex(), Some("m"), Some("codex"), claude()),
+            (0, Some(("codex".into(), 2))),
+            "the shell reporting the agent in the tree settles it without looking"
+        );
+        assert_eq!(
+            run(with_codex(), Some("m"), Some("cx"), claude()),
+            (1, None),
+            "an alias says nothing, so both branches count"
+        );
+        assert_eq!(
+            run(with_codex(), Some("m"), Some("claude"), claude()),
+            (1, Some(("claude".into(), 20))),
+            "the shell reporting the escaped agent names it"
+        );
     }
 
     /// A descendant tree that names no agent, because its agents are in unrelated branches or its

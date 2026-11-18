@@ -267,10 +267,11 @@ Try-Bin (Join-Path $env:USERPROFILE '.local\bin\rozi.exe')
 Try-Bin (Join-Path $env:USERPROFILE '.cargo\bin\rozi.exe')
 $dataHome = $env:LOCALAPPDATA
 if (-not $dataHome) { $dataHome = Join-Path $env:USERPROFILE '.local\share' }
-$managedRoot = Join-Path $dataHome 'rozi\remote'
+$legacyRoot = Join-Path $dataHome 'rozi\remote'
+$managedRoot = Join-Path $legacyRoot 'versions'
 Write-Output "home=$env:USERPROFILE"
 Write-Output "managed_root=$managedRoot"
-Get-ChildItem -LiteralPath $managedRoot -Directory | ForEach-Object {
+Get-ChildItem -LiteralPath $managedRoot, $legacyRoot -Directory | ForEach-Object {
   Try-Bin (Join-Path $_.FullName 'rozi.exe')
 }
 Write-Output "probe_done=1"
@@ -837,7 +838,9 @@ fn install_destination(report: &ProbeReport) -> String {
     let family = report.remote_family();
     let Some(root) = report.managed_root.as_deref() else {
         return match family {
-            RemoteFamily::Windows => format!(r"%LOCALAPPDATA%\rozi\remote\{version}\rozi.exe"),
+            RemoteFamily::Windows => {
+                format!(r"%LOCALAPPDATA%\rozi\remote\versions\{version}\rozi.exe")
+            }
             RemoteFamily::Posix => format!(
                 "${{XDG_DATA_HOME:-$HOME/.local/share}}/rozi/remote/{version}/{INSTALL_NAME}"
             ),
@@ -890,7 +893,7 @@ fn ensure_with_confirmation(
         let report = probe_remote_report(target, config)?;
         verify_override_targets_remote(local, &report)?;
         let family = report.remote_family();
-        let path = install_bytes(target, config, local, "ROZI_REMOTE_BINARY override", family)?;
+        let path = install_bytes(target, config, local, &[], family)?;
         return verify_installed(target, config, path);
     }
     if let Some(path) = super::binary::cached(target, config) {
@@ -978,7 +981,12 @@ fn install_for_platforms(
     if local_os == remote_os && local_arch == remote_arch {
         let local = std::env::current_exe()
             .map_err(|err| format!("cannot locate local rozi for install: {err}"))?;
-        return install_bytes(target, config, &local, "same-platform current_exe", family);
+        let companions = if family == RemoteFamily::Windows {
+            windows_companions_beside(&local)?
+        } else {
+            Vec::new()
+        };
+        return install_bytes(target, config, &local, &companions, family);
     }
 
     let triple = rustc_target(&remote_os, &remote_arch).ok_or_else(|| {
@@ -988,13 +996,12 @@ fn install_for_platforms(
     })?;
     let version = env!("CARGO_PKG_VERSION");
     let (_download_dir, local_artifact) = download_release_binary(triple, version)?;
-    install_bytes(
-        target,
-        config,
-        &local_artifact,
-        &format!("release asset {triple}"),
-        family,
-    )
+    let companions = if family == RemoteFamily::Windows {
+        windows_companions_beside(&local_artifact)?
+    } else {
+        Vec::new()
+    };
+    install_bytes(target, config, &local_artifact, &companions, family)
 }
 
 pub(crate) fn family_from_os(os: &str) -> RemoteFamily {
@@ -1013,7 +1020,7 @@ fn install_bytes(
     target: &RemoteTarget,
     config: &RemoteConfig,
     local: &Path,
-    _source: &str,
+    companions: &[PathBuf],
     family: RemoteFamily,
 ) -> Result<String, String> {
     if !local.is_file() {
@@ -1028,7 +1035,7 @@ fn install_bytes(
     }
     match family {
         RemoteFamily::Posix => install_bytes_posix(&resolved, config, local),
-        RemoteFamily::Windows => install_bytes_windows(&resolved, config, local),
+        RemoteFamily::Windows => install_bytes_windows(&resolved, config, local, companions),
     }
 }
 
@@ -1106,7 +1113,7 @@ printf 'installed=%s\n' "$final"
     parse_installed_path(&String::from_utf8_lossy(&output.stdout))
 }
 
-/// Install onto a Windows remote in two steps: `scp` the binary to a temp file (the sftp subsystem
+/// Install onto a Windows remote in two steps: `scp` the bundle to a temporary directory (SFTP
 /// has real flow control), then a small no-stdin `powershell -EncodedCommand` that moves it into
 /// Rozi's private managed-runtime directory.
 ///
@@ -1117,23 +1124,46 @@ fn install_bytes_windows(
     resolved: &ResolvedRemote,
     config: &RemoteConfig,
     local: &Path,
+    companions: &[PathBuf],
 ) -> Result<String, String> {
     if !program_exists("scp") {
         return Err("scp was not found on PATH (required to install onto a Windows remote)".into());
     }
-    // PowerShell only executes a PE payload directly when the staged path retains an executable
-    // extension. Keep the random component while ending in `.exe`.
     let temp_name = windows_temp_name();
+    let staging = tempfile::tempdir().map_err(|err| format!("stage Windows upload: {err}"))?;
+    let upload = staging.path().join(&temp_name);
+    std::fs::create_dir(&upload).map_err(|err| format!("stage Windows upload: {err}"))?;
+    let mut hashes = Vec::new();
+    let mut payload_bytes = 0;
+    for (name, path) in std::iter::once(("rozi.exe", local)).chain(companions.iter().map(|path| {
+        (
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .expect("validated companion name"),
+            path.as_path(),
+        )
+    })) {
+        let mut input = relswap::fs::executable::open_regular_file_secure(path)
+            .map_err(|err| format!("open Windows upload {}: {err}", path.display()))?;
+        let staged = upload.join(name);
+        let mut output =
+            std::fs::File::create(&staged).map_err(|err| format!("stage {name}: {err}"))?;
+        payload_bytes +=
+            std::io::copy(&mut input, &mut output).map_err(|err| format!("stage {name}: {err}"))?;
+        let hash = relswap::sha256_file(&staged).map_err(|err| format!("hash {name}: {err}"))?;
+        hashes.push(format!("'{name}'='{hash}'"));
+    }
+    const INSTALL_SCRIPT: &str = include_str!("install_windows.ps1");
+    std::fs::write(upload.join("install.ps1"), INSTALL_SCRIPT)
+        .map_err(|err| format!("stage Windows installer: {err}"))?;
+    let script_hash = relswap::sha256_bytes(INSTALL_SCRIPT.as_bytes());
 
     let mut scp = scp_base_command(resolved, config);
-    scp.arg(local);
-    scp.arg(format!("{}:{temp_name}", resolved.ssh_destination()));
+    scp.arg("-r").arg(&upload);
+    scp.arg(format!("{}:.", resolved.ssh_destination()));
     scp.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let payload_bytes = std::fs::metadata(local)
-        .map_err(|err| format!("cannot stat {}: {err}", local.display()))?
-        .len();
     let scp_out = run_ssh_command(
         &mut scp,
         None,
@@ -1149,55 +1179,15 @@ fn install_bytes_windows(
     }
 
     let version = env!("CARGO_PKG_VERSION");
+    let hashes = hashes.join(";");
     let script = format!(
         r#"$ErrorActionPreference = 'Stop'
-Add-Type -TypeDefinition @'
-using System.Text;
-using System.Runtime.InteropServices;
-public static class RoziLongPathName {{
-  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-  public static extern uint GetLongPathName(string shortPath, StringBuilder longPath, uint bufferLength);
-}}
-'@ -ErrorAction SilentlyContinue
-function Get-RoziLongPath($path) {{
-  $buffer = New-Object System.Text.StringBuilder 32768
-  $length = [RoziLongPathName]::GetLongPathName($path, $buffer, [uint32]$buffer.Capacity)
-  if ($length -gt 0 -and $length -lt $buffer.Capacity) {{ return $buffer.ToString() }}
-  return $path
-}}
-$dataHome = $env:LOCALAPPDATA
-if (-not $dataHome) {{ $dataHome = Join-Path $env:USERPROFILE '.local\share' }}
-$dir = Join-Path $dataHome 'rozi\remote\{version}'
-New-Item -ItemType Directory -Force -Path $dir | Out-Null
-$final = Join-Path $dir 'rozi.exe'
-$src = Join-Path $env:USERPROFILE '{temp_name}'
-try {{
-  if (Test-Path -LiteralPath $final) {{
-    $item = Get-Item -Force -LiteralPath $final
-    if (-not ($item -is [System.IO.FileInfo]) -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {{
-      throw "refuse_non_regular=$final"
-    }}
-  }}
-  $out = & $src --version 2>$null
-  if ($LASTEXITCODE -ne 0) {{ throw "staged binary failed: $src" }}
-  $protocolMin = $null
-  $protocolMax = $null
-  foreach ($line in $out) {{
-    if ($line -match '^protocol_min=([0-9]+)$') {{ $protocolMin = [uint32]$Matches[1] }}
-    if ($line -match '^protocol_max=([0-9]+)$') {{ $protocolMax = [uint32]$Matches[1] }}
-  }}
-  if ($null -eq $protocolMin -or $null -eq $protocolMax) {{ throw "staged binary has no protocol range: $src" }}
-  if ($protocolMax -lt {MIN_SUPPORTED_PROTOCOL} -or $protocolMin -gt {PROTOCOL_VERSION}) {{
-    throw "staged binary protocol mismatch: $protocolMin..$protocolMax"
-  }}
-  $help = & $src --help 2>$null
-  if ($LASTEXITCODE -ne 0 -or -not ($help -match '--remote')) {{ throw "staged binary has no remote support: $src" }}
-  Move-Item -Force -LiteralPath $src -Destination $final
-  $installed = Get-RoziLongPath (Resolve-Path -LiteralPath $final).Path
-  Write-Output "installed=$installed"
-}} finally {{
-  if (Test-Path -LiteralPath $src) {{ Remove-Item -Force -LiteralPath $src -ErrorAction SilentlyContinue }}
-}}"#
+$installer = Join-Path $env:USERPROFILE '{temp_name}\install.ps1'
+$bytes = [IO.File]::ReadAllBytes($installer)
+$hash = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)).Replace('-', '')
+if ($hash -ne '{script_hash}') {{ throw 'Windows upload installer SHA-256 mismatch' }}
+& ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString($bytes))) '{temp_name}' '{version}' {MIN_SUPPORTED_PROTOCOL} {PROTOCOL_VERSION} @{{{hashes}}}
+"#
     );
     let mut command = ssh_base_command(resolved, config);
     append_ssh_destination(&mut command, resolved);
@@ -1249,7 +1239,20 @@ fn random_hex_token() -> String {
 }
 
 fn windows_temp_name() -> String {
-    format!("rozi.install.{}.tmp.exe", random_hex_token())
+    format!("rozi.install.{}", random_hex_token())
+}
+
+fn windows_companions_beside(payload: &Path) -> Result<Vec<PathBuf>, String> {
+    let companions = ROZI
+        .windows_companions
+        .iter()
+        .map(|name| payload.with_file_name(name))
+        .filter(|path| path.exists())
+        .collect::<Vec<_>>();
+    if !companions.is_empty() && companions.len() != ROZI.windows_companions.len() {
+        return Err("Windows upload has an incomplete ConPTY bundle".to_string());
+    }
+    Ok(companions)
 }
 
 /// `scp` argv mirroring [`ssh_base_command`]'s connection options (scp uses `-P` for the port, not
@@ -1379,6 +1382,10 @@ fn download_release_binary_from_base_with(
     let binary = tmp.join(bin_name);
     std::fs::write(&binary, extracted.payload.data)
         .map_err(|error| format!("write authenticated release payload: {error}"))?;
+    for companion in &extracted.companions {
+        std::fs::write(tmp.join(companion.basename()), &companion.data)
+            .map_err(|error| format!("write authenticated release companion: {error}"))?;
+    }
     Ok((download_dir, binary))
 }
 
@@ -2099,11 +2106,11 @@ mod tests {
 
         let windows = parse_probe_output(
             "platform=windows\nhome=C:\\Users\\Dev\n\
-             managed_root=c:\\users\\dev\\AppData\\Local\\rozi\\remote\n",
+             managed_root=c:\\users\\dev\\AppData\\Local\\rozi\\remote\\versions\n",
         );
         assert_eq!(
             install_destination(&windows),
-            format!(r"~\AppData\Local\rozi\remote\{version}\rozi.exe")
+            format!(r"~\AppData\Local\rozi\remote\versions\{version}\rozi.exe")
         );
 
         // A probe that reported nothing falls back to the installer's own expression.
@@ -2615,12 +2622,11 @@ protocol_max={beyond}
     }
 
     #[test]
-    fn windows_upload_names_are_random_shell_safe_executables() {
+    fn windows_upload_names_are_random_shell_safe_directories() {
         let first = windows_temp_name();
         let second = windows_temp_name();
-        assert_eq!(first.len(), "rozi.install..tmp.exe".len() + 32);
+        assert_eq!(first.len(), "rozi.install.".len() + 32);
         assert!(first.starts_with("rozi.install."));
-        assert!(first.ends_with(".tmp.exe"));
         assert!(
             first["rozi.install.".len()..][..32]
                 .bytes()

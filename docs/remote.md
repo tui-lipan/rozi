@@ -285,8 +285,8 @@ coexist:
 | --- | --- |
 | POSIX, `XDG_DATA_HOME` set to an absolute path | `$XDG_DATA_HOME/rozi/remote/<version>/rozi` |
 | POSIX, otherwise | `$HOME/.local/share/rozi/remote/<version>/rozi` |
-| Windows | `%LOCALAPPDATA%\rozi\remote\<version>\rozi.exe` |
-| Windows, `LOCALAPPDATA` unavailable | `%USERPROFILE%\.local\share\rozi\remote\<version>\rozi.exe` |
+| Windows | `%LOCALAPPDATA%\rozi\remote\versions\<version>\rozi.exe` |
+| Windows, `LOCALAPPDATA` unavailable | `%USERPROFILE%\.local\share\rozi\remote\versions\<version>\rozi.exe` |
 
 When the client and host run the same platform, rozi can copy its own executable. Otherwise, it
 downloads the signed release manifest and the matching archive for the client's version and the

@@ -98,7 +98,7 @@ exclude = [
 # (`terminal-ghostty`, `TerminalScreen::with_engine`, `compress_idle`).
 # 0.44.1: a history read returns a scroll-up the application answered late.
 # 0.45.5: DevTools rebuilds only its own panel, and shows App rows published outside `view()`.
-tui-lipan = { version = "0.45.5", features = [
+tui-lipan = { version = "0.45.6", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",
@@ -114,7 +114,7 @@ tui-lipan = { version = "0.45.5", features = [
 open = "5.4.4"
 # Registry rather than a path dep so Cargo.lock pins the exact engine a signed release was built
 # against. A 0.0.x requirement resolves to that version alone, so an upgrade is always deliberate.
-relswap = "0.0.13"
+relswap = "0.0.14"
 # Posts the weekly usage count. The same version and TLS features relswap resolves, so it adds no
 # crate to the build.
 ureq = { version = "3.3", default-features = false, features = ["rustls", "platform-verifier"] }

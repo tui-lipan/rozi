@@ -363,8 +363,10 @@ pub(super) fn apply_or_hold_geometry(
     generation: u64,
     geometry: crate::state::PaneGeometry,
 ) -> bool {
+    let redraw = attachment.path_family.prompt_redraw_on_resize();
     match attachment.find_pane_mut(pane_id) {
         Some(pane) if pane.pty_generation == generation => {
+            pane.terminal.set_prompt_redraw_on_resize(redraw);
             pane.terminal
                 .apply_server_geometry(geometry.cols, geometry.rows, geometry.cell)
         }

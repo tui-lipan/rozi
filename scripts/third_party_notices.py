@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Write THIRD_PARTY_NOTICES.md: the native code the `ghostty-engine` feature links into rozi.
+"""Write THIRD_PARTY_NOTICES.md for native code in rozi release archives.
 
 Rust crates are listed by `cargo deny`; this file covers what they cannot see. The source of truth
 is the `THIRD_PARTY.md` table shipped in the locked `tui-lipan-ghostty-vt-src` crate. Only rows
 used `linked` end up in the binary; `build` rows run only while compiling. Zig's own runtime
 (`compiler_rt` and the parts of its standard library that libghostty-vt uses) is compiled into the
-same static library and is added here.
+same static library and is added here, alongside the notice for Windows ConPTY.
 
     python3 scripts/third_party_notices.py          # rewrite THIRD_PARTY_NOTICES.md
     python3 scripts/third_party_notices.py --check  # fail if it is out of date
@@ -24,6 +24,31 @@ SOURCE_CRATE = "tui-lipan-ghostty-vt-src"
 ZIG_LICENSE = """The MIT License (Expat)
 
 Copyright (c) Zig contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+"""
+
+
+# Microsoft Terminal LICENSE, as published by Microsoft for the MIT-licensed NuGet package.
+CONPTY_LICENSE = """Copyright (c) Microsoft Corporation. All rights reserved.
+
+MIT License
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -85,6 +110,7 @@ def render() -> str:
     ]
     out += [f"| {name} | {release} | {licence} |" for name, release, licence, _, _ in rows]
     out.append("| Zig runtime (`compiler_rt`, standard library) | 0.17 | MIT |")
+    out.append("| Microsoft ConPTY and OpenConsole (Windows) | 1.25.261109001 | MIT |")
     for name, release, licence, _, files in rows:
         out += ["", f"## {name} {release}", "", f"Licence: {licence}."]
         for file in files.split("<br>"):
@@ -92,6 +118,10 @@ def render() -> str:
             text = (crate / path).read_text(encoding="utf-8").strip("\n")
             out += ["", f"`{Path(path).name}`:", "", "```text", text, "```"]
     out += ["", "## Zig runtime 0.17", "", "Licence: MIT.", "", "```text", ZIG_LICENSE.strip("\n"), "```"]
+    out += [
+        "", "## Microsoft ConPTY and OpenConsole", "", "Licence: MIT.", "",
+        "```text", CONPTY_LICENSE.strip("\n"), "```",
+    ]
     return "\n".join(out) + "\n"
 
 

@@ -982,6 +982,11 @@ pub(crate) enum PathFamily {
 }
 
 impl PathFamily {
+    /// Whether a PTY on this host notifies its shell to repaint prompt input on resize.
+    pub(crate) fn prompt_redraw_on_resize(self) -> bool {
+        self == Self::Posix
+    }
+
     pub(crate) fn local() -> Self {
         Self::from_os(std::env::consts::OS)
     }

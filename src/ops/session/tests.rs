@@ -1682,6 +1682,186 @@ fn attaching_to_parked_session_closes_profile_picker() {
     });
 }
 
+/// Park `dev` (epoch 2) with a pane another client added meanwhile, dispatch `while_parked`, then
+/// switch back to it from Sessions. Returns the layout `dev` missed while parked.
+fn switch_back_to_a_session_that_gained_a_pane(
+    while_parked: Vec<crate::Msg>,
+) -> (
+    tui_lipan::TestBackend<crate::AppRoot>,
+    crate::layout::shared::SharedLayout,
+) {
+    use crate::session::client::SessionClient;
+    use crate::state::{Attachment, ConnectionState};
+
+    let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+    let (dev_client, _dev_rx) = SessionClient::test_channel();
+    let (other_client, _other_rx) = SessionClient::test_channel();
+    let layout = {
+        let state = backend.state_mut();
+        let mut layout = crate::layout::shared::shared_layout_from_state(state, (100, 28));
+        let mut added = layout.workspaces[0].panes[0].clone();
+        added.pane_id = 2;
+        added.generation = 7;
+        layout.workspaces[0].panes.push(added);
+
+        let dev = state.current_mut();
+        dev.session_name = Some("dev".into());
+        dev.session_attached = true;
+        dev.connection = ConnectionState::Connected;
+        dev.session_client = Some(dev_client);
+        dev.pending_session_attach = None;
+        let mut shared = SharedSessionState::new(1);
+        shared.canonical_canvas = Some((100, 28));
+        shared.pane_scrollback.insert((2, 7), 1000);
+        dev.shared = Some(shared);
+        dev.pending_background_layout = Some((5, layout.clone()));
+
+        let mut other = Attachment::new();
+        other.session_name = Some("other".into());
+        other.session_attached = true;
+        other.connection = ConnectionState::Connected;
+        other.session_client = Some(other_client);
+        state.park_current(2, other);
+        state.runtime_epoch = 1;
+        state.current_mut().epoch = 1;
+
+        state.session_picker = Some(SessionPickerState::new(vec![session_row("dev", None)]));
+        state.show_session_picker = true;
+        layout
+    };
+    for message in while_parked {
+        backend.dispatch(message).expect("parked event");
+    }
+    // `update_level` runs the switch without draining what it spawned. A reconnect it starts
+    // really dials `dev`, which no server answers here; moving it to a fresh epoch with a test
+    // client turns that dial's failure into a stale frame, so the test decides how it lands.
+    backend
+        .update_level(crate::Msg::SessionPickerActivate(0))
+        .expect("switch back to the parked session");
+    let state = backend.state_mut();
+    if state.current().pending_session_attach.is_some() {
+        let epoch = state.mint_attachment_id();
+        state.runtime_epoch = epoch;
+        state.current_mut().epoch = epoch;
+        let (client, _rx) = SessionClient::test_channel();
+        let pending = state.current_mut().pending_session_attach.as_mut().unwrap();
+        pending.epoch = epoch;
+        pending.client = Some(client);
+    }
+    (backend, layout)
+}
+
+fn parked_disconnect() -> crate::Msg {
+    crate::Msg::SessionDisconnected {
+        epoch: 2,
+        name: "dev".into(),
+    }
+}
+
+/// A pane another client added while this session was parked opens when the session comes back:
+/// it finishes its open transition and takes input, rather than staying invisible and unfocusable.
+#[test]
+fn a_pane_added_while_parked_opens_when_the_session_returns() {
+    crate::test_support::on_large_stack(|| {
+        let (mut backend, _) = switch_back_to_a_session_that_gained_a_pane(Vec::new());
+        // The batch timer runs on the virtual clock; each pane's own timer on the wall clock.
+        backend.advance(std::time::Duration::from_secs(2));
+        backend
+            .settle(std::time::Duration::from_millis(500))
+            .expect("open timers");
+
+        let pane = crate::pane::lifecycle::find_pane(backend.state(), 2).expect("added pane");
+        assert!(
+            !pane.opening && pane.terminal_active,
+            "opening: {}, terminal_active: {}",
+            pane.opening,
+            pane.terminal_active
+        );
+    });
+}
+
+/// A parked session that lost its transport learns its layout again from the reconnect, which
+/// carries the pane metadata the layout it missed while parked needs and no longer has.
+#[test]
+fn a_disconnected_parked_session_takes_its_layout_from_the_reconnect() {
+    crate::test_support::on_large_stack(|| {
+        let (backend, _) = switch_back_to_a_session_that_gained_a_pane(vec![parked_disconnect()]);
+
+        let dev = backend.state().current();
+        assert_eq!(dev.session_name.as_deref(), Some("dev"));
+        assert!(dev.pending_session_attach.is_some(), "reconnect started");
+        assert!(crate::pane::lifecycle::find_pane(backend.state(), 2).is_none());
+    });
+}
+
+/// The server keeps a pane that exited placed; closing it is this client's job. A pane that exited
+/// while its session was parked and then disconnected still closes once the reconnect lands,
+/// whether the server kept its layout or a replacement server attaches empty and is reseeded from
+/// this client's panes.
+#[test]
+fn a_pane_that_exited_while_parked_closes_after_the_reconnect() {
+    crate::test_support::on_large_stack(|| {
+        let pane_one = tui_lipan::TestBackend::new(crate::AppRoot::default())
+            .state()
+            .current()
+            .workspaces[0]
+            .panes[0]
+            .pty_generation;
+        for server_kept_layout in [true, false] {
+            let exited = crate::Msg::SessionExited {
+                epoch: 2,
+                pane_id: 1,
+                local: false,
+                generation: pane_one,
+                code: 0,
+            };
+            let (mut backend, layout) =
+                switch_back_to_a_session_that_gained_a_pane(vec![exited, parked_disconnect()]);
+            assert!(
+                !crate::pane::lifecycle::find_pane(backend.state(), 1)
+                    .unwrap()
+                    .closing
+            );
+
+            let epoch = backend.state().runtime_epoch;
+            let (panes, layout) = if server_kept_layout {
+                let mut exited_meta =
+                    crate::session::protocol::PaneMeta::for_test(1, pane_one, 1000);
+                exited_meta.exited = Some(0);
+                let added = layout.workspaces[0].panes[1].generation;
+                let added = crate::session::protocol::PaneMeta::for_test(2, added, 1000);
+                (vec![exited_meta, added], Some(layout))
+            } else {
+                (Vec::new(), None)
+            };
+            backend
+                .dispatch(crate::Msg::SessionAttached {
+                    epoch,
+                    session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
+                    session: "dev".to_string(),
+                    client_id: 1,
+                    panes,
+                    layout_rev: 6,
+                    layout,
+                    controller: Some(1),
+                    clients: Vec::new(),
+                    input_locked: false,
+                    allow_takeover: true,
+                    read_only: false,
+                    origin: crate::session::origin::SessionOrigin::default(),
+                    handoff_claimed: None,
+                })
+                .expect("reconnect lands");
+
+            assert!(
+                crate::pane::lifecycle::find_pane(backend.state(), 1)
+                    .is_none_or(|pane| pane.closing),
+                "the exited pane is open after the reconnect (server kept layout: {server_kept_layout})"
+            );
+        }
+    });
+}
+
 /// A cold attach (session running, not retained here) must dismiss Profiles as soon as the
 /// switch starts — not wait for `SessionAttached`, which left the overlay up over Connecting.
 #[test]

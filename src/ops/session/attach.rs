@@ -149,11 +149,19 @@ pub(crate) fn switch_to_parked(
     ctx.state.commands_dirty = true;
     // Snap to the restored session's geometry rather than interpolating from the previous view.
     ctx.state.animation = crate::layout::anim::GeometryAnimation::None;
+    // The layout carries the open timers of panes added while parked; without them those panes
+    // never finish opening, so they stay hidden and cannot take focus.
+    let mut update = Update::full();
     if let Some((rev, layout)) = ctx.state.current_mut().pending_background_layout.take() {
-        crate::layout::shared::apply_shared_layout(ctx, &layout, rev);
+        update = update.merge(crate::layout::shared::apply_shared_layout(
+            ctx, &layout, rev,
+        ));
         ctx.state.animation = crate::layout::anim::GeometryAnimation::None;
     }
-    apply_pending_background_closes(ctx);
+    // A disconnected session closes them once its reconnect lands, under the new epoch.
+    if ctx.state.current().session_attached {
+        apply_pending_background_closes(ctx);
+    }
     // The whole screen just became the other session and the workbar badge carries its name; a
     // toast saying so would be the third copy.
     let focused = ctx.state.current().focused_pane;
@@ -162,11 +170,11 @@ pub(crate) fn switch_to_parked(
     }
     if !ctx.state.current().session_attached {
         if ctx.state.current().remote_session_lost {
-            return Update::full();
+            return update;
         }
-        return reconnect_current_session(ctx);
+        return update.merge(reconnect_current_session(ctx));
     }
-    Update::full()
+    update
 }
 
 /// How long a fresh attach may keep the previous session's picture before the Connecting scene

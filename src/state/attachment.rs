@@ -391,6 +391,10 @@ impl Attachment {
         self.session_client = None;
         self.session_instance = None;
         self.shared = None;
+        // A layout deferred while parked needs the pane metadata just dropped; the reconnect's
+        // attach carries the whole layout again. Pending closes stay: the server keeps an exited
+        // pane placed, so only this client remembers to close it, after the reconnect.
+        self.pending_background_layout = None;
         self.remote_drag = None;
         self.remote_drag_snap.set(None);
         self.prune_replay_inputs_to_pending_spawns();

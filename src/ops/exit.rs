@@ -65,6 +65,7 @@ pub(crate) fn leave_client(ctx: &mut Context<AppRoot>) -> Update {
     if temporary > 0 {
         // Ask about the session on screen. If the one to ask about is parked, come back to it
         // first: a prompt about a session the user cannot see is a prompt they cannot judge.
+        let mut update = Update::none();
         if !keepable_temporary(ctx.state.current())
             && let Some((&id, _)) = ctx
                 .state
@@ -72,9 +73,9 @@ pub(crate) fn leave_client(ctx: &mut Context<AppRoot>) -> Update {
                 .iter()
                 .find(|(_, attachment)| keepable_temporary(attachment))
         {
-            let _ = crate::ops::session::switch_to_parked(ctx, id);
+            update = crate::ops::session::switch_to_parked(ctx, id);
         }
-        return crate::ops::session::open_leave_prompt(ctx, temporary);
+        return update.merge(crate::ops::session::open_leave_prompt(ctx, temporary));
     }
     leave_client_now(ctx, false)
 }

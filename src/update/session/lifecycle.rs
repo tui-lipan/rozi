@@ -339,6 +339,8 @@ pub(crate) fn attached(
         // instead of interpolating from the previous session's pane rectangles.
         ctx.state.animation = GeometryAnimation::None;
         bind_attached_pane_backends(ctx, panes);
+        // Panes that exited while this session was parked and disconnected are still placed.
+        crate::ops::session::apply_pending_background_closes(ctx);
         flush_pending_spawns(ctx);
         // Attaching in control of panes another client sized: publish this client's cells.
         crate::pane::pty_events::resize::publish_controller_geometry(ctx);
@@ -363,7 +365,9 @@ pub(crate) fn attached(
     } else {
         // An empty server (fresh ephemeral, autostarted named session, or one whose panes all
         // exited): seed it with the panes the client already holds in state; the first attacher
-        // (controller) commits rev 1 on the tail chokepoint pass.
+        // (controller) commits rev 1 on the tail chokepoint pass. A pane that exited while this
+        // session was away closes first, so a replacement server does not start it again.
+        crate::ops::session::apply_pending_background_closes(ctx);
         let spawned = spawn_state_panes_on_session(ctx);
         flush_pending_spawns(ctx);
         let generation = ctx.state.current().resize_flush_generation;

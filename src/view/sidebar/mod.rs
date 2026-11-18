@@ -519,6 +519,7 @@ fn close_affordance(
         index,
         armed,
         pointed: hovered && panel_state.hovered_close == Some(index),
+        unlock: matches!(close, crate::state::SidebarClose::WorktreeUnlock { .. }),
     })
 }
 

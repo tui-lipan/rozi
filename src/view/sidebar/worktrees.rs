@@ -13,6 +13,7 @@ use crate::view::vocabulary::{self, CheckoutKind, SessionPresence};
 /// The gutter bar marks the checkout the focused pane is in. Under the pointer or cursor the right
 /// edge names what Enter opens, or with Ctrl held what Ctrl+Enter opens, and the ✕ beside it
 /// removes the checkout behind the same two-step confirmation every destructive sidebar row uses.
+/// A checkout with a live lock shows an unlock glyph there instead, which lifts the lock at once.
 pub(super) fn worktrees_rows(state: &State) -> Vec<SidebarRow> {
     let theme = &state.theme;
     let muted = super::super::fg_only(&theme.muted);
@@ -170,6 +171,10 @@ fn checkout_row(state: &State, row: WorktreeTabRow) -> SidebarRow {
         sidebar_row.closable(crate::state::SidebarClose::Worktree {
             path: tree.path.clone(),
             force: row.force,
+        })
+    } else if row.unlockable {
+        sidebar_row.closable(crate::state::SidebarClose::WorktreeUnlock {
+            path: tree.path.clone(),
         })
     } else {
         sidebar_row

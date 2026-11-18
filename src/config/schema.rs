@@ -2697,6 +2697,12 @@ impl Config {
         }
     }
 
+    /// What stands in for a locked checkout's ✕ in the Worktrees tab: an open padlock. `○` and `◌`
+    /// already mark sessions on the same rail, so the fallback is a shape they do not use.
+    pub fn worktree_unlock_icon(&self) -> &'static str {
+        self.chrome_icon("\u{f09c}", "◇")
+    }
+
     fn chrome_icon(&self, nerd: &'static str, fallback: &'static str) -> &'static str {
         if self.nerd_icons { nerd } else { fallback }
     }

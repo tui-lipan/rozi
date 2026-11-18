@@ -789,6 +789,11 @@ pub(super) fn usage_count_notice_if_due(ctx: &mut Context<AppRoot>) -> bool {
         return false;
     }
     ctx.state.usage_count_notice_due = false;
+    // Claimed only now, as it goes up: a claim taken while the notice waited could lapse and let
+    // another client show it too.
+    if !crate::ops::usage_count::claim_notice() {
+        return false;
+    }
     crate::pane::pty_events::notify_announcement(
         ctx,
         "Anonymous usage count",

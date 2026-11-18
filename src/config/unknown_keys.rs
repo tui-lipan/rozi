@@ -196,13 +196,7 @@ const CONFIRM_KEYS: &[&str] = &[
 
 const SIDEBAR_KEYS: &[&str] = &[
     "layout",
-    "visible",
-    "width",
-    "position",
     "tabs",
-    "panels",
-    "split",
-    "split_ratio",
     "startup",
     "background_follows_canvas",
     "gap",
@@ -581,12 +575,12 @@ mod tests {
 
     #[test]
     fn known_keys_are_silent() {
-        assert!(parse("[sidebar]\nwidth = 42\n[theme]\nname = \"rozi\"\n").is_empty());
+        assert!(parse("[sidebar]\ngap = false\n[theme]\nname = \"rozi\"\n").is_empty());
     }
 
     #[test]
     fn unknown_nested_key_is_reported() {
-        let unknown = parse("[sidebar]\nwidth = 42\nwidht = 7\n");
+        let unknown = parse("[sidebar]\ngap = false\nwidht = 7\n");
         assert_eq!(unknown, ["sidebar.widht"]);
     }
 

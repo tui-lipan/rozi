@@ -536,8 +536,7 @@ pub fn persist_layout_default(
     Ok(path)
 }
 
-/// Save layout without rewriting tab definitions or unrelated settings. Legacy keys are removed
-/// only after their in-memory migration has been resolved successfully.
+/// Save layout without rewriting tab definitions or unrelated settings.
 pub fn persist_sidebar_layout(
     layout: &super::schema::SidebarDockLayout,
     startup: bool,
@@ -551,16 +550,6 @@ pub fn persist_sidebar_layout(
     };
     // A malformed manual edit must never be overwritten by a preference save.
     toml::from_str::<toml::Value>(&text).map_err(|err| format!("Config is invalid: {err}"))?;
-    for key in [
-        "visible",
-        "width",
-        "position",
-        "panels",
-        "split",
-        "split_ratio",
-    ] {
-        text = remove_value_in_section(&text, "sidebar", key);
-    }
     text = remove_layout_sections(&text);
     let value = toml::Value::try_from(layout)
         .map_err(|err| err.to_string())?
@@ -1926,10 +1915,7 @@ mod docking_persistence_tests {
 tabs = [{ name = "jobs", label = "Jobs", command = '''printf '%s' '
 [sidebar.layout.right]
 ' ''' }]
-width = 40
-split = false
 [sidebar.layout.left]
-visible = true
 panel_count = 1
 [[sidebar.layout.left.panels]]
 weight = 0.8
@@ -1950,8 +1936,6 @@ name = "nord"
         assert_eq!(saved["sidebar"]["tabs"], original["sidebar"]["tabs"]);
         assert_eq!(saved["keys"], original["keys"]);
         assert_eq!(saved["theme"], original["theme"]);
-        assert!(saved["sidebar"].get("width").is_none());
-        assert!(saved["sidebar"].get("split").is_none());
         let loaded: SidebarDockLayout = saved["sidebar"]["layout"].clone().try_into().unwrap();
         assert_eq!(loaded, layout);
         persist_sidebar_layout(&loaded, false).unwrap();

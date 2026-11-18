@@ -339,6 +339,8 @@ pub(crate) fn attached(
         // instead of interpolating from the previous session's pane rectangles.
         ctx.state.animation = GeometryAnimation::None;
         bind_attached_pane_backends(ctx, panes);
+        // Panes that exited while this session was parked and disconnected are still placed.
+        crate::ops::session::apply_pending_background_closes(ctx);
         flush_pending_spawns(ctx);
         // Attaching in control of panes another client sized: publish this client's cells.
         crate::pane::pty_events::resize::publish_controller_geometry(ctx);

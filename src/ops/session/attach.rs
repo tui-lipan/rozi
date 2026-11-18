@@ -158,7 +158,10 @@ pub(crate) fn switch_to_parked(
         ));
         ctx.state.animation = crate::layout::anim::GeometryAnimation::None;
     }
-    apply_pending_background_closes(ctx);
+    // A disconnected session closes them once its reconnect lands, under the new epoch.
+    if ctx.state.current().session_attached {
+        apply_pending_background_closes(ctx);
+    }
     // The whole screen just became the other session and the workbar badge carries its name; a
     // toast saying so would be the third copy.
     let focused = ctx.state.current().focused_pane;

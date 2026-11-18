@@ -42,7 +42,8 @@ use super::{
 const MAX_COMMAND_LINE_BYTES: usize = 64 * 1024;
 const MAX_ARG_COUNT: usize = 128;
 const MAX_ARG_CHARS: usize = 4096;
-/// The most processes outside a pane's tree read for its marker in one lookup.
+/// The most processes outside a pane's tree read for its marker in one lookup. A host with more
+/// that could be agents gets no lookup at all.
 const MAX_MARKED_CANDIDATES: usize = 64;
 const MAX_ENVIRONMENT_BYTES: usize = 64 * 1024;
 
@@ -133,12 +134,15 @@ impl ProcessSnapshot {
         if !has_msys_shell {
             return Vec::new();
         }
-        let marked: Vec<u32> = self
-            .table
-            .entries()
-            .iter()
-            .filter(|entry| !in_tree.contains(&entry.pid) && may_be_agent(&entry.name))
-            .take(MAX_MARKED_CANDIDATES)
+        let Some(candidates) = self.table.candidates(
+            &in_tree,
+            |entry| may_be_agent(&entry.name),
+            MAX_MARKED_CANDIDATES,
+        ) else {
+            return Vec::new();
+        };
+        let marked: Vec<u32> = candidates
+            .into_iter()
             .filter(|entry| {
                 let process = observe(entry);
                 process.started.is_some_and(|started| {

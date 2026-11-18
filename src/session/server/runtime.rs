@@ -6497,8 +6497,9 @@ mod tests {
         assert!(agent_process_replaced(&started(1), &started(2), &set));
     }
 
-    /// Escaped agents are looked for only for a marked pane whose tree holds no agent, and are
-    /// then weighed like descendants: one is named, two unrelated ones are ambiguous.
+    /// Escaped agents are looked for in a marked pane unless the shell reports the agent its tree
+    /// already holds, and are then weighed like descendants: one is named, two unrelated ones,
+    /// escaped or not, are ambiguous.
     #[test]
     fn escaped_agents_join_a_marked_tree_that_holds_none() {
         use crate::platform::process::{ObservedProcess, ProcessScan};

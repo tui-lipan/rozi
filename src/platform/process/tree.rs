@@ -69,6 +69,24 @@ impl ProcessTable {
         &self.entries
     }
 
+    /// The entries outside `excluded` that `accept` takes, or `None` when there are more than
+    /// `cap` of them. Only names are looked at, so nothing is opened to find out. Anything chosen
+    /// from part of them could pass over the one that matters, so too many is no answer at all.
+    pub fn candidates(
+        &self,
+        excluded: &HashSet<u32>,
+        accept: impl Fn(&TableEntry) -> bool,
+        cap: usize,
+    ) -> Option<Vec<&TableEntry>> {
+        let candidates: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|entry| !excluded.contains(&entry.pid) && accept(entry))
+            .take(cap + 1)
+            .collect();
+        (candidates.len() <= cap).then_some(candidates)
+    }
+
     /// Those of `pids` that no other of them has among its descendants, by PID: the roots of the
     /// trees they belong to. In a parent cycle the lowest PID stands for the rest.
     pub fn outermost(&self, pids: &[u32]) -> Vec<u32> {
@@ -224,6 +242,21 @@ mod tests {
         assert_eq!(walk.members.len(), MAX_TREE_PROCESSES);
         assert_eq!(walk.members.last().unwrap().pid, 128);
         assert!(!walk.complete, "a walk cut at the cap says so");
+    }
+
+    #[test]
+    fn more_candidates_than_the_cap_are_none_at_all() {
+        let rows: Vec<_> = (1..=66).map(|pid| (pid, 0)).collect();
+        let table = table(&rows);
+        let excluded = HashSet::from([1]);
+        let picked = |cap| {
+            table
+                .candidates(&excluded, |entry| entry.pid != 2, cap)
+                .map(|entries| entries.len())
+        };
+        // 64 accepted outside the excluded one: exactly the cap, then one over it.
+        assert_eq!(picked(64), Some(64));
+        assert_eq!(picked(63), None);
     }
 
     #[test]

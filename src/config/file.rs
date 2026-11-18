@@ -280,68 +280,12 @@ pub(super) struct UserCommandTableSpec {
     pub(super) keep_open: Option<bool>,
 }
 
-/// File-only migration boundary for the previous dock startup flags.
-#[derive(Debug)]
-pub(super) struct SidebarFileLayout {
-    pub(super) layout: super::schema::SidebarDockLayout,
-    pub(super) migrated_docks: Option<[bool; 2]>,
-}
-
-impl<'de> Deserialize<'de> for SidebarFileLayout {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        /// A dock as the file may spell it, with the previous startup flag beside its layout.
-        /// Deserialized field by field, so a bad value is reported at its own key.
-        #[derive(Deserialize, Default)]
-        #[serde(default, deny_unknown_fields)]
-        struct FileDock {
-            visible: Option<bool>,
-            width: Option<u16>,
-            panel_count: Option<usize>,
-            panels: Option<Vec<super::schema::SidebarDockPanel>>,
-        }
-        #[derive(Deserialize, Default)]
-        #[serde(default, deny_unknown_fields)]
-        struct FileLayout {
-            left: Option<FileDock>,
-            right: Option<FileDock>,
-            hidden: Vec<String>,
-        }
-        let file = FileLayout::deserialize(deserializer)?;
-        let visible =
-            [&file.left, &file.right].map(|dock| dock.as_ref().and_then(|dock| dock.visible));
-        let migrated = visible.iter().any(Option::is_some);
-        let dock = |dock: Option<FileDock>| {
-            dock.map(|dock| super::schema::SidebarDockPatch {
-                width: dock.width,
-                panel_count: dock.panel_count,
-                panels: dock.panels,
-            })
-        };
-        Ok(Self {
-            layout: super::schema::SidebarDockLayout::from_patch(
-                super::schema::SidebarLayoutPatch {
-                    left: dock(file.left),
-                    right: dock(file.right),
-                    hidden: file.hidden,
-                },
-            ),
-            migrated_docks: migrated.then_some(visible.map(|visible| visible.unwrap_or(false))),
-        })
-    }
-}
-
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 pub(super) struct SidebarFileConfig {
-    pub(super) layout: Option<SidebarFileLayout>,
+    pub(super) layout: Option<super::schema::SidebarDockLayout>,
     pub(super) startup: Option<bool>,
-    pub(super) visible: Option<bool>,
-    pub(super) width: Option<u16>,
-    pub(super) position: Option<String>,
     pub(super) tabs: Option<Vec<SidebarTabSpec>>,
-    pub(super) panels: Option<Vec<Vec<String>>>,
-    pub(super) split: Option<bool>,
-    pub(super) split_ratio: Option<f32>,
     pub(super) background_follows_canvas: Option<bool>,
     pub(super) gap: Option<bool>,
     pub(super) background: Option<bool>,
@@ -2376,12 +2320,12 @@ mod file_tests {
     #[test]
     fn unknown_key_does_not_drop_the_rest_of_the_file() {
         let loaded = load_config_from_text(
-            "[theme]\nname = \"catppuccin\"\n[sidebar]\nwidth = 42\nwidht = 7\n",
+            "[theme]\nname = \"catppuccin\"\n[sidebar]\ngap = false\nwidht = 7\n",
             Path::new("config.toml"),
         );
         assert!(!loaded.rejected);
         assert_eq!(loaded.config.theme.name, "catppuccin");
-        assert_eq!(loaded.config.sidebar.layout.left.width, 42);
+        assert!(!loaded.config.sidebar.gap);
         assert!(
             loaded
                 .warnings
@@ -2585,7 +2529,7 @@ mod file_tests {
 
             [sidebar.layout.right]
             width = 50
-            visible = "yes"
+            panel_count = "two"
             "#,
             Path::new("config.toml"),
         );
@@ -2593,7 +2537,7 @@ mod file_tests {
             &loaded,
             &[
                 "Invalid config value `sidebar.layout.left.width` (expected an integer, found string \"wide\"); ignored",
-                "Invalid config value `sidebar.layout.right.visible` (expected a boolean, found string \"yes\"); ignored",
+                "Invalid config value `sidebar.layout.right.panel_count` (expected an integer, found string \"two\"); ignored",
             ],
         );
         let layout = &loaded.config.sidebar.layout;

@@ -4,9 +4,9 @@ use super::file::{SidebarFileConfig, SidebarTabSpec};
 use super::input::parse_user_command_action;
 use super::schema::{AgentRowOpen, SidebarAgentsConfig};
 use super::schema::{
-    SIDEBAR_MAX_SPLIT_RATIO, SIDEBAR_MIN_COMMAND_INTERVAL_SECS, SIDEBAR_MIN_SPLIT_RATIO,
-    SIDEBAR_TREE_MAX_ENTRIES_LIMIT, SidebarConfig, SidebarLauncherEntry, SidebarPosition,
-    SidebarTab, SidebarTabId, SidebarTreeConfig, SidebarTreeRoot, SidebarTreeView, WorktreeLayout,
+    SIDEBAR_MIN_COMMAND_INTERVAL_SECS, SIDEBAR_TREE_MAX_ENTRIES_LIMIT, SidebarConfig,
+    SidebarLauncherEntry, SidebarPosition, SidebarTab, SidebarTabId, SidebarTreeConfig,
+    SidebarTreeRoot, SidebarTreeView, WorktreeLayout,
 };
 use super::setting_schema::{SettingSpec, SettingValue, SettingsGroup, SettingsOwner};
 
@@ -368,12 +368,6 @@ pub(super) fn apply_sidebar_config(
         tab_settings: extension_tab_settings,
     } = contributions;
     sidebar.presets = presets;
-    let legacy = raw.visible.is_some()
-        || raw.width.is_some()
-        || raw.position.is_some()
-        || raw.panels.is_some()
-        || raw.split.is_some()
-        || raw.split_ratio.is_some();
     if let Some(background_follows_canvas) = raw.background_follows_canvas {
         sidebar.background_follows_canvas = background_follows_canvas;
     }
@@ -419,54 +413,7 @@ pub(super) fn apply_sidebar_config(
         }
     }
     if let Some(layout) = raw.layout {
-        if legacy {
-            warnings.push("sidebar.layout overrides legacy sidebar geometry keys; remove visible/width/position/panels/split/split_ratio".into());
-        }
-        sidebar.layout = layout.layout;
-        if let Some(docks) = layout.migrated_docks {
-            sidebar.startup = docks.iter().any(|shown| *shown);
-            sidebar.migrated_docks = sidebar.startup.then_some(docks);
-            warnings.push("Legacy sidebar dock visible flags migrated to sidebar.startup and remembered docks; the next layout save writes the new schema".into());
-        }
-    } else if legacy {
-        let mut layout = super::schema::SidebarDockLayout::default();
-        let side = raw
-            .position
-            .as_deref()
-            .and_then(SidebarPosition::parse)
-            .unwrap_or_default();
-        if side == SidebarPosition::Right {
-            std::mem::swap(&mut layout.left, &mut layout.right);
-        }
-        let dock = layout.dock_mut(side);
-        sidebar.startup = raw.visible.unwrap_or(false);
-        sidebar.migrated_docks = sidebar.startup.then_some([
-            side == SidebarPosition::Left,
-            side == SidebarPosition::Right,
-        ]);
-        dock.width = raw.width.unwrap_or(32);
-        if let Some(panels) = raw.panels {
-            dock.panels = panels
-                .into_iter()
-                .map(|tabs| super::schema::SidebarDockPanel { tabs, weight: 1.0 })
-                .collect();
-        }
-        dock.panel_count = if raw.split == Some(false) {
-            1
-        } else {
-            dock.panels.len().clamp(1, 3)
-        };
-        if dock.panels.len() == 2 {
-            let ratio = raw
-                .split_ratio
-                .filter(|r| r.is_finite())
-                .unwrap_or(0.4)
-                .clamp(SIDEBAR_MIN_SPLIT_RATIO, SIDEBAR_MAX_SPLIT_RATIO);
-            dock.panels[0].weight = ratio;
-            dock.panels[1].weight = 1.0 - ratio;
-        }
         sidebar.layout = layout;
-        warnings.push("Legacy sidebar geometry migrated in memory to sidebar.layout; the next layout save writes the new schema. See docs/sidebar.md".into());
     }
     if let Some(startup) = raw.startup {
         sidebar.startup = startup;
@@ -1066,10 +1013,7 @@ mod tests {
         let (config, warnings) = parse(
             "background_follows_canvas = true\ngap = false\nbackground = false\ntab_style = \"round\"\n",
         );
-        assert!(
-            warnings.iter().all(|w| w.starts_with("Legacy sidebar")),
-            "{warnings:?}"
-        );
+        assert!(warnings.is_empty(), "{warnings:?}");
         assert!(config.background_follows_canvas);
         assert!(!config.gap);
         assert!(!config.background);
@@ -1108,10 +1052,7 @@ mod tests {
     #[test]
     fn file_tree_tabs_parse_by_name_with_per_view_defaults() {
         let (config, warnings) = parse(r#"tabs = ["files", "git"]"#);
-        assert!(
-            warnings.iter().all(|w| w.starts_with("Legacy sidebar")),
-            "{warnings:?}"
-        );
+        assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(
             config
                 .tabs
@@ -1227,9 +1168,6 @@ mod tests {
         // sidebar configs use once tabs grow beyond a one-liner.
         let (config, warnings) = parse(
             r#"
-            visible = true
-            width = 40
-            position = "right"
             tabs = [
               "panes",
               { name = "deploy", label = "Deploy", entries = [
@@ -1247,13 +1185,7 @@ mod tests {
             ]
         "#,
         );
-        assert!(
-            warnings.iter().all(|w| w.starts_with("Legacy sidebar")),
-            "{warnings:?}"
-        );
-        assert!(config.startup);
-        assert_eq!(config.migrated_docks, Some([false, true]));
-        assert_eq!(config.layout.right.panel_count, 2);
+        assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(config.tabs.len(), 3);
         assert!(
             matches!(&config.tabs[1], SidebarTab::Launcher { entries, .. } if entries.len() == 3)
@@ -1272,7 +1204,7 @@ mod tests {
     fn semantic_errors_warn_and_skip_only_invalid_items() {
         let (config, warnings) = parse(
             r#"
-            width = 2
+            layout = { left = { width = 2 } }
             tabs = ["bogus", "panes", "panes",
               { name = "panes", label = "Reserved", entries = [] },
               { name = "both", label = "Both", entries = [], command = "date" },
@@ -1363,10 +1295,7 @@ mod tests {
             ] }]
         "#,
         );
-        assert!(
-            warnings.iter().all(|w| w.starts_with("Legacy sidebar")),
-            "{warnings:?}"
-        );
+        assert!(warnings.is_empty(), "{warnings:?}");
         let SidebarTab::Launcher { entries, .. } = &config.tabs[0] else {
             panic!("launcher tab");
         };
@@ -1485,53 +1414,6 @@ mod layout_loading_tests {
             &mut warnings,
         );
         (config, warnings)
-    }
-
-    #[test]
-    fn old_dock_startup_flags_migrate_with_explicit_startup_taking_precedence() {
-        for docks in [[false, false], [true, false], [false, true], [true, true]] {
-            let text = format!(
-                "layout = {{ left = {{ visible = {} }}, right = {{ visible = {} }} }}",
-                docks[0], docks[1]
-            );
-            let (config, warnings) = load(&text, Vec::new(), Default::default());
-            assert_eq!(config.startup, docks.iter().any(|shown| *shown));
-            assert_eq!(config.migrated_docks, config.startup.then_some(docks));
-            assert_eq!(warnings.len(), 1);
-            assert!(warnings[0].contains("migrated to sidebar.startup"));
-            let (explicit, _) = load(
-                &format!("startup = false\n{text}"),
-                Vec::new(),
-                Default::default(),
-            );
-            assert!(!explicit.startup);
-            assert_eq!(explicit.migrated_docks, config.migrated_docks);
-        }
-    }
-
-    #[test]
-    fn legacy_layout_migrates_with_an_explicit_diagnostic() {
-        let (config, warnings) = load(
-            r#"visible = true
-position = "right"
-width = 41
-panels = [["panes", "gone.tab"], ["files"]]
-split = false
-split_ratio = 0.7"#,
-            Vec::new(),
-            Default::default(),
-        );
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].starts_with("Legacy sidebar"));
-        assert!(config.startup);
-        assert_eq!(config.migrated_docks, Some([false, true]));
-        assert_eq!(config.layout.right.width, 41);
-        assert_eq!(config.layout.right.panel_count, 1);
-        assert_eq!(config.layout.right.panels[0].weight, 0.7);
-        assert_eq!(
-            config.layout.location("gone.tab"),
-            Some((SidebarPosition::Right, 0))
-        );
     }
 
     #[test]

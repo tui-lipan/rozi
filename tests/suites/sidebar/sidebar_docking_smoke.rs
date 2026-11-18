@@ -476,7 +476,7 @@ fn startup_preferences_apply_on_restart_without_changing_client_visibility() {
 }
 
 #[test]
-fn a_layout_save_migrates_startup_flags_without_losing_tab_definitions() {
+fn a_layout_save_keeps_tab_definitions_and_unrelated_settings() {
     on_stack(|| {
         let _config = rozi::test_support::lock_config_file();
         rozi::test_support::isolate_user_dirs();
@@ -486,19 +486,13 @@ fn a_layout_save_migrates_startup_flags_without_losing_tab_definitions() {
 name = "nord"
 [sidebar]
 tabs = [{ name = "jobs", label = "Jobs", entries = [] }]
-layout = { left = { visible = false }, right = { visible = true, width = 41, panels = [{ weight = 0.7, tabs = ["jobs", "missing.extension"] }] }, hidden = ["missing.extension"] }
+startup = true
+layout = { right = { width = 41, panels = [{ weight = 0.7, tabs = ["jobs", "missing.extension"] }] }, hidden = ["missing.extension"] }
 "#;
         std::fs::write(&path, text).unwrap();
         let original: toml::Value = toml::from_str(text).unwrap();
         let loaded = rozi::config::load_config();
-        assert!(loaded.config.sidebar.startup);
-        assert_eq!(loaded.config.sidebar.migrated_docks, Some([false, true]));
-        assert!(
-            loaded
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("migrated to sidebar.startup"))
-        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         let mut b = backend(120, 30, [2, 2], [false, false]);
         *b.state_mut() = rozi::state::State::new(loaded.config, Theme::default());
         b.dispatch(Msg::SettingsActivate(SettingsAction::LeftSidebarPanels))
@@ -508,7 +502,6 @@ layout = { left = { visible = false }, right = { visible = true, width = 41, pan
         assert_eq!(saved["sidebar"]["startup"].as_bool(), Some(true));
         assert_eq!(saved["sidebar"]["tabs"], original["sidebar"]["tabs"]);
         assert_eq!(saved["theme"], original["theme"]);
-        assert!(saved["sidebar"]["layout"]["right"].get("visible").is_none());
         let reloaded = rozi::config::load_config();
         assert!(reloaded.warnings.is_empty(), "{:?}", reloaded.warnings);
         assert_eq!(reloaded.config.sidebar.layout.right.width, 41);
@@ -516,7 +509,6 @@ layout = { left = { visible = false }, right = { visible = true, width = 41, pan
             reloaded.config.sidebar.layout.location("missing.extension"),
             Some((Right, 0))
         );
-        assert_eq!(b.state().sidebar.shown, [false, true]);
     });
 }
 
@@ -526,8 +518,10 @@ fn right_only_startup_focuses_a_mounted_panel_without_revealing_a_hidden_dock() 
         let mut b = backend(120, 30, [2, 2], [false, true]);
         let mut config = b.state().config.clone();
         config.sidebar.startup = true;
-        config.sidebar.migrated_docks = Some([false, true]);
         *b.state_mut() = rozi::state::State::new(config, Theme::default());
+        b.state_mut()
+            .sidebar
+            .initialize_visibility(true, Some([false, true]));
         assert_eq!(b.state().sidebar.active_panel().unwrap().dock, Right);
         b.render();
         b.dispatch(Msg::RunAction(Action::FocusSidebar)).unwrap();

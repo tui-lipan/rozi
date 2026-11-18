@@ -344,6 +344,7 @@ pub(crate) fn start(
             if stopped.try_recv() != Err(mpsc::TryRecvError::Empty) {
                 break;
             }
+            let mut delivered = false;
             let result = watch(
                 &target,
                 &config,
@@ -351,10 +352,13 @@ pub(crate) fn start(
                 &wanted,
                 &stopped,
                 &report,
-                &mut attempt,
+                &mut delivered,
             );
             shared.lock().unwrap().take();
             let Err(error) = result else { break };
+            if delivered {
+                attempt = 0;
+            }
             let unsupported = matches!(
                 error.kind(),
                 io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied
@@ -364,7 +368,13 @@ pub(crate) fn start(
             } else {
                 error.to_string()
             };
-            report(Err(message));
+            // A channel that was answering gets one reconnect before its loss is reported. The
+            // host ends a channel that has gone a minute without a request, as when this machine
+            // slept, and reporting that would drop the host's live rows, agents, and attention
+            // marks until the reconnect restores them.
+            if !delivered {
+                report(Err(message));
+            }
             if unsupported {
                 break;
             }
@@ -384,7 +394,7 @@ fn watch(
     wanted: &Mutex<Vec<String>>,
     stopped: &mpsc::Receiver<()>,
     report: &impl Fn(Result<HostSnapshot, String>),
-    attempt: &mut u32,
+    delivered: &mut bool,
 ) -> io::Result<()> {
     let (mut connection, stderr) = connect(target, config)?;
     *shared.lock().unwrap() = Some(connection.try_clone()?);
@@ -411,7 +421,7 @@ fn watch(
             asked = !repositories.is_empty();
             rows.pull_requests = pull_requests(&mut connection, repositories)?;
         }
-        *attempt = 0;
+        *delivered = true;
         if previous.as_ref() != Some(&rows) {
             report(Ok(rows.clone()));
             previous = Some(rows);
@@ -523,6 +533,80 @@ mod tests {
                 String::from_utf8_lossy(&output.stderr)
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reconnect_process_case() {
+        let Ok(reply) = std::env::var("ROZI_MONITOR_RECONNECT_REPLY") else {
+            return;
+        };
+        let mut bytes = Vec::new();
+        write_message(&mut bytes, &Hello::current()).unwrap();
+        write_message(&mut bytes, &serde_json::json!({ "sessions": [] })).unwrap();
+        std::fs::write(reply, bytes).unwrap();
+        let target = RemoteTarget::Alias("monitor-reconnect-fixture".into());
+        let config = crate::config::RemoteConfig::default();
+        super::super::binary::remember(
+            &target,
+            &config,
+            "rozi".into(),
+            super::super::bootstrap::RemoteFamily::Posix,
+        )
+        .unwrap();
+        let (send, receive) = mpsc::channel();
+        let monitor = start(target, 1, config, move |result| {
+            let _ = send.send(result.is_ok());
+        });
+        let reports: Vec<bool> = (0..3)
+            .map(|_| receive.recv_timeout(Duration::from_secs(10)).unwrap())
+            .collect();
+        assert_eq!(
+            reports,
+            [true, true, false],
+            "ok, quiet reconnect, then offline"
+        );
+        drop(monitor);
+    }
+
+    /// A host that ends a channel the client was polling, as after this machine slept, is
+    /// reconnected without a failure in between. One that cannot be reached again is reported.
+    #[cfg(unix)]
+    #[test]
+    fn a_dropped_channel_reconnects_once_before_reporting_the_host_offline() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let reply = root.path().join("reply");
+        let ssh = root.path().join("ssh");
+        // The first two channels answer the handshake and one poll, then close; the host is
+        // unreachable after that.
+        let script = format!(
+            "#!/bin/sh\ncase \"$*\" in *watch*) ;; *) exit 255 ;; esac\n\
+             count=$(cat '{dir}/count' 2>/dev/null || echo 0)\n\
+             echo $((count + 1)) > '{dir}/count'\n\
+             if [ \"$count\" -ge 2 ]; then echo 'ssh: connect to host fixture port 22: Connection timed out' >&2; exit 255; fi\n\
+             cat '{reply}'\nsleep 1\n",
+            dir = root.path().display(),
+            reply = reply.display(),
+        );
+        std::fs::write(&ssh, script).unwrap();
+        std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "session::remote::monitor::tests::reconnect_process_case",
+                "--nocapture",
+            ])
+            .env("ROZI_MONITOR_RECONNECT_REPLY", &reply)
+            .env("PATH", format!("{}:/usr/bin:/bin", root.path().display()))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]

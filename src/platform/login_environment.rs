@@ -18,7 +18,9 @@
 //! login files, and may have changed the environment since, as activating a virtualenv does. It is
 //! recognized by a login shell (`argv[0]` starting with `-`) between this process and `sshd`,
 //! since `ssh host command` runs the command through a plain `-c` shell even when `-t` gives it a
-//! terminal. Where the process tree cannot be read, a terminal (`SSH_TTY`) counts as a login. So is a login shell outside the sh family and fish, which take
+//! terminal. Where the process tree cannot be read, or ends before the SSH server (a tmux server
+//! re-parented to init), a terminal (`SSH_TTY`) counts as a login. A login whose shell `exec`s
+//! rozi leaves nothing to tell it from `ssh -t host rozi`, and is captured again. So is a login shell outside the sh family and fish, which take
 //! `-l -i -c` and expand the probe the same way.
 //!
 //! Unix only: Windows has no login shell, and its SSH server already gives a full user
@@ -148,13 +150,23 @@ fn started_by_ssh_command(
 /// Whether a login shell runs between this process and the SSH server that started it; `None`
 /// when the process tree cannot be read.
 fn below_interactive_login() -> Option<bool> {
-    let mut pid = crate::platform::process::identity(std::process::id())?.parent;
+    let parent = crate::platform::process::identity(std::process::id())?.parent;
+    login_between(parent, crate::platform::process::identity)
+}
+
+/// Walk up from `pid` to the SSH server. `Some(false)` only once the walk reaches that server
+/// without passing a login shell (`argv[0]` starting with `-`). A chain that ends first, as one a
+/// daemonizing multiplexer such as tmux re-parented to init does, says nothing, so it is `None`.
+fn login_between(
+    mut pid: u32,
+    identity: impl Fn(u32) -> Option<crate::platform::process::ProcessIdentity>,
+) -> Option<bool> {
     // Deep enough for shells, multiplexers, and editors in between; a longer chain is a loop.
     for _ in 0..64 {
         if pid <= 1 {
-            return Some(false);
+            return None;
         }
-        let process = crate::platform::process::identity(pid)?;
+        let process = identity(pid)?;
         // `sshd-session` on OpenSSH 9.8 and later.
         if process.name.starts_with("sshd") || process.name == "dropbear" {
             return Some(false);
@@ -335,6 +347,35 @@ pub fn print_environment(nonce: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_reaching_the_ssh_server_proves_a_command_and_a_login_shell_proves_a_login() {
+        use crate::platform::process::ProcessIdentity;
+        // pid -> (parent, name, argv0)
+        let tree = |nodes: &'static [(u32, u32, &'static str, &'static str)]| {
+            move |pid: u32| {
+                nodes
+                    .iter()
+                    .find(|node| node.0 == pid)
+                    .map(|node| ProcessIdentity {
+                        parent: node.1,
+                        name: node.2.to_string(),
+                        argv0: Some(node.3.to_string()),
+                    })
+            }
+        };
+        // rozi's parent shell, then the server: `ssh host rozi …`.
+        let command = tree(&[
+            (30, 20, "zsh", "zsh"),
+            (20, 1, "sshd-session", "sshd: adam"),
+        ]);
+        assert_eq!(login_between(30, command), Some(false));
+        let login = tree(&[(30, 20, "zsh", "-zsh"), (20, 1, "sshd", "sshd: adam@pts/0")]);
+        assert_eq!(login_between(30, login), Some(true));
+        // A tmux server re-parented to init: the login that started it is out of sight.
+        let tmux = tree(&[(40, 30, "zsh", "zsh"), (30, 1, "tmux: server", "tmux")]);
+        assert_eq!(login_between(40, tmux), None);
+    }
 
     #[test]
     fn only_an_ssh_command_outside_a_login_that_has_not_captured_yet_captures() {

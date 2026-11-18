@@ -473,8 +473,9 @@ pub struct State {
     /// it fires.
     pub(crate) welcome_due: bool,
     pub show_welcome: bool,
-    /// This client claimed the usage count notice and shows it once a session is on screen and no
-    /// dialog covers it. Cleared when it fires.
+    /// This client was told the usage count notice is due. It claims and shows the notice once a
+    /// session is on screen and no dialog covers it, unless another client showed it first. Cleared
+    /// when it fires.
     pub(crate) usage_count_notice_due: bool,
     /// Replacing this client with another build: the dialog planning it, and the restore a
     /// relaunched client works through.

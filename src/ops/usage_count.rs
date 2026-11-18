@@ -21,10 +21,10 @@
 //!   it. A report the counter refuses is not retried.
 //! - Nothing is sent before the user has been told. A check that finds no record of the notice
 //!   asks the client to show it. The client claims the notice only when it is ready to raise it,
-//!   then raises it and records it as shown in the same step, so several clients told at once show
-//!   it once, and a client that exits before raising it holds nothing back from the next launch.
-//!   A claim nobody confirmed lapses. The first report goes out on a later day than the notice,
-//!   which leaves time to opt out.
+//!   by locking a file it holds until the notice is recorded as shown, so several clients told at
+//!   once show it once. The lock goes with the process, so a client that exits or dies before
+//!   recording it holds nothing back from the next launch. The first report goes out on a later
+//!   day than the notice, which leaves time to opt out.
 //! - `[updates] count_usage = false`, `[updates] check = false`, `DO_NOT_TRACK`, a CI environment,
 //!   and a debug build each keep the install out of the count.
 //!
@@ -57,8 +57,9 @@ const APP: &str = "rozi";
 const DIR_NAME: &str = "usage-count";
 /// The date the notice was shown, written by the client that showed it.
 const NOTICE_FILE: &str = "notice";
-/// A client's claim to show the notice, held from the moment it raises it until it is recorded.
-const NOTICE_CLAIM_FILE: &str = "notice-claim";
+/// Locked by the client raising the notice until it is recorded. Never removed: unlinking a held
+/// lock would let another client lock a different file.
+const NOTICE_LOCK_FILE: &str = "notice.lock";
 /// The token of a report sent without an answer yet.
 const PENDING_FILE: &str = "pending";
 /// The counter's week of this install's first count.
@@ -66,9 +67,9 @@ const FIRST_COUNTED_FILE: &str = "first-counted";
 /// The counter's week of the last settled report.
 const COUNTED_FILE: &str = "counted";
 const DATE_FORMAT: &str = "%Y-%m-%d";
-/// How long a claim holds off other clients: an unconfirmed notice claim, or a report claim with no
-/// token in it yet. Long enough for the claiming client to finish, short enough that one that
-/// exited first leaves the work to the next launch.
+/// How long a report claim with no token in it yet holds off other clients. Long enough for the
+/// claiming client to finish, short enough that one that exited first leaves the work to the next
+/// launch.
 const CLAIM_TTL: Duration = Duration::from_secs(10 * 60);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_ANSWER_BYTES: u64 = 4 * 1024;
@@ -187,18 +188,24 @@ pub(crate) fn report_if_due(link: &CommandLink<Msg>, enabled: bool) {
     }
 }
 
-/// Claim the notice for this client, now that it can raise it at once. `false` when another client
-/// showed it or is showing it, or the state cannot be read: then this client does not show it.
-pub(crate) fn claim_notice() -> bool {
-    state_dir().is_some_and(|dir| claim_notice_in(&dir, Utc::now()))
+/// This client's claim to show the notice. Raise the notice, then [`Self::shown`]; dropping it
+/// unrecorded, or exiting, leaves the notice due for the next client.
+pub(crate) struct NoticeClaim {
+    dir: PathBuf,
+    _lock: fs::File,
 }
 
-/// Record that this client has shown the notice. Called by the client after it raises the notice,
-/// never before: until then, the notice counts as not shown.
-pub(crate) fn notice_shown() {
-    if let Some(dir) = state_dir() {
-        record_notice_shown(&dir, Utc::now().date_naive());
+impl NoticeClaim {
+    /// Record the notice as shown, then let the next client look.
+    pub(crate) fn shown(self) {
+        record_notice_shown(&self.dir, Utc::now().date_naive());
     }
+}
+
+/// Claim the notice for this client, now that it can raise it at once. `None` when another client
+/// showed it or is showing it, or the state cannot be read: then this client does not show it.
+pub(crate) fn claim_notice() -> Option<NoticeClaim> {
+    claim_notice_in(&state_dir()?)
 }
 
 #[cfg(test)]
@@ -310,7 +317,6 @@ pub(crate) fn run(
     }
     match notice_state(dir, now) {
         Notice::Due => return Outcome::NoticeDue,
-        Notice::Showing => return Outcome::WaitingAfterNotice,
         Notice::Shown(shown) if shown >= now.date_naive() => return Outcome::WaitingAfterNotice,
         Notice::Shown(_) => {}
         Notice::Unavailable => return Outcome::Failed,
@@ -482,64 +488,41 @@ fn write_week(path: &Path, week: &str) -> std::io::Result<()> {
 }
 
 enum Notice {
-    /// Never shown, and no client is raising it.
+    /// Never shown. A client may be raising it right now; the claim settles which one does.
     Due,
-    /// Another client claimed it moments ago and is raising it.
-    Showing,
     Shown(NaiveDate),
     Unavailable,
 }
 
-/// Whether the notice was shown and when. Only [`claim_notice_in`] claims it.
+/// Whether the notice was shown and when.
 fn notice_state(dir: &Path, now: DateTime<Utc>) -> Notice {
-    let shown_path = dir.join(NOTICE_FILE);
-    match fs::read_to_string(&shown_path) {
-        Ok(text) => {
-            return match NaiveDate::parse_from_str(text.trim(), DATE_FORMAT) {
-                Ok(shown) => Notice::Shown(shown),
+    match fs::read_to_string(dir.join(NOTICE_FILE)) {
+        Ok(text) => Notice::Shown(
+            NaiveDate::parse_from_str(text.trim(), DATE_FORMAT).unwrap_or_else(|_| {
                 // Only a client that showed the notice writes this file, so a damaged one still
                 // means it was shown. Repair it as today, which holds the first report back a day.
-                Err(_) => {
-                    record_notice_shown(dir, now.date_naive());
-                    Notice::Showing
-                }
-            };
-        }
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(_) => return Notice::Unavailable,
-    }
-    if claim_is_live(&dir.join(NOTICE_CLAIM_FILE), now) {
-        Notice::Showing
-    } else {
-        Notice::Due
+                record_notice_shown(dir, now.date_naive());
+                now.date_naive()
+            }),
+        ),
+        Err(error) if error.kind() == ErrorKind::NotFound => Notice::Due,
+        Err(_) => Notice::Unavailable,
     }
 }
 
-/// Claim the notice in `dir` for a client about to raise it, unless it was shown or another client
-/// holds a live claim. A claim nobody confirmed is taken over: showing the notice twice is better
-/// than not at all.
-fn claim_notice_in(dir: &Path, now: DateTime<Utc>) -> bool {
-    if crate::platform::fs_security::ensure_private_dir(dir).is_err()
-        || !matches!(notice_state(dir, now), Notice::Due)
-    {
-        return false;
+/// Lock the notice for a client about to raise it, unless another client holds the lock or it was
+/// already shown. Checked under the lock, so a client that recorded it and let go is seen.
+fn claim_notice_in(dir: &Path) -> Option<NoticeClaim> {
+    crate::platform::fs_security::ensure_private_dir(dir).ok()?;
+    let lock = crate::platform::persist::open_private_lock(&dir.join(NOTICE_LOCK_FILE)).ok()?;
+    lock.try_lock().ok()?;
+    match fs::exists(dir.join(NOTICE_FILE)) {
+        Ok(false) => Some(NoticeClaim {
+            dir: dir.to_path_buf(),
+            _lock: lock,
+        }),
+        _ => None,
     }
-    let claim = dir.join(NOTICE_CLAIM_FILE);
-    let claimed = match crate::platform::persist::create_private_file(&claim, false) {
-        Ok(_) => true,
-        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-            !claim_is_live(&claim, now)
-                && crate::platform::persist::create_private_file(&claim, true).is_ok()
-        }
-        Err(_) => false,
-    };
-    // A client that recorded the notice between the check above and this claim released its own
-    // claim after writing the record, so the record is there to see.
-    if claimed && dir.join(NOTICE_FILE).exists() {
-        let _ = fs::remove_file(&claim);
-        return false;
-    }
-    claimed
 }
 
 fn claim_is_live(claim: &Path, now: DateTime<Utc>) -> bool {
@@ -559,9 +542,7 @@ fn record_notice_shown(dir: &Path, today: NaiveDate) {
     if crate::platform::fs_security::ensure_private_dir(dir).is_err() {
         return;
     }
-    if write_date(&dir.join(NOTICE_FILE), today).is_ok() {
-        let _ = fs::remove_file(dir.join(NOTICE_CLAIM_FILE));
-    }
+    let _ = write_date(&dir.join(NOTICE_FILE), today);
 }
 
 fn write_date(path: &Path, date: NaiveDate) -> std::io::Result<()> {
@@ -770,8 +751,9 @@ mod tests {
         let counter = FakeCounter::new();
         let now = at(&format!("{day}T09:00:00Z"));
         assert_eq!(run(&dir, now, &template(), &counter), Outcome::NoticeDue);
-        assert!(claim_notice_in(&dir, now));
+        let claim = claim_notice_in(&dir).unwrap();
         record_notice_shown(&dir, now.date_naive());
+        drop(claim);
         (root, dir)
     }
 
@@ -809,37 +791,40 @@ mod tests {
         let counter = FakeCounter::new();
         let start = at("2026-10-29T09:00:00Z");
         assert_eq!(run(&dir, start, &template(), &counter), Outcome::NoticeDue);
-
         let much_later = at("2026-10-29T09:30:00Z");
         assert_eq!(
             run(&dir, much_later, &template(), &counter),
             Outcome::NoticeDue
         );
 
-        assert!(claim_notice_in(&dir, much_later));
-        // Another client raising it at the same moment leaves it to the first.
-        age_file(&dir.join(NOTICE_CLAIM_FILE), much_later);
-        assert!(!claim_notice_in(&dir, much_later));
+        let first = claim_notice_in(&dir).expect("the first client to raise it claims it");
+        assert!(
+            claim_notice_in(&dir).is_none(),
+            "one raising it at once waits it out"
+        );
+        first.shown();
+        assert!(
+            claim_notice_in(&dir).is_none(),
+            "once shown, nobody claims it"
+        );
         assert_eq!(
             run(&dir, much_later, &template(), &counter),
             Outcome::WaitingAfterNotice
         );
-        record_notice_shown(&dir, much_later.date_naive());
-        assert!(!claim_notice_in(&dir, at("2026-10-29T09:31:00Z")));
         assert!(counter.sent().is_empty());
     }
 
-    /// A client that claimed the notice and died before recording it leaves the claim to lapse, and
-    /// a later launch shows it.
+    /// A client that claimed the notice and died before recording it lets go with its process, and
+    /// of the clients that find it due afterwards, one shows it.
     #[test]
-    fn an_unconfirmed_claim_lapses() {
+    fn an_abandoned_claim_passes_to_exactly_one_client() {
         let (_root, dir) = scratch();
-        let start = at("2026-10-29T09:00:00Z");
-        assert!(claim_notice_in(&dir, start));
-        age_file(&dir.join(NOTICE_CLAIM_FILE), start);
+        drop(claim_notice_in(&dir).unwrap());
 
-        assert!(!claim_notice_in(&dir, at("2026-10-29T09:01:00Z")));
-        assert!(claim_notice_in(&dir, at("2026-10-29T09:11:00Z")));
+        let next = claim_notice_in(&dir).expect("the notice is due again");
+        assert!(claim_notice_in(&dir).is_none());
+        drop(next);
+        assert!(claim_notice_in(&dir).is_some());
     }
 
     #[test]

@@ -105,6 +105,7 @@ fn process_for_pid(pid: i32) -> Option<ForegroundProcess> {
         .or_else(|| name_for_pid(pid))?;
     Some(ForegroundProcess {
         pid: pid.try_into().ok()?,
+        started: None,
         name,
         executable: executable.map(|path| path.to_string_lossy().into_owned()),
         argv: Vec::new(),

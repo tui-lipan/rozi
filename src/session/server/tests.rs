@@ -54,6 +54,7 @@ pub(super) fn test_pane(generation: u64) -> ServerPane {
         borrowed_program_name: None,
         last_git_read: None,
         initial_cursor_report_primed: false,
+        runtime_marker: None,
     }
 }
 
@@ -4739,6 +4740,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
             borrowed_program_name: None,
             last_git_read: None,
             initial_cursor_report_primed: false,
+            runtime_marker: None,
         },
     );
 
@@ -4915,6 +4917,7 @@ fn duplicate_spawn_is_rejected() {
             borrowed_program_name: None,
             last_git_read: None,
             initial_cursor_report_primed: false,
+            runtime_marker: None,
         },
     );
     let result = server.spawn_pane(SpawnRequest {
@@ -4983,6 +4986,7 @@ fn exited_pane_can_be_respawned() {
             borrowed_program_name: None,
             last_git_read: None,
             initial_cursor_report_primed: false,
+            runtime_marker: None,
         },
     );
 
@@ -5179,6 +5183,7 @@ fn attach_reports_layout_and_panes() {
         borrowed_program_name: None,
         last_git_read: None,
         initial_cursor_report_primed: false,
+        runtime_marker: None,
     };
     pane.screen_mut().process_bytes(b"ready");
     server.panes.insert(4, pane);
@@ -5385,6 +5390,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             borrowed_program_name: None,
             last_git_read: None,
             initial_cursor_report_primed: false,
+            runtime_marker: None,
         },
     );
 
@@ -5483,6 +5489,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 borrowed_program_name: None,
                 last_git_read: None,
                 initial_cursor_report_primed: false,
+                runtime_marker: None,
             },
         );
     }

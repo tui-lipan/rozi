@@ -2,8 +2,8 @@
 #
 # Emits OSC 7 and OSC 9;9 (cwd), OSC 133 A/B/C/D (command lifecycle), and a rozi-namespaced
 # OSC 133 `rozi_exe=` parameter carrying only the executable basename - never a full command
-# line - so rozi's smart focus and pane-runtime-state tracking work without process inspection
-# (which is deliberately unsupported on Windows).
+# line - so rozi's smart focus and pane-runtime-state tracking work without process inspection,
+# which on Windows reads only which agent a pane runs.
 #
 # Loaded by rozi itself via `-NoExit -Command ". <this file>"`, which runs *after* the user's
 # `$PROFILE`, so every prompt customization and PSReadLine setting is already in place and gets

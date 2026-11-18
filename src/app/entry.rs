@@ -378,6 +378,8 @@ pub fn run() -> Result<()> {
                 return crate::session::remote::monitor::serve(
                     &mut std::io::stdin().lock(),
                     &mut std::io::stdout().lock(),
+                    crate::session::remote::monitor::IDLE_LIMIT,
+                    || std::process::exit(0),
                 )
                 .map_err(Into::into);
             }

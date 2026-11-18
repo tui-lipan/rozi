@@ -16,6 +16,8 @@ const VERSION: u32 = 1;
 const MAX_MESSAGE: usize = 1024 * 1024;
 const INTERVAL: Duration = Duration::from_secs(2);
 const DEADLINE: Duration = Duration::from_secs(10);
+/// How long the host serves a watch channel whose client has stopped polling.
+pub(crate) const IDLE_LIMIT: Duration = Duration::from_secs(60);
 /// What both ends must have for a host to be supervised at all. A peer missing one of these is
 /// refused with a reason rather than half-supervised: a monitor that cannot list sessions or prove
 /// the channel is alive has nothing left to do.
@@ -130,7 +132,37 @@ fn read_message<T: serde::de::DeserializeOwned>(reader: &mut impl Read) -> io::R
 }
 
 /// Serve one SSH stdio channel until the client closes it. Each request is also a health check.
-pub(crate) fn serve(reader: &mut impl Read, writer: &mut impl Write) -> io::Result<()> {
+///
+/// The client polls every [`INTERVAL`], but one whose connection died without closing, as when
+/// this host slept, never sends again, and a read waiting for it would block forever. So
+/// `on_idle` runs, on another thread, once no request has arrived for `idle_limit` outside the
+/// time spent answering one. It has to end the wait itself.
+pub(crate) fn serve(
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    idle_limit: Duration,
+    on_idle: impl FnOnce() + Send + 'static,
+) -> io::Result<()> {
+    // `true` when a request arrives, `false` once it is answered. Dropping the sender when serving
+    // ends stops the watchdog.
+    let (busy, activity) = mpsc::channel::<bool>();
+    std::thread::spawn(move || {
+        let mut answering = false;
+        loop {
+            let next = if answering {
+                activity
+                    .recv()
+                    .map_err(|_| mpsc::RecvTimeoutError::Disconnected)
+            } else {
+                activity.recv_timeout(idle_limit)
+            };
+            match next {
+                Ok(next) => answering = next,
+                Err(mpsc::RecvTimeoutError::Timeout) => return on_idle(),
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+        }
+    });
     let hello: Hello = read_message(reader)?;
     hello.validate()?;
     // Optional, so an older client that cannot deserialize summaries is served without them
@@ -151,6 +183,7 @@ pub(crate) fn serve(reader: &mut impl Read, writer: &mut impl Write) -> io::Resu
         if reader.read(&mut request)? == 0 {
             return Ok(());
         }
+        let _ = busy.send(true);
         if request[0] == b'p' {
             let query: PullRequestQuery = read_message(reader)?;
             let lookup = pull_requests
@@ -162,6 +195,7 @@ pub(crate) fn serve(reader: &mut impl Read, writer: &mut impl Write) -> io::Resu
                     repositories: lookup.results(),
                 },
             )?;
+            let _ = busy.send(false);
             continue;
         }
         if request[0] != b'?' {
@@ -198,6 +232,7 @@ pub(crate) fn serve(reader: &mut impl Read, writer: &mut impl Write) -> io::Resu
                 sessions: serde_json::from_str(&json).map_err(io::Error::other)?,
             },
         )?;
+        let _ = busy.send(false);
     }
 }
 
@@ -517,7 +552,7 @@ mod tests {
         write_message(&mut request, &hello).unwrap();
         request.push(b'?');
         let mut response = Vec::new();
-        serve(&mut request.as_slice(), &mut response).unwrap();
+        serve(&mut request.as_slice(), &mut response, IDLE_LIMIT, || {}).unwrap();
         let mut response = response.as_slice();
         read_message::<Hello>(&mut response)
             .unwrap()
@@ -561,7 +596,7 @@ mod tests {
         write_message(&mut request, &Hello::current()).unwrap();
         request.extend_from_slice(b"??");
         let mut response = Vec::new();
-        serve(&mut request.as_slice(), &mut response).unwrap();
+        serve(&mut request.as_slice(), &mut response, IDLE_LIMIT, || {}).unwrap();
         let mut response = response.as_slice();
         read_message::<Hello>(&mut response)
             .unwrap()
@@ -598,28 +633,59 @@ mod tests {
         }
     }
 
+    struct Channel(std::io::PipeReader, std::io::PipeWriter);
+    impl Read for Channel {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.0.read(buf)
+        }
+    }
+    impl Write for Channel {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.1.write(buf)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.1.flush()
+        }
+    }
+
+    /// A host serving `serve` on its own thread, and the client end of its channel.
+    fn host(
+        idle_limit: Duration,
+        on_idle: impl FnOnce() + Send + 'static,
+    ) -> (std::thread::JoinHandle<io::Result<()>>, Channel) {
+        let (mut host_in, client_out) = std::io::pipe().unwrap();
+        let (client_in, mut host_out) = std::io::pipe().unwrap();
+        let host =
+            std::thread::spawn(move || serve(&mut host_in, &mut host_out, idle_limit, on_idle));
+        (host, Channel(client_in, client_out))
+    }
+
+    /// A client whose connection died without closing, as when the host slept, never polls
+    /// again. The host gives up on it instead of waiting forever, but not while it still polls.
+    #[test]
+    fn the_host_gives_up_on_a_client_that_stops_polling() {
+        let (idle, gave_up) = mpsc::channel();
+        let (_host, mut client) = host(Duration::from_millis(300), move || {
+            let _ = idle.send(());
+        });
+        handshake(&mut client).unwrap();
+        for _ in 0..6 {
+            pull_requests(&mut client, Vec::new()).unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(
+            gave_up.try_recv(),
+            Err(mpsc::TryRecvError::Empty),
+            "gave up on a polling client"
+        );
+        gave_up.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
+
     /// A client asks the host's watch channel about pull requests between snapshots: the host
     /// answers as its lookups complete and stops looking once asked about nothing.
     #[test]
     fn the_host_answers_pull_request_queries_on_the_watch_channel() {
-        struct Channel(std::io::PipeReader, std::io::PipeWriter);
-        impl Read for Channel {
-            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-                self.0.read(buf)
-            }
-        }
-        impl Write for Channel {
-            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-                self.1.write(buf)
-            }
-            fn flush(&mut self) -> io::Result<()> {
-                self.1.flush()
-            }
-        }
-        let (mut host_in, client_out) = std::io::pipe().unwrap();
-        let (client_in, mut host_out) = std::io::pipe().unwrap();
-        let host = std::thread::spawn(move || serve(&mut host_in, &mut host_out));
-        let mut client = Channel(client_in, client_out);
+        let (host, mut client) = host(IDLE_LIMIT, || {});
         let peer = handshake(&mut client).unwrap();
         assert!(peer.supports(PULL_REQUESTS));
 

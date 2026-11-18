@@ -212,6 +212,10 @@ pub(super) fn activate_pane(
         if pane.pty_generation != generation {
             return Update::none();
         }
+        // Already activated: a repeated timer must not pull focus back from wherever it went since.
+        if pane.terminal_active && pane.opening_animation.is_none() {
+            return Update::none();
+        }
         if !pane.closing {
             pane.terminal_active = true;
             pane.opening_animation = None;
@@ -912,6 +916,19 @@ mod tests {
         assert_eq!(
             crate::layout::anim::pane_animation_for_pane(state.config.animations, pane).kind,
             crate::layout::anim::PaneAnimationStyle::Portal
+        );
+
+        // The user moves to the sidebar; the pane stays its workspace's focused pane.
+        backend
+            .dispatch(crate::Msg::RunAction(crate::input::Action::FocusSidebar))
+            .expect("focus the sidebar");
+        assert!(backend.state().sidebar.focused);
+        backend
+            .dispatch(crate::Msg::ActivatePane(0, id, generation))
+            .expect("repeated activation timer");
+        assert!(
+            backend.state().sidebar.focused,
+            "a repeated activation took focus back from the sidebar"
         );
     }
 

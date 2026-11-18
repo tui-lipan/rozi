@@ -1,0 +1,13 @@
+{
+  "capabilities": [
+    "example"
+  ],
+  "expected_server_nonce": "example",
+  "label": "example",
+  "min_protocol_version": 1,
+  "protocol_version": 1,
+  "read_only": false,
+  "session": "example",
+  "shares_filesystem": false,
+  "type": "attach"
+}

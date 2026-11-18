@@ -1,0 +1,9 @@
+{
+  "type": "activate-published-row",
+  "pane_id": 1,
+  "generation": 1,
+  "row": {
+    "publisher": "0/publish:example",
+    "id": "example"
+  }
+}

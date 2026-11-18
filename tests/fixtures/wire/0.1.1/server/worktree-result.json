@@ -1,0 +1,13 @@
+{
+  "request_id": 1,
+  "result": {
+    "branches": [
+      {
+        "checkout": "example",
+        "name": "example"
+      }
+    ],
+    "kind": "branches"
+  },
+  "type": "worktree-result"
+}

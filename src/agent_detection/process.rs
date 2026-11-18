@@ -145,32 +145,41 @@ pub(super) fn identify_process<'a>(
     identify_wrapped(catalog, &process.argv).map(|definition| (definition, true))
 }
 
+/// Runtimes and launchers whose operands [`identify_wrapped`] reads for the program they run.
+const WRAPPING_RUNTIMES: &[&str] = &[
+    "node", "nodejs", "bun", "deno", "python", "python3", "ruby", "env", "npm", "npx", "pnpm",
+    "pnpx", "yarn", "bunx", "uv", "uvx",
+];
+
+/// Shells whose command operands [`identify_wrapped`] splits into words for the program they run.
+const WRAPPING_SHELLS: &[&str] = &["sh", "bash", "zsh", "fish", "cmd", "powershell", "pwsh"];
+
+/// Whether a process with this executable name could be recognized as an agent once its arguments
+/// are read: an agent's own name, or a runtime or shell an agent is commonly started through.
+pub(super) fn may_be_agent_image(catalog: &AgentCatalog, image: &str) -> bool {
+    let name = normalized_name(image);
+    catalog.by_name(&name).is_some()
+        || WRAPPING_RUNTIMES.contains(&name.as_str())
+        || WRAPPING_SHELLS.contains(&name.as_str())
+}
+
 fn identify_wrapped<'a>(catalog: &'a AgentCatalog, argv: &[String]) -> Option<&'a AgentDefinition> {
     let runtime = argv.first().map(|value| normalized_name(value))?;
     let mut candidates: Vec<&str> = Vec::new();
-    match runtime.as_str() {
-        "node" | "nodejs" | "bun" | "deno" | "python" | "python3" | "ruby" => {
-            candidates.extend(
-                argv.iter()
-                    .skip(1)
-                    .filter(|arg| !arg.starts_with('-'))
-                    .map(String::as_str),
-            );
+    let operands = || {
+        argv.iter()
+            .skip(1)
+            .filter(|arg| !arg.starts_with('-'))
+            .map(String::as_str)
+    };
+    if WRAPPING_SHELLS.contains(&runtime.as_str()) {
+        for command in operands() {
+            candidates.extend(command.split_whitespace());
         }
-        "sh" | "bash" | "zsh" | "fish" | "cmd" | "powershell" | "pwsh" => {
-            for command in argv.iter().skip(1).filter(|arg| !arg.starts_with('-')) {
-                candidates.extend(command.split_whitespace());
-            }
-        }
-        "env" | "npm" | "npx" | "pnpm" | "pnpx" | "yarn" | "bunx" | "uv" | "uvx" => {
-            candidates.extend(
-                argv.iter()
-                    .skip(1)
-                    .filter(|arg| !arg.starts_with('-'))
-                    .map(String::as_str),
-            );
-        }
-        _ => candidates.extend(argv.iter().map(String::as_str)),
+    } else if WRAPPING_RUNTIMES.contains(&runtime.as_str()) {
+        candidates.extend(operands());
+    } else {
+        candidates.extend(argv.iter().map(String::as_str));
     }
     candidates
         .into_iter()

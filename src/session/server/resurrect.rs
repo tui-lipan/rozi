@@ -4236,6 +4236,7 @@ mod tests {
             borrowed_program_name: None,
             last_git_read: None,
             initial_cursor_report_primed: false,
+            runtime_marker: None,
         }
     }
 

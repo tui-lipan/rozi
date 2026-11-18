@@ -487,6 +487,10 @@ pub struct ServerPane {
     /// The framework answered ConPTY's startup cursor query before spawning. Suppress the parser's
     /// later duplicate cursor report so it cannot leak into child stdin.
     pub initial_cursor_report_primed: bool,
+    /// The random [`PANE_RUNTIME_ID_ENV`](crate::platform::process::PANE_RUNTIME_ID_ENV) this
+    /// spawn of the pane carries, where the platform marks panes. It finds an agent that left the
+    /// pane's process tree.
+    pub runtime_marker: Option<String>,
 }
 
 /// Cheap foreground fingerprint used to decide whether agent detection can be skipped.
@@ -2444,6 +2448,7 @@ const INHERITED_ENV_REMOVED: &[&str] = &[
     crate::config::SESSION_NAME_ENV,
     crate::state::CREDENTIAL_ENV,
     "ROZI_SERVICE",
+    crate::platform::process::PANE_RUNTIME_ID_ENV,
     // Fish and PowerShell export this guard. Each new shell must install its own hooks.
     "ROZI_SHELL_INTEGRATION_LOADED",
     // The connection that started this server may be long gone. The client opening a pane supplies

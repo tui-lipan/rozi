@@ -7,13 +7,21 @@
 //! (`NtQueryInformationProcess`'s `ProcessCommandLineInformation`). A process that cannot be opened
 //! keeps the name the snapshot gave it.
 //!
+//! Git for Windows' bash (MSYS2) starts some programs, such as one it `exec`s, outside its own
+//! process tree. When a pane's tree holds such a shell, processes elsewhere on the host that the
+//! agent catalog recognizes have their environment read for the pane's marker
+//! ([`PANE_RUNTIME_ID_ENV`](super::PANE_RUNTIME_ID_ENV)), through a handle that adds
+//! `PROCESS_VM_READ`. Those reads are cached per process.
+//!
 //! Working directory, foreground program and foreground job stay unavailable: they come from
 //! shell-reported OSC metadata, and without it callers see conservative "unknown program" /
 //! launch-directory-only behavior.
 
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use tui_lipan::prelude::TerminalPty;
 use windows_sys::Win32::Foundation::{
@@ -25,7 +33,7 @@ use windows_sys::Win32::System::Threading::{
     QueryFullProcessImageNameW,
 };
 
-use super::tree::{ProcessTable, TableEntry};
+use super::tree::{MAX_TREE_PROCESSES, ProcessTable, TableEntry};
 use super::{
     AgentProcessSet, ForegroundJob, ForegroundProcess, ObservedProcess, ProcessInspector,
     ProcessScan, ProcessTopology,
@@ -34,6 +42,9 @@ use super::{
 const MAX_COMMAND_LINE_BYTES: usize = 64 * 1024;
 const MAX_ARG_COUNT: usize = 128;
 const MAX_ARG_CHARS: usize = 4096;
+/// The most processes outside a pane's tree read for its marker in one lookup.
+const MAX_MARKED_CANDIDATES: usize = 64;
+const MAX_ENVIRONMENT_BYTES: usize = 64 * 1024;
 
 /// The host's process table, captured once per poll cycle. See [`ProcessScan`].
 #[derive(Debug, Default)]
@@ -101,6 +112,92 @@ impl ProcessSnapshot {
     }
 }
 
+impl ProcessSnapshot {
+    /// See [`ProcessInspector::marked_processes_in`].
+    fn marked_processes(
+        &self,
+        root: u32,
+        marker: &str,
+        may_be_agent: &dyn Fn(&str) -> bool,
+        is_agent: &dyn Fn(&ForegroundProcess) -> bool,
+    ) -> Vec<ObservedProcess> {
+        let Some(tree) = self.table.descendants(root, |_| ((), None)) else {
+            return Vec::new();
+        };
+        let in_tree: HashSet<u32> = tree.members.iter().map(|member| member.pid).collect();
+        let has_msys_shell = self
+            .table
+            .entries()
+            .iter()
+            .any(|entry| in_tree.contains(&entry.pid) && is_msys_shell(entry));
+        if !has_msys_shell {
+            return Vec::new();
+        }
+        let marked: Vec<u32> = self
+            .table
+            .entries()
+            .iter()
+            .filter(|entry| !in_tree.contains(&entry.pid) && may_be_agent(&entry.name))
+            .take(MAX_MARKED_CANDIDATES)
+            .filter(|entry| {
+                let process = observe(entry);
+                process.started.is_some_and(|started| {
+                    is_agent(&process) && carries_marker(entry.pid, started, marker)
+                })
+            })
+            .map(|entry| entry.pid)
+            .collect();
+        let mut seen = HashSet::new();
+        let mut processes = Vec::new();
+        for top in self.table.outermost(&marked) {
+            let walk = self.table.descendants(top, |entry| {
+                let process = observe(entry);
+                let started = process.started;
+                (process, started)
+            });
+            for member in walk.into_iter().flat_map(|walk| walk.members) {
+                // Only part of what escaped could leave out the agent in use; name none of it.
+                if processes.len() == MAX_TREE_PROCESSES {
+                    return Vec::new();
+                }
+                if seen.insert(member.pid) {
+                    processes.push(ObservedProcess {
+                        process: member.observed,
+                        parent_pid: member.parent_pid,
+                    });
+                }
+            }
+        }
+        processes
+    }
+}
+
+/// Whether `entry` is an MSYS2 or Cygwin shell, such as Git for Windows' bash, which can start a
+/// program outside its own process tree.
+///
+/// By name, plus its image path to set aside `System32\bash.exe`: that one is WSL's launcher,
+/// whose programs are Linux processes this backend never sees.
+fn is_msys_shell(entry: &TableEntry) -> bool {
+    let name = entry.name.to_ascii_lowercase();
+    if name != "bash.exe" && name != "sh.exe" {
+        return false;
+    }
+    let Some(path) = LimitedHandle::open(entry.pid)
+        .ok()
+        .and_then(|handle| handle.image_path())
+    else {
+        return false;
+    };
+    let directory = path
+        .rsplit_once('\\')
+        .map_or("", |(directory, _)| directory)
+        .rsplit('\\')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    !matches!(directory.as_str(), "system32" | "syswow64" | "sysnative")
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WindowsProcessInspector;
 
@@ -120,6 +217,174 @@ impl ProcessInspector for WindowsProcessInspector {
         _foreground_job: Option<&ForegroundJob>,
     ) -> Option<AgentProcessSet> {
         scan.snapshot.descendant_set(pty.pid()?)
+    }
+
+    fn marked_processes_in(
+        &self,
+        scan: &ProcessScan,
+        root: u32,
+        marker: &str,
+        may_be_agent: &dyn Fn(&str) -> bool,
+        is_agent: &dyn Fn(&ForegroundProcess) -> bool,
+    ) -> Vec<ObservedProcess> {
+        scan.snapshot
+            .marked_processes(root, marker, may_be_agent, is_agent)
+    }
+}
+
+/// How long a process found without a marker is not read again. One may be read before its
+/// environment is in place, so the answer is retried rather than kept.
+const UNMARKED_RETRY: Duration = Duration::from_secs(10);
+const MARKER_CACHE_LIMIT: usize = 256;
+
+/// The marker each process read carried, by PID and creation time, so the identity refresh does not
+/// read the same environments every time.
+static MARKERS: Mutex<Option<MarkerCache>> = Mutex::new(None);
+
+/// The marker read, if any, and when, by PID and creation time.
+type MarkerCache = HashMap<(u32, u64), (Option<String>, Instant)>;
+
+/// Whether the process `pid`, created at `started`, carries `marker` in its environment.
+fn carries_marker(pid: u32, started: u64, marker: &str) -> bool {
+    let key = (pid, started);
+    let mut markers = MARKERS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let markers = markers.get_or_insert_with(HashMap::new);
+    if let Some((value, read_at)) = markers.get(&key)
+        && (value.is_some() || read_at.elapsed() < UNMARKED_RETRY)
+    {
+        return value.as_deref() == Some(marker);
+    }
+    let value = read_marker(pid, started);
+    let matches = value.as_deref() == Some(marker);
+    if markers.len() >= MARKER_CACHE_LIMIT {
+        markers.retain(|_, (value, read_at)| value.is_some() || read_at.elapsed() < UNMARKED_RETRY);
+        if markers.len() >= MARKER_CACHE_LIMIT {
+            markers.clear();
+        }
+    }
+    markers.insert(key, (value, Instant::now()));
+    matches
+}
+
+/// The pane marker in the environment of process `pid`, provided it is still the process created
+/// at `started`.
+fn read_marker(pid: u32, started: u64) -> Option<String> {
+    let handle = MemoryHandle::open(pid)?;
+    if handle.0.creation_time() != Some(started) {
+        return None;
+    }
+    let block = handle.environment_block()?;
+    super::env_block::find_value(&block, super::PANE_RUNTIME_ID_ENV)
+}
+
+/// A process handle that may also read the process's memory, opened only for a process already
+/// recognized as an agent.
+struct MemoryHandle(LimitedHandle);
+
+impl MemoryHandle {
+    fn open(pid: u32) -> Option<Self> {
+        use windows_sys::Win32::System::Threading::PROCESS_VM_READ;
+        if pid == 0 {
+            return None;
+        }
+        // SAFETY: plain FFI call; a null result is the failure value.
+        let handle =
+            unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid) };
+        // Not `then_some`: it would build, and drop, a handle around NULL.
+        if handle.is_null() {
+            return None;
+        }
+        Some(Self(LimitedHandle(handle)))
+    }
+
+    /// The process's environment block as `ProcessParameters` in its PEB describes it, at most
+    /// [`MAX_ENVIRONMENT_BYTES`]. `None` for a 32-bit (WOW64) process, whose PEB has another
+    /// layout, and wherever a read fails.
+    #[cfg(target_pointer_width = "64")]
+    fn environment_block(&self) -> Option<Vec<u16>> {
+        use windows_sys::Win32::System::Threading::IsWow64Process;
+
+        // Offsets in the 64-bit PEB and `RTL_USER_PROCESS_PARAMETERS`, stable since Windows 7.
+        const PEB_PROCESS_PARAMETERS: usize = 0x20;
+        const PARAMETERS_ENVIRONMENT: usize = 0x80;
+        const PARAMETERS_ENVIRONMENT_SIZE: usize = 0x3F0;
+        const PROCESS_BASIC_INFORMATION: i32 = 0;
+
+        #[repr(C)]
+        #[derive(Default)]
+        struct BasicInformation {
+            exit_status: i32,
+            peb_base_address: usize,
+            affinity_mask: usize,
+            base_priority: i32,
+            unique_process_id: usize,
+            inherited_from_unique_process_id: usize,
+        }
+
+        let handle = (self.0).0;
+        let mut wow64 = 0;
+        // SAFETY: the handle is open and `wow64` is a live `BOOL`.
+        if unsafe { IsWow64Process(handle, &mut wow64) } == 0 || wow64 != 0 {
+            return None;
+        }
+        let query = nt_query_information_process()?;
+        let mut basic = BasicInformation::default();
+        let mut written = 0_u32;
+        // SAFETY: `basic` is writable for its own size and `written` is a live `u32`.
+        let status = unsafe {
+            query(
+                handle,
+                PROCESS_BASIC_INFORMATION,
+                (&raw mut basic).cast(),
+                size_of::<BasicInformation>() as u32,
+                &mut written,
+            )
+        };
+        if status < 0 || basic.peb_base_address == 0 {
+            return None;
+        }
+        let parameters = self.read_usize(basic.peb_base_address + PEB_PROCESS_PARAMETERS)?;
+        if parameters == 0 {
+            return None;
+        }
+        let environment = self.read_usize(parameters + PARAMETERS_ENVIRONMENT)?;
+        let size = self
+            .read_usize(parameters + PARAMETERS_ENVIRONMENT_SIZE)?
+            .min(MAX_ENVIRONMENT_BYTES)
+            & !1;
+        if environment == 0 || size == 0 {
+            return None;
+        }
+        let mut block = vec![0_u16; size / 2];
+        self.read(environment, block.as_mut_ptr().cast(), size)
+            .then_some(block)
+    }
+
+    #[cfg(not(target_pointer_width = "64"))]
+    fn environment_block(&self) -> Option<Vec<u16>> {
+        None
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    fn read_usize(&self, address: usize) -> Option<usize> {
+        let mut value = 0_usize;
+        self.read(address, (&raw mut value).cast(), size_of::<usize>())
+            .then_some(value)
+    }
+
+    /// Copy exactly `len` bytes at `address` in the process into `into`.
+    #[cfg(target_pointer_width = "64")]
+    fn read(&self, address: usize, into: *mut c_void, len: usize) -> bool {
+        use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+        let mut read = 0_usize;
+        // SAFETY: callers pass `into` writable for `len` bytes; the source is in the other process
+        // and a bad address only fails the call.
+        let ok = unsafe {
+            ReadProcessMemory((self.0).0, address as *const c_void, into, len, &mut read)
+        };
+        ok != 0 && read == len
     }
 }
 
@@ -444,5 +709,43 @@ mod tests {
         drop(child);
         assert!(process_gone(pid, None), "an exited child is gone");
         assert!(process_gone(pid, Some(started)));
+    }
+
+    /// The pane marker is read out of another process's environment, and only that process's own
+    /// marker is found there. A 32-bit process is skipped rather than read with the wrong layout.
+    #[test]
+    fn the_marker_is_read_from_a_child_environment() {
+        let spawn = |program: &str, marker: &str| {
+            let child = KillOnDrop(
+                Command::new(program)
+                    .args(["-n", "30", "127.0.0.1"])
+                    .env(super::super::PANE_RUNTIME_ID_ENV, marker)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .expect("ping starts"),
+            );
+            let pid = child.0.id();
+            let started = LimitedHandle::open(pid)
+                .ok()
+                .and_then(|handle| handle.creation_time())
+                .expect("creation time reads");
+            (child, pid, started)
+        };
+        let (_a, a, a_started) = spawn("ping.exe", "marker-a");
+        let (_b, b, b_started) = spawn("ping.exe", "marker-b");
+        assert_eq!(read_marker(a, a_started).as_deref(), Some("marker-a"));
+        assert!(carries_marker(a, a_started, "marker-a"));
+        assert!(!carries_marker(b, b_started, "marker-a"));
+        assert!(carries_marker(b, b_started, "marker-b"));
+        assert_eq!(read_marker(a, a_started + 1), None, "another process");
+
+        let windows = std::env::var("SystemRoot").expect("SystemRoot is set");
+        let wow64 = format!(r"{windows}\SysWOW64\PING.EXE");
+        if std::path::Path::new(&wow64).exists() {
+            let (_c, c, c_started) = spawn(&wow64, "marker-c");
+            assert_eq!(read_marker(c, c_started), None);
+        }
     }
 }

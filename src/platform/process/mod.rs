@@ -15,6 +15,12 @@
 //!
 //! [`tree`] is the bounded descendant walk the Windows backend runs over its snapshot.
 //!
+//! On Windows every pane is spawned with [`PANE_RUNTIME_ID_ENV`] set to a fresh random marker
+//! ([`new_pane_marker`]). Git for Windows' bash starts some programs, such as one it `exec`s,
+//! outside its own process tree; [`ProcessInspector::marked_processes_in`] finds those by the marker
+//! their environment inherited, reading the environment only of processes already recognized as
+//! agents (see [`env_block`]).
+//!
 //! [`process_gone`] is separate from pane inspection: it asks whether one recorded process ID has
 //! exited, as a lock or pidfile left behind by another program names it.
 
@@ -216,6 +222,31 @@ pub fn process_gone(pid: u32, started: Option<u64>) -> bool {
     }
 }
 
+/// The variable carrying a pane's marker; see [`new_pane_marker`].
+pub const PANE_RUNTIME_ID_ENV: &str = "ROZI_PANE_RUNTIME_ID";
+
+/// A fresh, unguessable marker for one pane spawn, where this platform needs one to find the
+/// pane's processes; `None` where the process tree already finds them.
+///
+/// Every spawn gets its own, a respawn included, so a process left over from an earlier spawn
+/// never matches the current one.
+pub fn new_pane_marker() -> Option<String> {
+    #[cfg(windows)]
+    {
+        use std::fmt::Write;
+        let mut bytes = [0_u8; 16];
+        getrandom::fill(&mut bytes).ok()?;
+        Some(bytes.iter().fold(String::new(), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        }))
+    }
+    #[cfg(not(windows))]
+    None
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+pub mod env_block;
 #[cfg(target_os = "linux")]
 pub mod linux;
 #[cfg(target_os = "macos")]
@@ -308,6 +339,26 @@ pub trait ProcessInspector {
     ) -> Option<AgentProcessSet> {
         let _ = (pty, scan);
         foreground_job.map(AgentProcessSet::from_foreground_job)
+    }
+
+    /// Agents started from the pane `root` that left its process tree, found by the pane's
+    /// `marker` in their environment, each with its own descendants after it. Each escaped
+    /// process has no `parent_pid`.
+    ///
+    /// Only where the platform needs it (see [`new_pane_marker`]); the default finds nothing.
+    /// `may_be_agent` is a cheap check on an executable name that picks which processes are read
+    /// at all, and `is_agent` the full check on one that was; a process's environment is read only
+    /// once both pass. The agent catalog supplies both, so no agent is named here.
+    fn marked_processes_in(
+        &self,
+        scan: &ProcessScan,
+        root: u32,
+        marker: &str,
+        may_be_agent: &dyn Fn(&str) -> bool,
+        is_agent: &dyn Fn(&ForegroundProcess) -> bool,
+    ) -> Vec<ObservedProcess> {
+        let _ = (scan, root, marker, may_be_agent, is_agent);
+        Vec::new()
     }
 }
 

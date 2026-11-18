@@ -117,7 +117,8 @@ match = {
 ```
 
 rozi inspects the pane's foreground process and looks through common shell, language-runtime, and
-package launchers. On Windows it inspects the processes the pane's shell started instead; when two
+package launchers. On Windows it inspects the processes the pane's shell started instead, including
+ones Git Bash starts outside its own process tree; when two
 unrelated ones match agents, it names the one the shell reports running, or none. If the launcher
 still hides the tool, set `ROZI_AGENT` (or `HERDR_AGENT`) in the pane's environment to the agent's
 name.

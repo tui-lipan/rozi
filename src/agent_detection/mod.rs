@@ -74,6 +74,18 @@ pub(crate) fn identify<'a, 's>(
     identify_set(catalog, set?, shell_program)
 }
 
+/// Whether a process with this executable name is worth reading the arguments of: one that
+/// [`is_agent_process`] could recognize once they are read. A cheap filter, never a match.
+pub(crate) fn may_be_agent_image(catalog: &AgentCatalog, image: &str) -> bool {
+    process::may_be_agent_image(catalog, image)
+}
+
+/// Whether `process` is recognizable as some agent by its own name, path or arguments, leaving
+/// aside any hint.
+pub(crate) fn is_agent_process(catalog: &AgentCatalog, process: &ForegroundProcess) -> bool {
+    process::identify_process(catalog, process).is_some()
+}
+
 /// Whether `process` is the agent `id` by its own name or path, rather than only because a hint
 /// said so. A hint names the agent from the pane's environment, which is true of the shell that
 /// will launch it as much as of the agent itself.

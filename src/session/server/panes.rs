@@ -247,6 +247,7 @@ impl SessionServer {
         // Built per attempt rather than once, because a native agent resume that cannot start gets
         // a second one - the interactive shell - from the same directory and environment.
         let login_shell = self.settings.login_shell;
+        let runtime_marker = crate::platform::process::new_pane_marker();
         let build_config = |launch: Option<&crate::pane::launch::PaneLaunch>| {
             let mut config =
                 pty_config(launch, &request.shell, &request.command_shell, login_shell)
@@ -258,7 +259,7 @@ impl SessionServer {
             for (key, value) in &request.env {
                 config = config.env(key.clone(), value.clone());
             }
-            config
+            with_runtime_marker(config, runtime_marker.as_deref())
         };
         let queue = Arc::clone(&self.events);
         let start = |config| {
@@ -359,6 +360,7 @@ impl SessionServer {
                         borrowed_program_name: None,
                         last_git_read: None,
                         initial_cursor_report_primed: cfg!(windows),
+                        runtime_marker,
                     },
                 );
                 if owner.is_none() {
@@ -419,6 +421,7 @@ impl SessionServer {
                             borrowed_program_name: None,
                             last_git_read: None,
                             initial_cursor_report_primed: false,
+                            runtime_marker: None,
                         },
                     );
                 }
@@ -859,6 +862,7 @@ impl SessionServer {
         let (shell, env, cell) = (pane.shell.clone(), pane.env.clone(), pane.cell);
         let login_shell = self.settings.login_shell;
         let events = Arc::clone(&self.events);
+        let runtime_marker = crate::platform::process::new_pane_marker();
         let start = |launch: Option<&crate::pane::launch::PaneLaunch>| {
             let mut config = pty_config(launch, &shell, &[], login_shell)
                 .size(cols.max(1), rows.max(1))
@@ -869,6 +873,7 @@ impl SessionServer {
             for (key, value) in &env {
                 config = config.env(key.clone(), value.clone());
             }
+            let config = with_runtime_marker(config, runtime_marker.as_deref());
             let events = Arc::clone(&events);
             TerminalPty::spawn(config, move |event| {
                 let event = ServerEvent::Pty(owner, id, generation, event);
@@ -910,6 +915,7 @@ impl SessionServer {
                 pane.pty = Some(pty);
                 pane.pty_resize_pending = false;
                 pane.exited = None;
+                pane.runtime_marker = runtime_marker;
                 pane.agent_resume = resume.map(|resume| PaneResume {
                     attach: None,
                     attached: true,
@@ -923,6 +929,7 @@ impl SessionServer {
                 pane.pty_resize_pending = false;
                 pane.command_completed = true;
                 pane.exited = None;
+                pane.runtime_marker = runtime_marker;
                 // The pane id and generation survive this swap, so nothing else clears what was
                 // learned about the command that just exited. A held agent state, a cached
                 // detection fingerprint, or a stale `detected_agent` would otherwise be attributed
@@ -1432,5 +1439,14 @@ impl ImageMedia {
     pub(super) fn apply(self, screen: &mut TerminalScreen) {
         screen.set_image_media_policy(self.policy);
         screen.set_image_relay_policy(self.relay);
+    }
+}
+
+/// Mark a pane spawn with its runtime marker, after its own environment so nothing it carries
+/// stands in for the marker.
+fn with_runtime_marker(config: TerminalPtyConfig, marker: Option<&str>) -> TerminalPtyConfig {
+    match marker {
+        Some(marker) => config.env(crate::platform::process::PANE_RUNTIME_ID_ENV, marker),
+        None => config,
     }
 }

@@ -65,6 +65,33 @@ impl ProcessTable {
         }
     }
 
+    pub fn entries(&self) -> &[TableEntry] {
+        &self.entries
+    }
+
+    /// Those of `pids` that no other of them has among its descendants, by PID: the roots of the
+    /// trees they belong to. In a parent cycle the lowest PID stands for the rest.
+    pub fn outermost(&self, pids: &[u32]) -> Vec<u32> {
+        let mut sorted = pids.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        let mut taken: Vec<(u32, HashSet<u32>)> = Vec::new();
+        for pid in sorted {
+            if taken.iter().any(|(_, covered)| covered.contains(&pid)) {
+                continue;
+            }
+            let covered: HashSet<u32> = self
+                .descendants(pid, |_| ((), None))
+                .map(|walk| walk.members.iter().map(|member| member.pid).collect())
+                .unwrap_or_else(|| HashSet::from([pid]));
+            taken.retain(|(earlier, _)| !covered.contains(earlier));
+            taken.push((pid, covered));
+        }
+        let mut outermost: Vec<u32> = taken.into_iter().map(|(pid, _)| pid).collect();
+        outermost.sort_unstable();
+        outermost
+    }
+
     /// `root` and its descendants, parents before children and siblings by PID, or `None` when
     /// `root` is not in the table.
     ///
@@ -197,6 +224,24 @@ mod tests {
         assert_eq!(walk.members.len(), MAX_TREE_PROCESSES);
         assert_eq!(walk.members.last().unwrap().pid, 128);
         assert!(!walk.complete, "a walk cut at the cap says so");
+    }
+
+    #[test]
+    fn only_the_outermost_of_related_processes_is_kept() {
+        // 20 descends from 10 through 15; 30 is unrelated, with a child 5 of lower PID; 40 and 41
+        // form a parent cycle.
+        let table = table(&[
+            (10, 1),
+            (15, 10),
+            (20, 15),
+            (30, 1),
+            (5, 30),
+            (40, 41),
+            (41, 40),
+        ]);
+        assert_eq!(table.outermost(&[20, 30, 10]), [10, 30]);
+        assert_eq!(table.outermost(&[5, 30]), [30]);
+        assert_eq!(table.outermost(&[41, 40]), [40]);
     }
 
     #[test]

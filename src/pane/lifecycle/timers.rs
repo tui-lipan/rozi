@@ -64,3 +64,62 @@ pub(crate) fn open_timers_batch_command(
         }
     })
 }
+
+/// Arm again, under the current epoch, the open and close transitions of the current attachment's
+/// panes that are still under way.
+///
+/// Each transition's timers carry the epoch they were armed under, and are dropped when they fire
+/// under another: while their attachment is parked, or after a reconnect gave it a new epoch.
+/// Without fresh ones an opening pane stays hidden and unfocusable, and a closing pane is never
+/// pruned. Call this whenever an attachment becomes current again.
+pub(crate) fn rearm_pane_transitions(state: &crate::state::State) -> Update {
+    let animations = state.config.animations;
+    let mut opening = Vec::new();
+    let mut activating = Vec::new();
+    let mut closing = Vec::new();
+    for pane in state
+        .current()
+        .workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.panes)
+    {
+        let target = (pane.id, pane.pty_generation);
+        if pane.closing {
+            closing.push(target);
+        } else if pane.opening {
+            opening.push(target);
+        } else if crate::layout::anim::pane_opening_transition(pane) {
+            // Opened but not yet activated: only the second stage is outstanding.
+            activating.push(target);
+        }
+    }
+    let epoch = state.runtime_epoch;
+    let mut update = Update::none();
+    if !opening.is_empty() {
+        update = update.merge(Update::with_command(open_timers_batch_command(
+            epoch,
+            opening,
+            crate::layout::anim::open_delay(animations),
+            crate::layout::anim::activation_delay(animations),
+        )));
+    }
+    if !activating.is_empty() {
+        let delay = crate::layout::anim::activation_delay(animations);
+        update = update.merge(Update::with_command(Command::after(
+            delay,
+            move |link: CommandLink<Msg>| {
+                for (id, generation) in activating {
+                    link.send(Msg::ActivatePane(epoch, id, generation));
+                }
+            },
+        )));
+    }
+    if !closing.is_empty() {
+        let delay =
+            crate::layout::anim::retained_pane_timeout(animations, state.runtime_frame_rate());
+        update = update.merge(Update::with_command(super::prune_closed_batch_command(
+            epoch, closing, delay,
+        )));
+    }
+    update
+}

@@ -149,6 +149,9 @@ pub(crate) fn switch_to_parked(
     ctx.state.commands_dirty = true;
     // Snap to the restored session's geometry rather than interpolating from the previous view.
     ctx.state.animation = crate::layout::anim::GeometryAnimation::None;
+    // Transitions still under way when this session was parked lost their timers while it was.
+    // Taken before the missed layout is applied: panes it adds come with timers of their own.
+    let rearmed = crate::pane::lifecycle::rearm_pane_transitions(&ctx.state);
     // The layout carries the open timers of panes added while parked; without them those panes
     // never finish opening, so they stay hidden and cannot take focus.
     let mut update = Update::full();
@@ -170,11 +173,12 @@ pub(crate) fn switch_to_parked(
     }
     if !ctx.state.current().session_attached {
         if ctx.state.current().remote_session_lost {
-            return update;
+            return update.merge(rearmed);
         }
+        // The reconnect arms them again under the epoch it starts.
         return update.merge(reconnect_current_session(ctx));
     }
-    update
+    update.merge(rearmed)
 }
 
 /// How long a fresh attach may keep the previous session's picture before the Connecting scene
@@ -335,11 +339,12 @@ pub(crate) fn abandon_session_reconnect(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.current_mut().epoch = epoch;
     ctx.state.current_mut().pending_session_attach = None;
     ctx.state.commands_dirty = true;
+    let rearmed = crate::pane::lifecycle::rearm_pane_transitions(&ctx.state);
     if was_remote {
         ctx.state.current_mut().connection = crate::state::ConnectionState::Unreachable;
-        crate::ops::session::open_session_picker(ctx)
+        crate::ops::session::open_session_picker(ctx).merge(rearmed)
     } else {
-        land_on_surviving_session(ctx)
+        land_on_surviving_session(ctx).merge(rearmed)
     }
 }
 
@@ -438,7 +443,9 @@ fn begin_current_session_reconnect(
     // queued and are force-flushed when the new client is installed.
     ctx.state.current_mut().resize_flush_scheduled = false;
     ctx.state.commands_dirty = true;
-    start_attach(ctx, crate::state::PendingSessionAttach::new(epoch, request))
+    // The same holds for a pane's open or close transition: arm it again under the new epoch.
+    let rearmed = crate::pane::lifecycle::rearm_pane_transitions(&ctx.state);
+    start_attach(ctx, crate::state::PendingSessionAttach::new(epoch, request)).merge(rearmed)
 }
 
 pub(crate) fn may_shutdown_ephemeral(state: &crate::state::State) -> bool {

@@ -2982,3 +2982,69 @@ fn collaborators_dialog_shows_role_and_guest_account_and_guest_refuses_lifecycle
         assert!(err.to_string().contains("another user's session"), "{err}");
     });
 }
+
+/// A pane mid-close or mid-open finishes its transition after the session on screen moves to a new
+/// epoch. Its timers were armed under the old one and no longer count; without fresh ones the
+/// closing pane is never pruned and the opening one never shows. Giving up on a remote reconnect
+/// moves the session to a new epoch and keeps it on screen, offline, with nothing dialled.
+#[test]
+fn pane_transitions_under_way_finish_on_a_new_epoch() {
+    use crate::session::remote::RemoteTarget;
+    use crate::state::{AttachMode, AttachRequest, ConnectionState, Pane, PendingSessionAttach};
+
+    crate::test_support::on_large_stack(|| {
+        let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+        let epoch = {
+            let state = backend.state_mut();
+            // Giving up records the epoch in a process-wide set of cancelled remote attaches, so
+            // use one no other test's fresh state starts on.
+            let epoch = 0x7ab0_d0e5;
+            state.runtime_epoch = epoch;
+            let target = RemoteTarget::Alias("workbox".into());
+            let current = state.current_mut();
+            current.epoch = epoch;
+            current.session_name = Some("dev".into());
+            current.remote_host = Some("workbox".into());
+            current.remote_target = Some(target.clone());
+            current.connection = ConnectionState::Reconnecting;
+            current.pending_session_attach = Some(PendingSessionAttach::new(
+                epoch,
+                AttachRequest::new("dev", AttachMode::Reconnect).on_host(Some(target)),
+            ));
+            let rect = current.workspaces[0].panes[0].floating_rect;
+            let mut closing = Pane::new(2, 100, rect);
+            closing.opening = false;
+            closing.terminal_active = true;
+            closing.closing = true;
+            let mut opening = Pane::new(3, 100, rect);
+            opening.opening = true;
+            opening.terminal_active = false;
+            current.workspaces[0].panes.extend([closing, opening]);
+            epoch
+        };
+
+        backend
+            .dispatch(crate::Msg::AbandonSessionReconnect)
+            .expect("give up the reconnect");
+        assert_ne!(backend.state().runtime_epoch, epoch, "a new epoch");
+        // Batch timers run on the virtual clock; a pane's second stage on the wall clock.
+        backend.advance(std::time::Duration::from_secs(2));
+        backend
+            .settle(std::time::Duration::from_millis(500))
+            .expect("transition timers");
+
+        let state = backend.state();
+        assert_eq!(state.current().session_name.as_deref(), Some("dev"));
+        assert!(
+            crate::pane::lifecycle::find_pane(state, 2).is_none(),
+            "the closing pane was never pruned"
+        );
+        let opening = crate::pane::lifecycle::find_pane(state, 3).expect("opening pane");
+        assert!(
+            !opening.opening && opening.terminal_active,
+            "opening: {}, terminal_active: {}",
+            opening.opening,
+            opening.terminal_active
+        );
+    });
+}

@@ -586,7 +586,8 @@ function Assert-Size([string]$Path, [int64]$MaxBytes, [string]$Label) {
 }
 
 function Assert-ZipEntryAttributes([System.IO.Compression.ZipArchiveEntry]$Entry) {
-    [uint32]$attributes = [uint32]$Entry.ExternalAttributes
+    # ZipArchive exposes a signed Int32 even when the Unix mode sets the top bit.
+    [uint32]$attributes = [uint32]([int64]$Entry.ExternalAttributes -band 4294967295L)
     [uint32]$unixMode = ($attributes -shr 16) -band 0xffff
     [uint32]$unixType = $unixMode -band 0xf000
     [uint32]$dosAttributes = $attributes -band 0xffff
@@ -942,6 +943,7 @@ function Install-Version([string]$ResolvedVersion, [bool]$AddPath) {
         if ($versionLine -cne "rozi $ResolvedVersion") {
             Fail "archive payload version does not match requested release $ResolvedVersion"
         }
+        # The managed CLI verifies the signed archive and installs its companions beside rozi.exe.
         Invoke-ManagedCli $payload
         if ($AddPath) { Add-ManagedBinToPath }
 

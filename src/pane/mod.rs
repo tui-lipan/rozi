@@ -233,6 +233,9 @@ pub(crate) fn new_terminal_screen(rows: u16, cols: u16, scrollback: usize) -> Te
         } else {
             engine::screen(rows, cols, scrollback)
         };
+    screen.set_prompt_redraw_on_resize(
+        crate::platform::paths::PathFamily::local().prompt_redraw_on_resize(),
+    );
     screen.set_image_file_storage_enabled(true);
     screen.set_terminal_identity(terminal_identity());
     screen
@@ -791,6 +794,12 @@ impl TerminalPane {
     ) -> bool {
         let cell_changed = cell.is_some_and(|cell| self.apply_session_cell(cell));
         self.apply_server_resize(cols, rows) || cell_changed
+    }
+
+    pub(crate) fn set_prompt_redraw_on_resize(&mut self, enabled: bool) {
+        self.screen
+            .borrow_mut()
+            .set_prompt_redraw_on_resize(enabled);
     }
 
     pub fn apply_server_resize(&mut self, cols: u16, rows: u16) -> bool {

@@ -10,6 +10,7 @@ pub const ROZI: App = App {
     version: env!("CARGO_PKG_VERSION"),
     repository_url: "https://github.com/tui-lipan/rozi/",
     trust_anchor: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/release-keys.json")),
+    windows_companions: &["OpenConsole.exe", "conpty.dll"],
     activation: ActivationStrategy::WindowsLauncher {
         launcher_name: "rozi-launcher.exe",
         protocol: 1,

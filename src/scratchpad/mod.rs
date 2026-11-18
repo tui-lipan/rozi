@@ -1277,6 +1277,59 @@ mod tests {
     }
 
     #[test]
+    fn a_scratch_pane_opening_across_a_session_change_still_opens() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            let (mut scratch, _receiver) = state_with_test_runtime();
+            let state = backend.state_mut();
+            // Past the pane the helper seeds, so the new one is a pane of its own.
+            state.next_scratch_pane_id = scratch.scratch.panes[0].id + 1;
+            state.next_scratch_pty_generation = scratch.scratch.panes[0].pty_generation + 1;
+            state.scratch = scratch.scratch;
+            state.scratch_runtime = scratch.scratch_runtime.take();
+            state.scratch_visible = true;
+
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::Spawn))
+                .expect("open a second scratch pane");
+            let id = backend
+                .state()
+                .scratch
+                .focused_pane
+                .expect("new scratch pane");
+            assert!(
+                backend
+                    .state()
+                    .scratch
+                    .panes
+                    .iter()
+                    .any(|pane| pane.id == id && pane.opening)
+            );
+            // The session on screen changes before the pane's open timers fire.
+            backend.state_mut().runtime_epoch = backend.state().runtime_epoch.wrapping_add(1);
+            // The first stage runs on the virtual clock; the second on the wall clock.
+            backend.advance(std::time::Duration::from_secs(2));
+            backend
+                .settle(std::time::Duration::from_millis(500))
+                .expect("open timers");
+
+            let pane = backend
+                .state()
+                .scratch
+                .panes
+                .iter()
+                .find(|pane| pane.id == id)
+                .expect("scratch pane");
+            assert!(
+                !pane.opening && pane.terminal_active,
+                "opening: {}, terminal_active: {}",
+                pane.opening,
+                pane.terminal_active
+            );
+        });
+    }
+
+    #[test]
     fn reopening_after_repeated_session_changes_never_spawns_a_duplicate() {
         crate::test_support::on_large_stack(|| {
             let mut backend = tui_lipan::TestBackend::new(AppRoot::default());

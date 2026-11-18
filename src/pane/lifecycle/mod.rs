@@ -17,6 +17,7 @@ pub(crate) use spawn::{
     respawn_focused_pane, send_pane_spawn, spawn_floating_pane_at_cursor, spawn_interactive_pane,
     spawn_interactive_pane_with_focus, spawn_pane, spawn_pane_in_scratch,
 };
+pub use timers::{LOCAL_PANE_EPOCH, lifecycle_epoch};
 pub(crate) use timers::{open_timers_batch_command, open_timers_command, rearm_pane_transitions};
 
 #[cfg(test)]

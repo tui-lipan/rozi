@@ -766,7 +766,7 @@ fn low_frame_rate_scale_close_finishes_fading_before_prune() {
                 assert!(pane.closing);
                 backend
                     .dispatch(rozi::Msg::PruneClosed(
-                        backend.state().runtime_epoch,
+                        rozi::pane::lifecycle::lifecycle_epoch(backend.state(), id),
                         id,
                         generation,
                     ))

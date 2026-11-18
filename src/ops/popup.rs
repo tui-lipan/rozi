@@ -102,7 +102,7 @@ pub(crate) fn open(
         },
     );
     Ok(Update::with_command(open_timers_command(
-        ctx.state.runtime_epoch,
+        crate::pane::lifecycle::LOCAL_PANE_EPOCH,
         POPUP_PANE_ID,
         generation,
         open_delay,
@@ -132,7 +132,7 @@ pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
         .begin_pane_event(crate::layout::anim::GeometryAnimation::Close);
     restore_focus(ctx);
     Update::with_command(crate::pane::lifecycle::prune_closed_command(
-        ctx.state.runtime_epoch,
+        crate::pane::lifecycle::LOCAL_PANE_EPOCH,
         POPUP_PANE_ID,
         generation,
         timeout,

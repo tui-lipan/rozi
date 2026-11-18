@@ -241,7 +241,7 @@ pub(crate) fn spawn_pane_in_scratch(
         Update::full()
     } else {
         Update::with_command(open_timers_command(
-            ctx.state.runtime_epoch,
+            super::LOCAL_PANE_EPOCH,
             id,
             generation,
             anim::open_delay(ctx.state.config.animations),

@@ -65,18 +65,36 @@ pub(crate) fn open_timers_batch_command(
     })
 }
 
+/// The epoch the open and close timers of a client-local pane (scratch or popup) carry. Those
+/// panes belong to no session and outlive every switch, reconnect, and park, so their timers must
+/// not be tied to a session's epoch. Attachment ids are minted upward from zero and never reach it.
+pub const LOCAL_PANE_EPOCH: u64 = u64::MAX;
+
+/// The epoch pane `id`'s open and close timers are armed under and checked against: the current
+/// session's for a pane in its workspaces, [`LOCAL_PANE_EPOCH`] for a scratch or popup pane.
+pub fn lifecycle_epoch(state: &crate::state::State, id: PaneId) -> u64 {
+    if super::pane_is_local(state, id) {
+        LOCAL_PANE_EPOCH
+    } else {
+        state.runtime_epoch
+    }
+}
+
 /// Arm again, under the current epoch, the open and close transitions of the current attachment's
 /// panes that are still under way.
 ///
 /// Each transition's timers carry the epoch they were armed under, and are dropped when they fire
 /// under another: while their attachment is parked, or after a reconnect gave it a new epoch.
 /// Without fresh ones an opening pane stays hidden and unfocusable, and a closing pane is never
-/// pruned. Call this whenever an attachment becomes current again.
+/// pruned. Call this whenever an attachment becomes current again. Scratch and popup panes need
+/// none of this: their timers carry [`LOCAL_PANE_EPOCH`].
 pub(crate) fn rearm_pane_transitions(state: &crate::state::State) -> Update {
     let animations = state.config.animations;
+    let frame_rate = state.runtime_frame_rate();
     let mut opening = Vec::new();
     let mut activating = Vec::new();
     let mut closing = Vec::new();
+    let mut close_delay = Duration::ZERO;
     for pane in state
         .current()
         .workspaces
@@ -86,6 +104,10 @@ pub(crate) fn rearm_pane_transitions(state: &crate::state::State) -> Update {
         let target = (pane.id, pane.pty_generation);
         if pane.closing {
             closing.push(target);
+            // Each pane closes on the recipe it started with, not on the config as it is now.
+            close_delay = close_delay.max(crate::layout::anim::retained_pane_timeout_for_pane(
+                animations, pane, frame_rate,
+            ));
         } else if pane.opening {
             opening.push(target);
         } else if crate::layout::anim::pane_opening_transition(pane) {
@@ -94,19 +116,20 @@ pub(crate) fn rearm_pane_transitions(state: &crate::state::State) -> Update {
         }
     }
     let epoch = state.runtime_epoch;
+    let open_delay = crate::layout::anim::open_delay(animations);
+    let activation_delay = crate::layout::anim::activation_delay(animations);
     let mut update = Update::none();
     if !opening.is_empty() {
         update = update.merge(Update::with_command(open_timers_batch_command(
             epoch,
             opening,
-            crate::layout::anim::open_delay(animations),
-            crate::layout::anim::activation_delay(animations),
+            open_delay,
+            activation_delay,
         )));
     }
     if !activating.is_empty() {
-        let delay = crate::layout::anim::activation_delay(animations);
         update = update.merge(Update::with_command(Command::after(
-            delay,
+            activation_delay.saturating_sub(open_delay),
             move |link: CommandLink<Msg>| {
                 for (id, generation) in activating {
                     link.send(Msg::ActivatePane(epoch, id, generation));
@@ -115,10 +138,10 @@ pub(crate) fn rearm_pane_transitions(state: &crate::state::State) -> Update {
         )));
     }
     if !closing.is_empty() {
-        let delay =
-            crate::layout::anim::retained_pane_timeout(animations, state.runtime_frame_rate());
         update = update.merge(Update::with_command(super::prune_closed_batch_command(
-            epoch, closing, delay,
+            epoch,
+            closing,
+            close_delay,
         )));
     }
     update

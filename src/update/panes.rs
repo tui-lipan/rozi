@@ -179,7 +179,7 @@ pub(super) fn finish_open(
     id: PaneId,
     generation: u64,
 ) -> Update {
-    if epoch != ctx.state.runtime_epoch {
+    if epoch != crate::pane::lifecycle::lifecycle_epoch(&ctx.state, id) {
         return Update::none();
     }
     let opened = match find_pane_mut(&mut ctx.state, id) {
@@ -204,7 +204,7 @@ pub(super) fn activate_pane(
     id: PaneId,
     generation: u64,
 ) -> Update {
-    if epoch != ctx.state.runtime_epoch {
+    if epoch != crate::pane::lifecycle::lifecycle_epoch(&ctx.state, id) {
         return Update::none();
     }
     let focused = ctx.state.focused_pane() == Some(id)

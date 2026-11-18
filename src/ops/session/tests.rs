@@ -2984,18 +2984,30 @@ fn collaborators_dialog_shows_role_and_guest_account_and_guest_refuses_lifecycle
 }
 
 /// A pane mid-close or mid-open finishes its transition after the session on screen moves to a new
-/// epoch. Its timers were armed under the old one and no longer count; without fresh ones the
-/// closing pane is never pruned and the opening one never shows. Giving up on a remote reconnect
-/// moves the session to a new epoch and keeps it on screen, offline, with nothing dialled.
+/// epoch, on the timing it started with. Its timers were armed under the old epoch and no longer
+/// count; without fresh ones the closing pane is never pruned and the opening one never shows.
+/// Giving up on a remote reconnect moves the session to a new epoch and keeps it on screen,
+/// offline, with nothing dialled.
 #[test]
 fn pane_transitions_under_way_finish_on_a_new_epoch() {
+    use crate::layout::anim::PaneAnimationStyle;
     use crate::session::remote::RemoteTarget;
     use crate::state::{AttachMode, AttachRequest, ConnectionState, Pane, PendingSessionAttach};
+    use std::time::Duration;
 
     crate::test_support::on_large_stack(|| {
         let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-        let epoch = {
+        let (epoch, second_stage) = {
             let state = backend.state_mut();
+            let animations = &mut state.config.animations;
+            animations.enabled = true;
+            animations.spawn = true;
+            animations.close = true;
+            animations.pane_open_style = PaneAnimationStyle::Scale;
+            animations.pane_close_style = PaneAnimationStyle::Scale;
+            animations.open_delay = Duration::from_millis(150);
+            let animations = *animations;
+            let second_stage = animations.selected_animation(false).open_duration;
             // Giving up records the epoch in a process-wide set of cancelled remote attaches, so
             // use one no other test's fresh state starts on.
             let epoch = 0x7ab0_d0e5;
@@ -3016,21 +3028,48 @@ fn pane_transitions_under_way_finish_on_a_new_epoch() {
             closing.opening = false;
             closing.terminal_active = true;
             closing.closing = true;
+            closing.begin_close_animation(animations);
             let mut opening = Pane::new(3, 100, rect);
             opening.opening = true;
             opening.terminal_active = false;
-            current.workspaces[0].panes.extend([closing, opening]);
-            epoch
+            opening.begin_open_animation(animations);
+            // Past the first stage of opening, waiting only to take input.
+            let mut activating = Pane::new(4, 100, rect);
+            activating.opening = false;
+            activating.terminal_active = false;
+            activating.begin_open_animation(animations);
+            current.workspaces[0]
+                .panes
+                .extend([closing, opening, activating]);
+            // Turned off after pane 2 began closing: it still closes on the recipe it began with.
+            state.config.animations.close = false;
+            (epoch, second_stage)
         };
 
         backend
             .dispatch(crate::Msg::AbandonSessionReconnect)
             .expect("give up the reconnect");
         assert_ne!(backend.state().runtime_epoch, epoch, "a new epoch");
+        // `advance` fires what is due on the virtual clock; `pump` delivers it.
+        backend.advance(Duration::from_millis(1));
+        backend.pump().expect("deliver due timers");
+        assert!(
+            crate::pane::lifecycle::find_pane(backend.state(), 2).is_some(),
+            "the closing pane was pruned before its close animation ended"
+        );
+        // The second stage plus a few frames, still well short of a repeated 150 ms first stage.
+        backend.advance(second_stage + Duration::from_millis(50));
+        backend.pump().expect("deliver due timers");
+        assert!(
+            crate::pane::lifecycle::find_pane(backend.state(), 4)
+                .expect("activating pane")
+                .terminal_active,
+            "the pane past its first stage waited for the first stage again"
+        );
         // Batch timers run on the virtual clock; a pane's second stage on the wall clock.
-        backend.advance(std::time::Duration::from_secs(2));
+        backend.advance(Duration::from_secs(2));
         backend
-            .settle(std::time::Duration::from_millis(500))
+            .settle(Duration::from_millis(500))
             .expect("transition timers");
 
         let state = backend.state();

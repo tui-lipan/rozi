@@ -2481,6 +2481,11 @@ fn with_escaped_agents(
         &|image| crate::agent_detection::may_be_agent_image(agents, image),
         &|process| crate::agent_detection::is_agent_process(agents, process),
     );
+    // A lookup cut short leaves the pane's agent unknown, just as a tree cut short does.
+    let Some(escaped) = escaped else {
+        set.complete = false;
+        return Some(set);
+    };
     for mut observed in escaped {
         if set.contains(observed.process.pid, observed.process.started) {
             continue;
@@ -6505,7 +6510,7 @@ mod tests {
         use crate::platform::process::{ObservedProcess, ProcessScan};
         use std::cell::Cell;
 
-        struct Escaped(Vec<ObservedProcess>, Cell<usize>);
+        struct Escaped(Option<Vec<ObservedProcess>>, Cell<usize>);
         impl ProcessInspector for Escaped {
             fn cwd(&self, _pty: &TerminalPty) -> Option<std::path::PathBuf> {
                 None
@@ -6520,7 +6525,7 @@ mod tests {
                 marker: &str,
                 may_be_agent: &dyn Fn(&str) -> bool,
                 _is_agent: &dyn Fn(&ForegroundProcess) -> bool,
-            ) -> Vec<ObservedProcess> {
+            ) -> Option<Vec<ObservedProcess>> {
                 assert_eq!((root, marker), (1, "m"));
                 assert!(may_be_agent("node.exe") && !may_be_agent("rg.exe"));
                 self.1.set(self.1.get() + 1);
@@ -6554,7 +6559,7 @@ mod tests {
         let run = |set: AgentProcessSet,
                    marker: Option<&str>,
                    shell: Option<&str>,
-                   escaped: Vec<ObservedProcess>| {
+                   escaped: Option<Vec<ObservedProcess>>| {
             let inspector = Escaped(escaped, Cell::new(0));
             let set = with_escaped_agents(
                 Some(set),
@@ -6571,17 +6576,17 @@ mod tests {
         };
 
         assert_eq!(
-            run(bash(), None, None, claude()),
+            run(bash(), None, None, Some(claude())),
             (0, None),
             "an unmarked pane"
         );
         assert_eq!(
-            run(bash(), Some("m"), None, claude()),
+            run(bash(), Some("m"), None, Some(claude())),
             (1, Some(("claude".into(), 20)))
         );
         let mut two = claude();
         two.push(observed(30, None, &["codex.exe"]));
-        assert_eq!(run(bash(), Some("m"), None, two), (1, None));
+        assert_eq!(run(bash(), Some("m"), None, Some(two)), (1, None));
 
         // A Codex in the tree, possibly a background job, while the program in use escaped.
         let with_codex = || {
@@ -6590,19 +6595,24 @@ mod tests {
             set
         };
         assert_eq!(
-            run(with_codex(), Some("m"), Some("codex"), claude()),
+            run(with_codex(), Some("m"), Some("codex"), Some(claude())),
             (0, Some(("codex".into(), 2))),
             "the shell reporting the agent in the tree settles it without looking"
         );
         assert_eq!(
-            run(with_codex(), Some("m"), Some("cx"), claude()),
+            run(with_codex(), Some("m"), Some("cx"), Some(claude())),
             (1, None),
             "an alias says nothing, so both branches count"
         );
         assert_eq!(
-            run(with_codex(), Some("m"), Some("claude"), claude()),
+            run(with_codex(), Some("m"), Some("claude"), Some(claude())),
             (1, Some(("claude".into(), 20))),
             "the shell reporting the escaped agent names it"
+        );
+        assert_eq!(
+            run(with_codex(), Some("m"), Some("cx"), None),
+            (1, None),
+            "a lookup cut short leaves the agent in use unknown"
         );
     }
 

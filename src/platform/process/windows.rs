@@ -121,9 +121,9 @@ impl ProcessSnapshot {
         marker: &str,
         may_be_agent: &dyn Fn(&str) -> bool,
         is_agent: &dyn Fn(&ForegroundProcess) -> bool,
-    ) -> Vec<ObservedProcess> {
+    ) -> Option<Vec<ObservedProcess>> {
         let Some(tree) = self.table.descendants(root, |_| ((), None)) else {
-            return Vec::new();
+            return Some(Vec::new());
         };
         let in_tree: HashSet<u32> = tree.members.iter().map(|member| member.pid).collect();
         let has_msys_shell = self
@@ -132,15 +132,13 @@ impl ProcessSnapshot {
             .iter()
             .any(|entry| in_tree.contains(&entry.pid) && is_msys_shell(entry));
         if !has_msys_shell {
-            return Vec::new();
+            return Some(Vec::new());
         }
-        let Some(candidates) = self.table.candidates(
+        let candidates = self.table.candidates(
             &in_tree,
             |entry| may_be_agent(&entry.name),
             MAX_MARKED_CANDIDATES,
-        ) else {
-            return Vec::new();
-        };
+        )?;
         let marked: Vec<u32> = candidates
             .into_iter()
             .filter(|entry| {
@@ -151,28 +149,24 @@ impl ProcessSnapshot {
             })
             .map(|entry| entry.pid)
             .collect();
-        let mut seen = HashSet::new();
-        let mut processes = Vec::new();
-        for top in self.table.outermost(&marked) {
-            let walk = self.table.descendants(top, |entry| {
+        let members = self.table.trees_of(
+            &self.table.outermost(&marked),
+            |entry| {
                 let process = observe(entry);
                 let started = process.started;
                 (process, started)
-            });
-            for member in walk.into_iter().flat_map(|walk| walk.members) {
-                // Only part of what escaped could leave out the agent in use; name none of it.
-                if processes.len() == MAX_TREE_PROCESSES {
-                    return Vec::new();
-                }
-                if seen.insert(member.pid) {
-                    processes.push(ObservedProcess {
-                        process: member.observed,
-                        parent_pid: member.parent_pid,
-                    });
-                }
-            }
-        }
-        processes
+            },
+            MAX_TREE_PROCESSES,
+        )?;
+        Some(
+            members
+                .into_iter()
+                .map(|member| ObservedProcess {
+                    process: member.observed,
+                    parent_pid: member.parent_pid,
+                })
+                .collect(),
+        )
     }
 }
 
@@ -230,7 +224,7 @@ impl ProcessInspector for WindowsProcessInspector {
         marker: &str,
         may_be_agent: &dyn Fn(&str) -> bool,
         is_agent: &dyn Fn(&ForegroundProcess) -> bool,
-    ) -> Vec<ObservedProcess> {
+    ) -> Option<Vec<ObservedProcess>> {
         scan.snapshot
             .marked_processes(root, marker, may_be_agent, is_agent)
     }

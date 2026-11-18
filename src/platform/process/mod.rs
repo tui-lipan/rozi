@@ -345,6 +345,9 @@ pub trait ProcessInspector {
     /// `marker` in their environment, each with its own descendants after it. Each escaped
     /// process has no `parent_pid`.
     ///
+    /// `None` when the lookup could not look at everything it would have to, such as more
+    /// candidates than it reads, so that finding nothing is not mistaken for there being nothing.
+    ///
     /// Only where the platform needs it (see [`new_pane_marker`]); the default finds nothing.
     /// `may_be_agent` is a cheap check on an executable name that picks which processes are read
     /// at all, and `is_agent` the full check on one that was; a process's environment is read only
@@ -356,9 +359,9 @@ pub trait ProcessInspector {
         marker: &str,
         may_be_agent: &dyn Fn(&str) -> bool,
         is_agent: &dyn Fn(&ForegroundProcess) -> bool,
-    ) -> Vec<ObservedProcess> {
+    ) -> Option<Vec<ObservedProcess>> {
         let _ = (scan, root, marker, may_be_agent, is_agent);
-        Vec::new()
+        Some(Vec::new())
     }
 }
 

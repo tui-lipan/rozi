@@ -87,6 +87,35 @@ impl ProcessTable {
         (candidates.len() <= cap).then_some(candidates)
     }
 
+    /// Each of `tops` with its descendants, every process once, or `None` when together they hold
+    /// more than `cap` processes. Part of them could leave out the one that matters.
+    pub fn trees_of<T>(
+        &self,
+        tops: &[u32],
+        mut observe: impl FnMut(&TableEntry) -> (T, Option<u64>),
+        cap: usize,
+    ) -> Option<Vec<TreeMember<T>>> {
+        let mut seen = HashSet::new();
+        let mut members = Vec::new();
+        for &top in tops {
+            let Some(walk) = self.descendants(top, &mut observe) else {
+                continue;
+            };
+            if !walk.complete {
+                return None;
+            }
+            for member in walk.members {
+                if seen.insert(member.pid) {
+                    if members.len() == cap {
+                        return None;
+                    }
+                    members.push(member);
+                }
+            }
+        }
+        Some(members)
+    }
+
     /// Those of `pids` that no other of them has among its descendants, by PID: the roots of the
     /// trees they belong to. In a parent cycle the lowest PID stands for the rest.
     pub fn outermost(&self, pids: &[u32]) -> Vec<u32> {
@@ -257,6 +286,19 @@ mod tests {
         // 64 accepted outside the excluded one: exactly the cap, then one over it.
         assert_eq!(picked(64), Some(64));
         assert_eq!(picked(63), None);
+    }
+
+    #[test]
+    fn trees_too_large_together_are_none_at_all() {
+        // 10 has children 11 and 12; 20 has 21.
+        let table = table(&[(10, 1), (11, 10), (12, 10), (20, 1), (21, 20)]);
+        let pids = |cap| {
+            table
+                .trees_of(&[10, 20, 11], |_| ((), None), cap)
+                .map(|members| members.iter().map(|member| member.pid).collect::<Vec<_>>())
+        };
+        assert_eq!(pids(5), Some(vec![10, 11, 12, 20, 21]));
+        assert_eq!(pids(4), None);
     }
 
     #[test]

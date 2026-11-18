@@ -145,8 +145,10 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             overlays::update_available(ctx, update, announce)
         }
         Msg::UpdateCheckTick => overlays::update_check_tick(ctx),
-        Msg::UsageCountNotice => overlays::usage_count_notice(ctx),
-        Msg::OpenUsageCountDocs => crate::ops::usage_count::open_docs(ctx),
+        Msg::UsageCountNotice => {
+            ctx.state.usage_count_notice_due = true;
+            Update::none()
+        }
         Msg::Hangup => overlays::hangup(ctx),
         Msg::RunAction(action) => overlays::run_action(ctx, action),
         Msg::ClosePalette => overlays::close_palette(ctx),
@@ -1352,8 +1354,12 @@ fn post_update_sync(
         update = Update::with_command(command);
     }
 
-    // Repairs: dialogs held back until a session is on screen (the welcome card, release notes).
-    if crate::ops::welcome::show_if_due(ctx) || crate::ops::release_notes::show_if_due(ctx) {
+    // Repairs: dialogs held back until a session is on screen (the welcome card, release notes),
+    // then the usage count notice they would otherwise cover.
+    if crate::ops::welcome::show_if_due(ctx)
+        || crate::ops::release_notes::show_if_due(ctx)
+        || overlays::usage_count_notice_if_due(ctx)
+    {
         let command = update.command.take();
         update = Update::with_command(command);
     }

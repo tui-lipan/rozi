@@ -385,18 +385,16 @@ pub(crate) fn dismiss_update_notice(ctx: &mut Context<AppRoot>) {
     }
 }
 
-/// A once-only info announcement whose details live on a page: a click sends `on_click` (which
-/// opens it) and dismisses the toast, and copying takes `copy_text` instead of the shown rows.
+/// A once-only info announcement that stays long enough to read: a click dismisses it, and copying
+/// takes `copy_text` instead of the shown rows.
 pub(crate) fn notify_announcement(
     ctx: &mut Context<AppRoot>,
     title: impl Into<String>,
     message: impl Into<ToastBody>,
     copy_text: impl Into<String>,
-    on_click: crate::Msg,
 ) -> Notified {
     let (title, message) = (title.into(), message.into());
     let content = toast_content(Some(&title), &message.source());
-    let callback = ctx.link().callback(move |_| on_click.clone());
     let toast = titled_toast(
         &ctx.state.theme,
         ctx.state.theme.status.info,
@@ -407,8 +405,7 @@ pub(crate) fn notify_announcement(
     .duration(ANNOUNCEMENT_TOAST_SECS)
     // Narrow enough that an explanatory sentence wraps into a paragraph instead of one long row.
     .max_width(Length::Px(48))
-    .copy_text(copy_text.into())
-    .on_click(callback);
+    .copy_text(copy_text.into());
     notify(
         ctx,
         ToastKey::Content(content_key(&content)),

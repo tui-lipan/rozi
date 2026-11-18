@@ -59,7 +59,12 @@ fn tunnel(
 #[test]
 fn a_recording_without_a_path_is_named_in_the_state_directory_and_stops_by_its_pane() {
     rozi::test_support::isolate_user_dirs();
-    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    let (shell, command_shell) = resolve_launch_argv(
+        None,
+        None,
+        &ShellEnv::from_process(),
+        rozi::platform::command::LoginShell::Never,
+    );
     let server = spawn_listener(ServerSettings {
         shell,
         command_shell,

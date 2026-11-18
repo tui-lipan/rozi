@@ -278,6 +278,12 @@ pub fn run() -> Result<()> {
             ops::release_notes::print_embedded(version.as_ref());
             return Ok(());
         }
+        // Runs inside the user's login shell while rozi reads its environment, so it prints
+        // whatever state the host's installation is in.
+        cli::ParsedCli::PrintEnvironment { nonce } => {
+            crate::platform::login_environment::print_environment(&nonce)?;
+            return Ok(());
+        }
         cli::ParsedCli::ApiDescribe => return cli::run_api_describe_cli(),
         cli::ParsedCli::ApiSchema => return cli::run_api_schema_cli(),
         cli::ParsedCli::ApiCommands => return cli::run_api_commands_cli(),
@@ -442,6 +448,7 @@ pub fn run() -> Result<()> {
         | cli::ParsedCli::Doctor { .. }
         | cli::ParsedCli::ReleaseNotes(_)
         | cli::ParsedCli::ApiDescribe
+        | cli::ParsedCli::PrintEnvironment { .. }
         | cli::ParsedCli::ApiSchema
         | cli::ParsedCli::ApiCommands
         | cli::ParsedCli::ApiCommand(_)

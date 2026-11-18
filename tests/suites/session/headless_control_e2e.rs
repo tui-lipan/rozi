@@ -49,7 +49,12 @@ fn expect_ok(session: &str, command: ControlCommand) -> serde_json::Value {
 
 /// A session server that resolves launches the way a real one started from config does.
 fn headless_settings() -> ServerSettings {
-    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    let (shell, command_shell) = resolve_launch_argv(
+        None,
+        None,
+        &ShellEnv::from_process(),
+        rozi::platform::command::LoginShell::Never,
+    );
     ServerSettings {
         shell,
         command_shell,

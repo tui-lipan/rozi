@@ -851,7 +851,12 @@ fn a_verified_caller_passes_on_its_ssh_connection_and_nothing_else() {
     let files = tempfile::tempdir().unwrap();
     let server = spawn_listener(ServerSettings::default());
     let (mut client, _) = common::attach_client(server.endpoint(), server.session(), "ssh client");
-    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    let (shell, command_shell) = resolve_launch_argv(
+        None,
+        None,
+        &ShellEnv::from_process(),
+        rozi::platform::command::LoginShell::Never,
+    );
     client.write_control(&ClientMessage::SpawnPane {
         placement: Some(common::spawn_placement(0, &[(7, 1)])),
         local: false,

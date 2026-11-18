@@ -8,7 +8,12 @@ use tui_lipan::prelude::TerminalColorPalette;
 use tui_lipan::{ProgramStatusSnapshot, ProgramStatusState};
 
 fn spawn(client: &mut TestConnection, id: u32, command: &str, keep_open: bool) {
-    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    let (shell, command_shell) = resolve_launch_argv(
+        None,
+        None,
+        &ShellEnv::from_process(),
+        rozi::platform::command::LoginShell::Never,
+    );
     client.write_control(&ClientMessage::SpawnPane {
         placement: Some(crate::common::spawn_placement(
             if id == 81 { 0 } else { 1 },

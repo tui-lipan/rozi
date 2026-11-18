@@ -8135,7 +8135,12 @@ fn pane_child_output(script: &str, env: &[(&str, &str)]) -> String {
     let launch = crate::pane::launch::PaneLaunch::Direct {
         argv: vec!["/bin/sh".to_string(), "-c".to_string(), script.to_string()],
     };
-    let mut config = pty_config(Some(&launch), &[], &[]);
+    let mut config = pty_config(
+        Some(&launch),
+        &[],
+        &[],
+        crate::platform::command::LoginShell::Never,
+    );
     for (key, value) in env {
         config = config.env(*key, *value);
     }

@@ -95,6 +95,7 @@ impl ShellFileValue {
 struct FileConfig {
     shell: Option<ShellFileValue>,
     command_shell: Option<ShellFileValue>,
+    login_shell: Option<String>,
     shell_integration: ShellIntegrationFileConfig,
     environment: EnvironmentFileConfig,
     cwd: Option<String>,
@@ -995,6 +996,14 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(command_shell) = non_empty_argv(parsed.command_shell) {
         config.command_shell = Some(command_shell);
+    }
+    if let Some(login) = non_empty(parsed.login_shell) {
+        match crate::platform::command::LoginShell::parse(&login) {
+            Some(value) => config.login_shell = value,
+            None => warnings.push(format!(
+                "Ignored unknown login_shell \"{login}\" (expected `auto`, `always`, or `never`)"
+            )),
+        }
     }
     if let Some(mode) = non_empty(parsed.shell_integration.mode) {
         match ShellIntegrationMode::parse(&mode) {

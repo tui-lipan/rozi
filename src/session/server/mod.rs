@@ -327,6 +327,8 @@ pub struct ServerSettings {
     pub shell: Vec<String>,
     /// Shell integration for panes restored before a client can prepare their launch policy.
     pub shell_integration: crate::config::ShellIntegrationMode,
+    /// `login_shell`, for a pane whose spawn request names no shell, as a remote client's does.
+    pub login_shell: crate::platform::command::LoginShell,
     pub command_shell: Vec<String>,
     /// `[[rules]]` placement, for a pane this server opens itself.
     ///
@@ -373,6 +375,7 @@ impl Default for ServerSettings {
             scrollback: DEFAULT_SCROLLBACK,
             shell: Vec::new(),
             shell_integration: crate::config::ShellIntegrationMode::default(),
+            login_shell: crate::platform::command::LoginShell::default(),
             command_shell: Vec::new(),
             rules: Vec::new(),
             split_width_multiplier: crate::config::LayoutConfig::default().split_width_multiplier,
@@ -2452,6 +2455,7 @@ fn pty_config(
     launch: Option<&crate::pane::launch::PaneLaunch>,
     shell: &[String],
     command_shell: &[String],
+    login: crate::platform::command::LoginShell,
 ) -> TerminalPtyConfig {
     use crate::platform::command::ShellCommand;
 
@@ -2475,8 +2479,9 @@ fn pty_config(
             config
         }
         _ => {
-            let shell = ShellCommand::from_argv(shell)
-                .unwrap_or_else(|| crate::platform::command::resolve_interactive_shell(None, &env));
+            let shell = ShellCommand::from_argv(shell).unwrap_or_else(|| {
+                crate::platform::command::resolve_interactive_shell(None, &env, login)
+            });
             let mut config = TerminalPtyConfig::new(shell.program).term("xterm-256color");
             for arg in shell.args {
                 config = config.arg(arg);
@@ -2602,6 +2607,7 @@ pub fn run_named_session_mode_with_nonce(
         loaded.config.shell.as_deref(),
         loaded.config.command_shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),
+        loaded.config.login_shell,
     );
     let client_scratch = crate::scratchpad::runtime::is_client_scratch_session(name);
     let mut server = SessionServer::new_named_with_settings(
@@ -2618,6 +2624,7 @@ pub fn run_named_session_mode_with_nonce(
             scrollback: loaded.config.scrollback,
             shell,
             shell_integration: loaded.config.shell_integration.mode,
+            login_shell: loaded.config.login_shell,
             command_shell,
             rules: loaded.config.rules,
             split_width_multiplier: loaded.config.layout.split_width_multiplier,

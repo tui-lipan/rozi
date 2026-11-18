@@ -337,6 +337,11 @@ The remote host chooses the shell. Your local `[shell]` settings and shell integ
 sent to it. A remote shell that emits OSC 7 still reports its current directory; without it,
 directory tracking may stay at the pane's starting directory.
 
+A session or extension that rozi starts on the host gets your login environment there, such as the
+`PATH` your shell files set up, rather than the shorter one SSH gives a command. rozi reads it by
+running your login shell once, with `ROZI_RESOLVING_ENVIRONMENT=1` set so your files can skip slow
+or interactive steps. If they take longer than five seconds, the session keeps the SSH environment.
+
 While attached remotely, the Files and Git sidebar tabs read the remote filesystem. Git change
 markers need `git` on the remote host's `PATH`. File search covers only directories already
 expanded in the tree.
@@ -517,6 +522,7 @@ finishes.
 | Incompatible version | The session runs on an older protocol generation. Run `rozi sessions upgrade <NAME> --remote <HOST>`. |
 | `Connection failed` | Any other SSH failure. Run `rozi --remote <host>` from a shell to see the error. |
 | Git markers missing | Install `git` on the remote host and check its `PATH`. |
+| Command not found in a remote pane | Check that your login shell on the host sets `PATH` within five seconds, then restart the session. |
 
 When a sidebar message is not enough, run `rozi --remote <host>` from a shell to see the underlying
 SSH error.

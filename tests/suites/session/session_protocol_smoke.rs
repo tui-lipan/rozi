@@ -84,7 +84,12 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
     assert_eq!(controller, Some(first_client_id));
     assert!(origin.is_empty());
 
-    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    let (shell, command_shell) = resolve_launch_argv(
+        None,
+        None,
+        &ShellEnv::from_process(),
+        rozi::platform::command::LoginShell::Never,
+    );
     first.write_control(&ClientMessage::SpawnPane {
         placement: Some(crate::common::spawn_placement(
             0,

@@ -3,6 +3,7 @@ use toml::Table;
 const TOP_LEVEL_KEYS: &[&str] = &[
     "shell",
     "command_shell",
+    "login_shell",
     "shell_integration",
     "environment",
     "cwd",

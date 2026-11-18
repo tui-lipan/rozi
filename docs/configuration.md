@@ -110,7 +110,7 @@ session's panes.
 
 | Setting | When it takes effect |
 | --- | --- |
-| `shell`, `shell_integration.mode`, `cwd`, `environment.forward` | New panes only. |
+| `shell`, `login_shell`, `shell_integration.mode`, `cwd`, `environment.forward` | New panes only. |
 | `command_shell` | New command, hook, service, sidebar, and workbar executions. |
 | `scrollback` | New terminal screens. Restart an existing session server for its new panes to use it. |
 | `window_title` | On save. Changing it to `""` keeps the last title until rozi exits. |
@@ -177,6 +177,7 @@ started there is visible to your desktop clients.
 | --- | --- | --- | --- |
 | `shell` | string or string array | Platform shell | A string is one program with no arguments; an array keeps each argument. Unix uses `SHELL`, then `/bin/sh`. Windows tries `pwsh.exe`, `powershell.exe`, `COMSPEC`, then `cmd.exe`. |
 | `command_shell` | string or string array | `["/bin/sh", "-c"]` on Unix, `[COMSPEC, "/D", "/S", "/C"]` on Windows | Runs command strings for panes, popups, hooks, services, workbar and sidebar commands, and config commands. |
+| `login_shell` | `"auto"`, `"always"`, or `"never"` | `"auto"` | Starts pane shells as login shells, which read files such as `~/.zprofile` and `~/.bash_profile`. `auto` does so on macOS. `never` adds nothing, so a login flag in `shell` still applies. |
 | `cwd` | path string | Launch directory | Starting directory for new panes. `~` expands. |
 | `scrollback` | integer | `5000` | Minimum `1`. |
 | `frame_rate` | integer | `120` | Clamped to `15..=480` with a warning. |

@@ -1423,6 +1423,9 @@ pub struct Config {
     /// (`["/bin/sh", "-c"]` on Unix, `[%COMSPEC%, "/D", "/S", "/C"]` on Windows) - see
     /// [`crate::platform::command::resolve_command_shell`].
     pub command_shell: Option<Vec<String>>,
+    /// Whether pane shells start as login shells; applied by
+    /// [`crate::platform::command::resolve_interactive_shell`].
+    pub login_shell: crate::platform::command::LoginShell,
     pub shell_integration: ShellIntegrationConfig,
     pub environment: EnvironmentConfig,
     pub cwd: Option<String>,
@@ -2611,6 +2614,7 @@ impl Default for Config {
         Self {
             shell: None,
             command_shell: None,
+            login_shell: crate::platform::command::LoginShell::default(),
             shell_integration: ShellIntegrationConfig::default(),
             environment: EnvironmentConfig::default(),
             cwd: std::env::current_dir()

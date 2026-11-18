@@ -587,7 +587,9 @@ fn collect(reader: std::thread::JoinHandle<Vec<u8>>, until: Instant) -> Option<V
 }
 
 fn build_command(launch: &Launch, bundle_dir: &Path) -> Result<Command, SpawnFailure> {
-    match LaunchTemplate::from(launch).resolve(bundle_dir) {
+    // A runtime started by a non-interactive SSH command gives its processes the user's login
+    // environment, and looks programs up on that `PATH`.
+    let mut command = match LaunchTemplate::from(launch).resolve(bundle_dir) {
         LaunchTemplate::Direct(argv) => {
             let Some((program, args)) = argv.split_first() else {
                 return Err(SpawnFailure::SpawnFailed {
@@ -603,13 +605,17 @@ fn build_command(launch: &Launch, bundle_dir: &Path) -> Result<Command, SpawnFai
                 }
                 PathBuf::from(program)
             } else {
-                locate(program).ok_or_else(|| SpawnFailure::MissingExecutable {
+                locate(
+                    program,
+                    crate::platform::login_environment::path_for_children(),
+                )
+                .ok_or_else(|| SpawnFailure::MissingExecutable {
                     program: program.clone(),
                 })?
             };
             let mut command = Command::new(path);
             command.args(args);
-            Ok(command)
+            command
         }
         LaunchTemplate::Shell(line) => {
             let runner = resolve_command_shell(None, &ShellEnv::from_process());
@@ -621,20 +627,27 @@ fn build_command(launch: &Launch, bundle_dir: &Path) -> Result<Command, SpawnFai
             let mut command = Command::new(&runner.program);
             command.args(&runner.args);
             command.arg(line);
-            Ok(command)
+            command
         }
-    }
+    };
+    crate::platform::login_environment::apply_to(&mut command);
+    Ok(command)
 }
 
-/// A bare program name on this host's `PATH`, or `None` when it is not installed.
+/// A bare program name on `path`, or this host's `PATH` without one, or `None` when it is not
+/// installed.
 #[cfg(windows)]
-fn locate(program: &str) -> Option<PathBuf> {
+fn locate(program: &str, _path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
     crate::platform::command::lookup_program(program)
 }
 
 #[cfg(not(windows))]
-fn locate(program: &str) -> Option<PathBuf> {
-    program_exists(program).then(|| PathBuf::from(program))
+fn locate(program: &str, path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    let found = match path {
+        Some(path) => crate::platform::command::program_on_path(program, path),
+        None => program_exists(program),
+    };
+    found.then(|| PathBuf::from(program))
 }
 
 /// Lifecycle events emitted by [`Supervisor`] to a non-UI or UI host.

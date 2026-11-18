@@ -1721,10 +1721,12 @@ impl SessionServer {
             loaded.config.shell.as_deref(),
             loaded.config.command_shell.as_deref(),
             &crate::platform::command::ShellEnv::from_process(),
+            loaded.config.login_shell,
         );
         self.settings.scrollback = loaded.config.scrollback;
         self.settings.split_width_multiplier = loaded.config.layout.split_width_multiplier;
         self.settings.shell_integration = loaded.config.shell_integration.mode;
+        self.settings.login_shell = loaded.config.login_shell;
         self.apply_spawn_policy(loaded.config.rules, shell, command_shell);
     }
 
@@ -1737,6 +1739,8 @@ impl SessionServer {
             crate::platform::shell_integration::resolve_interactive_shell(
                 Some(&self.settings.shell),
                 &crate::platform::command::ShellEnv::from_process(),
+                // `settings.shell` was resolved with `login_shell` already.
+                crate::platform::command::LoginShell::Never,
                 self.settings.shell_integration,
                 &crate::platform::shell_integration::InjectionEnv::from_process(),
             );

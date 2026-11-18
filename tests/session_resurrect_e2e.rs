@@ -92,7 +92,12 @@ fn restart_restores_layout_and_pane_replay(migrate_v2: bool) {
     read_until(&mut client, |frame| {
         matches!(frame, Frame::Control(ServerMessage::Attached { .. }))
     });
-    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    let (shell, command_shell) = resolve_launch_argv(
+        None,
+        None,
+        &ShellEnv::from_process(),
+        rozi::platform::command::LoginShell::Never,
+    );
     client.write_control(&ClientMessage::SpawnPane {
         placement: Some(crate::common::spawn_placement(
             0,
@@ -390,7 +395,12 @@ fn a_restored_shell_reruns_the_command_it_was_holding() {
         matches!(frame, Frame::Control(ServerMessage::Attached { .. }))
     });
 
-    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    let (shell, command_shell) = resolve_launch_argv(
+        None,
+        None,
+        &ShellEnv::from_process(),
+        rozi::platform::command::LoginShell::Never,
+    );
     client.write_control(&ClientMessage::SpawnPane {
         placement: Some(crate::common::spawn_placement(
             0,

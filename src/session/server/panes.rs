@@ -246,10 +246,12 @@ impl SessionServer {
         let effective_cwd = effective_spawn_cwd(request.cwd.as_deref());
         // Built per attempt rather than once, because a native agent resume that cannot start gets
         // a second one - the interactive shell - from the same directory and environment.
+        let login_shell = self.settings.login_shell;
         let build_config = |launch: Option<&crate::pane::launch::PaneLaunch>| {
-            let mut config = pty_config(launch, &request.shell, &request.command_shell)
-                .size(cols.max(1), rows.max(1))
-                .cell_size(cell);
+            let mut config =
+                pty_config(launch, &request.shell, &request.command_shell, login_shell)
+                    .size(cols.max(1), rows.max(1))
+                    .cell_size(cell);
             if let Some(cwd) = effective_cwd.as_ref() {
                 config = config.cwd(cwd.clone());
             }
@@ -855,9 +857,10 @@ impl SessionServer {
         let (cols, rows) = (pane.cols, pane.rows);
         let cwd = cwd.filter(|cwd| Path::new(cwd).is_dir());
         let (shell, env, cell) = (pane.shell.clone(), pane.env.clone(), pane.cell);
+        let login_shell = self.settings.login_shell;
         let events = Arc::clone(&self.events);
         let start = |launch: Option<&crate::pane::launch::PaneLaunch>| {
-            let mut config = pty_config(launch, &shell, &[])
+            let mut config = pty_config(launch, &shell, &[], login_shell)
                 .size(cols.max(1), rows.max(1))
                 .cell_size(cell);
             if let Some(cwd) = cwd.clone() {

@@ -934,6 +934,7 @@ pub(crate) fn resolved_launch_argv(
     let (shell, extra_env) = crate::platform::shell_integration::resolve_interactive_shell(
         config.shell.as_deref(),
         &shell_env,
+        config.login_shell,
         config.shell_integration.mode,
         &crate::platform::shell_integration::InjectionEnv::from_process(),
     );

@@ -255,6 +255,9 @@ fn base_server_command(exe: &Path, name: &str, start: ServerStart<'_>) -> std::p
             "--server"
         });
     }
+    // A server started from a non-interactive SSH command runs with the user's login environment,
+    // so its panes find what a terminal on that host would.
+    super::login_environment::apply_to(&mut command);
     // A server is not in a pane, even when started from one. It stamps `ROZI_TERMINAL` into each
     // pane it spawns; nothing else it starts should inherit it.
     command

@@ -321,6 +321,8 @@ to the session, every client receives whole images instead.
 
 Limits:
 
+- Programs in a pane on Windows cannot show images; see
+  [Windows limitations](platform-support.md#windows-limitations).
 - Kitty protocol animation frames are not supported, apart from edits to an image's first frame.
   Programs that redraw an image can still animate it.
 - Each pane keeps up to 200 MiB of image data, and evicts the oldest images beyond that. A client

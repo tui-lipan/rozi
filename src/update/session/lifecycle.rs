@@ -334,7 +334,8 @@ pub(crate) fn attached(
         if !reconnect {
             reset_state_for_shared_seed(&mut ctx.state);
         }
-        crate::layout::shared::apply_shared_layout(ctx, &layout, layout_rev);
+        // A reconnect keeps its panes, so one added while it was away opens on its timers.
+        let applied = crate::layout::shared::apply_shared_layout(ctx, &layout, layout_rev);
         // Attaching reveals an already-running session, so snap to its authoritative geometry
         // instead of interpolating from the previous session's pane rectangles.
         ctx.state.animation = GeometryAnimation::None;
@@ -344,7 +345,7 @@ pub(crate) fn attached(
         crate::pane::pty_events::resize::publish_controller_geometry(ctx);
         let generation = ctx.state.current().resize_flush_generation;
         crate::pane::pty_events::flush_pending_resizes(ctx, generation);
-        Update::full()
+        Update::full().merge(applied)
     } else if had_panes {
         // Current peers cannot create this state. Refuse it rather than invent placements.
         if let Some(client) = ctx.state.current().session_client.as_ref() {

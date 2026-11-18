@@ -44,7 +44,7 @@ pub(crate) fn ctrl_preview_active(state: &crate::state::State) -> bool {
 
 /// Whether the repository the tab lists is still the focused pane's. Compared by borrow: this runs
 /// after every message, so the steady state must not allocate.
-fn source_is_current(ctx: &Context<AppRoot>) -> bool {
+pub(crate) fn source_is_current(ctx: &Context<AppRoot>) -> bool {
     let listing = &ctx.state.sidebar.worktrees;
     match crate::ops::worktrees::repository_scope_ref(&ctx.state) {
         Ok((cwd, target)) => listing
@@ -610,23 +610,84 @@ mod tests {
         });
     }
 
+    /// The tab listing `LINKED` under a live lock, with the list request already read.
+    fn locked_listing() -> (TestBackend<AppRoot>, Receiver<ClientOutbound>) {
+        let (mut backend, outbound) = backend();
+        nudge(&mut backend);
+        let _ = sent_worktree_requests(&outbound);
+        let mut locked = tree(LINKED, true);
+        locked.lock = Some(crate::git::worktrees::WorktreeLock {
+            reason: "agent".into(),
+            stale: false,
+        });
+        let listing = &mut backend.state_mut().sidebar.worktrees;
+        listing.entries = vec![tree(REPO, false), locked];
+        listing.loaded = true;
+        (backend, outbound)
+    }
+
+    /// The locked checkout's unlock glyph. Rows: header, primary, linked checkout, "New worktree".
+    const LOCKED_ROW_CLOSE: Msg = Msg::SidebarRowClose { panel: 0, index: 2 };
+
+    /// While a newly attached session has not reported its repository, the tab keeps showing the
+    /// last one. Its rows act on a host the current client may not reach, so they do nothing.
+    #[test]
+    fn a_held_listing_sends_nothing_through_the_new_attachment() {
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, outbound) = locked_listing();
+            let state = backend.state_mut();
+            let focused = state.focused_pane().expect("a focused pane");
+            let terminal = &mut crate::pane::lifecycle::find_pane_mut(state, focused)
+                .unwrap()
+                .terminal;
+            // The focused pane has not reported where it is yet, as in a session just attached.
+            terminal.cwd = None;
+            terminal.project_root = None;
+            nudge(&mut backend);
+            assert_eq!(
+                backend.state().sidebar.worktrees.source,
+                Some((None, REPO.into())),
+                "the last repository stays on screen"
+            );
+
+            backend.dispatch(LOCKED_ROW_CLOSE).unwrap();
+            assert!(backend.state().worktree_operations.is_empty());
+            assert!(sent_worktree_requests(&outbound).is_empty());
+        });
+    }
+
+    /// The listing outlives the tab: an unlock that finishes while another tab is on screen is
+    /// announced, since no row shows it.
+    #[test]
+    fn an_unlock_finishing_off_screen_is_announced() {
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, outbound) = locked_listing();
+            backend.dispatch(LOCKED_ROW_CLOSE).unwrap();
+            let requests = sent_worktree_requests(&outbound);
+            let [(id, WorktreeRequest::Unlock { .. })] = requests.as_slice() else {
+                panic!("one unlock request, got {requests:?}");
+            };
+            backend.state_mut().sidebar.shown = [false, false];
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch,
+                    request_id: *id,
+                    result: WorktreeResult::Unlocked {
+                        path: LINKED.into(),
+                    },
+                })
+                .unwrap();
+            assert!(!backend.state().replaceable_toasts.is_empty());
+        });
+    }
+
     /// A live lock's row offers an unlock in place of the ✕, which acts on the first press.
     #[test]
     fn a_locked_checkout_unlocks_from_the_tab_on_one_press() {
         crate::test_support::on_large_stack(|| {
-            let (mut backend, outbound) = backend();
-            nudge(&mut backend);
-            let _ = sent_worktree_requests(&outbound);
-            let mut locked = tree(LINKED, true);
-            locked.lock = Some(crate::git::worktrees::WorktreeLock {
-                reason: "agent".into(),
-                stale: false,
-            });
-            let listing = &mut backend.state_mut().sidebar.worktrees;
-            listing.entries = vec![tree(REPO, false), locked];
-            listing.loaded = true;
-            // Rows: header, primary, linked checkout, "New worktree".
-            let close = Msg::SidebarRowClose { panel: 0, index: 2 };
+            let (mut backend, outbound) = locked_listing();
+            let close = LOCKED_ROW_CLOSE;
 
             backend.dispatch(close.clone()).unwrap();
             // A second press while the unlock is queued must not send another.

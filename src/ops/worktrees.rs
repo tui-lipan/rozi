@@ -983,19 +983,26 @@ pub(crate) fn unlock_selected(ctx: &mut Context<AppRoot>) -> Update {
 
 /// A locked checkout's unlock glyph in the Worktrees tab was clicked.
 pub(crate) fn unlock_from_sidebar(ctx: &mut Context<AppRoot>, path: String) -> Update {
-    let listing = &ctx.state.sidebar.worktrees;
-    let Some((_, cwd)) = listing.source.clone() else {
-        return Update::none();
-    };
-    let Some(tree) = listing
-        .entries
-        .iter()
-        .find(|tree| tree.path == path)
-        .cloned()
-    else {
+    let Some((cwd, tree)) = sidebar_checkout(ctx, &path) else {
         return Update::none();
     };
     start_unlock(ctx, cwd, tree)
+}
+
+/// The Worktrees tab's checkout at `path`, and the repository it lists, when an action on it would
+/// reach that repository's host. While a newly attached session has not reported its repository,
+/// the tab keeps the previous one on screen, and an action there would go through the wrong client.
+fn sidebar_checkout(
+    ctx: &Context<AppRoot>,
+    path: &str,
+) -> Option<(String, crate::git::worktrees::WorktreeInfo)> {
+    if !crate::update::sidebar::worktrees::source_is_current(ctx) {
+        return None;
+    }
+    let listing = &ctx.state.sidebar.worktrees;
+    let (_, cwd) = listing.source.as_ref()?;
+    let tree = listing.entries.iter().find(|tree| tree.path == path)?;
+    Some((cwd.clone(), tree.clone()))
 }
 
 /// Ask the session host to lift a checkout's lock, stale or not.
@@ -1031,16 +1038,7 @@ fn start_unlock(
 
 /// A checkout's ✕ in the Worktrees tab was confirmed.
 pub(crate) fn remove_from_sidebar(ctx: &mut Context<AppRoot>, path: String, force: bool) -> Update {
-    let listing = &ctx.state.sidebar.worktrees;
-    let Some((_, cwd)) = listing.source.clone() else {
-        return Update::none();
-    };
-    let Some(tree) = listing
-        .entries
-        .iter()
-        .find(|tree| tree.path == path)
-        .cloned()
-    else {
+    let Some((cwd, tree)) = sidebar_checkout(ctx, &path) else {
         return Update::none();
     };
     start_remove(ctx, cwd, tree, force)
@@ -1141,6 +1139,9 @@ pub(crate) fn apply_result(
                 .source
                 .as_ref()
                 .is_some_and(|(_, cwd)| *cwd == operation.cwd);
+        // The listing outlives the tab being on screen; only a visible row stands in for a toast.
+        let sidebar_shown =
+            sidebar_here && crate::update::sidebar::worktrees::worktrees_active(ctx);
         if sidebar_here {
             // The checkout list changed on the host; show it without waiting for the next tick.
             crate::update::sidebar::worktrees::request_list(ctx);
@@ -1222,7 +1223,7 @@ pub(crate) fn apply_result(
                     return relist(ctx);
                 }
                 // The sidebar row disappearing is the feedback; a toast would repeat it.
-                if !sidebar_here {
+                if !sidebar_shown {
                     let deleted: Vec<_> = branches
                         .iter()
                         .filter(|outcome| matches!(outcome, BranchOutcome::Deleted { .. }))
@@ -1249,7 +1250,7 @@ pub(crate) fn apply_result(
                     }
                     return relist(ctx);
                 }
-                if !sidebar_here {
+                if !sidebar_shown {
                     crate::pane::pty_events::notify_info(
                         ctx,
                         format!("Unlocked worktree `{path}`"),

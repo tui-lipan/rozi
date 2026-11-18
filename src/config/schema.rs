@@ -2534,15 +2534,12 @@ pub struct SidebarConfig {
 }
 
 impl SidebarConfig {
-    /// The Agents tab's options, which also govern the Agents view and agent rows in Activity.
-    /// The defaults when the tab is not in the catalog.
+    /// `[sidebar.settings.agents]`, which governs the Agents view and agent rows in every tab,
+    /// whether or not the Agents tab is listed.
     pub fn agents_config(&self) -> SidebarAgentsConfig {
-        self.tabs
-            .iter()
-            .find_map(|tab| match tab {
-                SidebarTab::Agents { config } => Some(*config),
-                _ => None,
-            })
+        self.tab_settings
+            .get("agents")
+            .map(super::sidebar::agents_config)
             .unwrap_or_default()
     }
 }

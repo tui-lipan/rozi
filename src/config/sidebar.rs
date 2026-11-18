@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use super::file::{SidebarFileConfig, SidebarTabSpec};
 use super::input::parse_user_command_action;
-use super::schema::AgentRowOpen;
+use super::schema::{AgentRowOpen, SidebarAgentsConfig};
 use super::schema::{
     SIDEBAR_MAX_SPLIT_RATIO, SIDEBAR_MIN_COMMAND_INTERVAL_SECS, SIDEBAR_MIN_SPLIT_RATIO,
     SIDEBAR_TREE_MAX_ENTRIES_LIMIT, SidebarConfig, SidebarLauncherEntry, SidebarPosition,
@@ -209,6 +209,18 @@ fn builtin_group(
 }
 
 /// The `worktrees` choice the Activity and Agents tabs each take.
+/// The Agents settings, as the Agents tab and the Agents view read them.
+pub(crate) fn agents_config(group: &SettingsGroup) -> SidebarAgentsConfig {
+    SidebarAgentsConfig {
+        worktrees: worktree_layout(group),
+        open: group
+            .value("open")
+            .and_then(SettingValue::as_str)
+            .and_then(AgentRowOpen::parse)
+            .unwrap_or_default(),
+    }
+}
+
 fn worktree_layout(group: &SettingsGroup) -> WorktreeLayout {
     group
         .value("worktrees")
@@ -284,20 +296,23 @@ pub(crate) fn apply_builtin_settings(
                     .and_then(SettingValue::as_bool)
                     .unwrap_or_default();
             }
-            SidebarTab::Agents { config } => {
-                config.worktrees = worktree_layout(&group);
-                config.open = group
-                    .value("open")
-                    .and_then(SettingValue::as_str)
-                    .and_then(AgentRowOpen::parse)
-                    .unwrap_or_default();
-            }
+            SidebarTab::Agents { config } => *config = agents_config(&group),
             SidebarTab::Tree { view, config } => {
                 *config = tree_config(*view, &group, on_click, warnings);
             }
             _ => {}
         }
         groups.insert(id, group);
+    }
+    // These also govern the Agents view, which is there with or without the tab.
+    if !groups.contains_key("agents") && raw.contains_key("agents") {
+        let (group, _) = builtin_group(
+            "agents",
+            builtin_tab_settings("agents"),
+            raw.get("agents"),
+            warnings,
+        );
+        groups.insert("agents".to_string(), group);
     }
     for id in raw.keys() {
         if groups.contains_key(id) {
@@ -896,6 +911,15 @@ mod tests {
                     },
                 },
             ]
+        );
+
+        // The Agents view reads them even when the tab is not listed.
+        let (config, warnings) =
+            parse("tabs = [\"activity\"]\n[settings.agents]\nopen = \"pane\"\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            config.agents_config().open,
+            crate::config::AgentRowOpen::Pane
         );
 
         // Activity leaves agents to the Agents tab unless asked to list them.

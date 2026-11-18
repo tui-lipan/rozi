@@ -112,6 +112,78 @@ fn process_for_pid(pid: i32) -> Option<ForegroundProcess> {
     })
 }
 
+pub(super) fn identity(pid: u32) -> Option<super::ProcessIdentity> {
+    let pid = libc::c_int::try_from(pid).ok()?;
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>();
+    // SAFETY: `info` is a zeroed `proc_bsdinfo` of exactly the size passed.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            &mut info as *mut _ as *mut c_void,
+            size as libc::c_int,
+        )
+    };
+    if written as usize != size {
+        return None;
+    }
+    let comm: Vec<u8> = info.pbi_comm.iter().map(|&byte| byte as u8).collect();
+    let name = CStr::from_bytes_until_nul(&comm)
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| String::from_utf8_lossy(&comm).into_owned());
+    Some(super::ProcessIdentity {
+        parent: info.pbi_ppid,
+        name,
+        argv0: argv0_for_pid(pid),
+    })
+}
+
+/// `argv[0]` from `KERN_PROCARGS2`: an `int` argument count, the executable path, NUL padding,
+/// then the arguments.
+fn argv0_for_pid(pid: libc::c_int) -> Option<String> {
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
+    let mut size: libc::size_t = 0;
+    // SAFETY: a size query; no buffer is written.
+    let queried = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if queried != 0 || size == 0 {
+        return None;
+    }
+    let mut buf = vec![0_u8; size];
+    // SAFETY: `buf` holds `size` bytes, and sysctl writes at most that and updates `size`.
+    let read = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            buf.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if read != 0 {
+        return None;
+    }
+    let rest = buf.get(std::mem::size_of::<libc::c_int>()..size)?;
+    let rest = &rest[rest.iter().position(|byte| *byte == 0)?..];
+    let rest = &rest[rest.iter().position(|byte| *byte != 0)?..];
+    let end = rest
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(rest.len());
+    Some(String::from_utf8_lossy(&rest[..end]).into_owned())
+}
+
 /// Read `pid`'s current working directory via `proc_pidinfo(PROC_PIDVNODEPATHINFO)`.
 ///
 /// `pvi_cdir.vip_path` is a `MAXPATHLEN`-sized, NUL-terminated C string laid out by `libc` as

@@ -1160,7 +1160,8 @@ fn a_guest_pane_runs_with_the_owner_shell_runner_and_environment() {
             .any(|reply| matches!(reply, ServerMessage::SpawnResult { ok: true, .. }))
     );
     let pane = &server.local_panes[&(bob, 1)];
-    assert_eq!(pane.shell, ["/bin/sh"]);
+    // The owner's shell, not the guest's; `login_shell` may add its flag on macOS.
+    assert_eq!(pane.shell.first().map(String::as_str), Some("/bin/sh"));
     assert_eq!(pane.cwd.as_deref(), Some(cwd.as_str()));
     assert_eq!(value(&pane.env, "ROZI_PANE").as_deref(), Some("1"));
     for (name, expected) in arguments {

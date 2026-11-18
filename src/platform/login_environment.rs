@@ -14,9 +14,11 @@
 //! longer than [`CAPTURE_TIMEOUT`] leaves the environment as it was. `ROZI_RESOLVING_ENVIRONMENT=1`
 //! is set while the shell runs, so a user can skip slow or interactive parts of their files.
 //!
-//! A process with a terminal (`SSH_TTY`) came from an interactive SSH login, whose shell already
-//! read the login files and may have changed the environment since, as activating a virtualenv
-//! does; it is left alone. So is a login shell outside the sh family and fish, which take
+//! A process below an interactive SSH login is left alone: that login's shell already read the
+//! login files, and may have changed the environment since, as activating a virtualenv does. It is
+//! recognized by a login shell (`argv[0]` starting with `-`) between this process and `sshd`,
+//! since `ssh host command` runs the command through a plain `-c` shell even when `-t` gives it a
+//! terminal. Where the process tree cannot be read, a terminal (`SSH_TTY`) counts as a login. So is a login shell outside the sh family and fish, which take
 //! `-l -i -c` and expand the probe the same way.
 //!
 //! Unix only: Windows has no login shell, and its SSH server already gives a full user
@@ -93,7 +95,8 @@ pub fn path_for_children() -> Option<&'static std::ffi::OsStr> {
 }
 
 fn capture_for_this_process() -> Outcome {
-    if !cfg!(unix) || !started_by_ssh_command(|key| std::env::var_os(key)) {
+    if !cfg!(unix) || !started_by_ssh_command(|key| std::env::var_os(key), below_interactive_login)
+    {
         return Outcome::NotNeeded;
     }
     let Some(shell) = std::env::var_os("SHELL").filter(|shell| {
@@ -129,11 +132,43 @@ fn capture_for_this_process() -> Outcome {
     }
 }
 
-/// Whether the environment `var` reads came from a non-interactive SSH command and no login
-/// environment has been read for it yet.
-fn started_by_ssh_command(var: impl Fn(&str) -> Option<OsString>) -> bool {
+/// Whether the environment `var` reads came from an SSH command, not an interactive SSH login,
+/// and no login environment has been read for it yet. `login` says whether this process runs
+/// below an interactive login, or `None` when that cannot be told.
+fn started_by_ssh_command(
+    var: impl Fn(&str) -> Option<OsString>,
+    login: impl FnOnce() -> Option<bool>,
+) -> bool {
     let set = |key: &str| var(key).is_some_and(|value| !value.is_empty());
-    set("SSH_CONNECTION") && !set("SSH_TTY") && var(RESOLVED_ENV).is_none()
+    set("SSH_CONNECTION")
+        && var(RESOLVED_ENV).is_none()
+        && !login().unwrap_or_else(|| set("SSH_TTY"))
+}
+
+/// Whether a login shell runs between this process and the SSH server that started it; `None`
+/// when the process tree cannot be read.
+fn below_interactive_login() -> Option<bool> {
+    let mut pid = crate::platform::process::identity(std::process::id())?.parent;
+    // Deep enough for shells, multiplexers, and editors in between; a longer chain is a loop.
+    for _ in 0..64 {
+        if pid <= 1 {
+            return Some(false);
+        }
+        let process = crate::platform::process::identity(pid)?;
+        // `sshd-session` on OpenSSH 9.8 and later.
+        if process.name.starts_with("sshd") || process.name == "dropbear" {
+            return Some(false);
+        }
+        if process
+            .argv0
+            .as_deref()
+            .is_some_and(|arg| arg.starts_with('-'))
+        {
+            return Some(true);
+        }
+        pid = process.parent;
+    }
+    None
 }
 
 /// Run `shell` as an interactive login shell in the environment `base`, have it start `exe
@@ -302,7 +337,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_a_non_interactive_ssh_command_that_has_not_captured_yet_captures() {
+    fn only_an_ssh_command_outside_a_login_that_has_not_captured_yet_captures() {
         let env = |pairs: &'static [(&'static str, &'static str)]| {
             move |key: &str| {
                 pairs
@@ -312,14 +347,20 @@ mod tests {
             }
         };
         const SSH: (&str, &str) = ("SSH_CONNECTION", "10.0.0.2 5000 10.0.0.1 22");
-        assert!(started_by_ssh_command(env(&[SSH])));
+        const TTY: (&str, &str) = ("SSH_TTY", "/dev/ttys003");
+        let unknown = || None;
+        assert!(started_by_ssh_command(env(&[SSH]), unknown));
+        assert!(!started_by_ssh_command(env(&[]), unknown));
+        // `ssh -t host rozi …` has a terminal but no login shell above it.
+        assert!(started_by_ssh_command(env(&[SSH, TTY]), || Some(false)));
         // An interactive login already read the login files.
-        assert!(!started_by_ssh_command(env(&[
-            SSH,
-            ("SSH_TTY", "/dev/ttys003")
-        ])));
-        assert!(!started_by_ssh_command(env(&[])));
+        assert!(!started_by_ssh_command(env(&[SSH]), || Some(true)));
+        // Without the process tree, a terminal stands for a login.
+        assert!(!started_by_ssh_command(env(&[SSH, TTY]), unknown));
         // A process whose parent already tried, even when that failed.
-        assert!(!started_by_ssh_command(env(&[SSH, (RESOLVED_ENV, "0")])));
+        assert!(!started_by_ssh_command(
+            env(&[SSH, (RESOLVED_ENV, "0")]),
+            unknown
+        ));
     }
 }

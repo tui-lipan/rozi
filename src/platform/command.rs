@@ -1080,12 +1080,25 @@ pub(crate) fn shell_name(program: &str) -> String {
 
 /// Whether `args` already ask `shell` to start as a login shell.
 pub(crate) fn is_login_shell(shell: &ShellCommand) -> bool {
-    let powershell = matches!(shell_name(&shell.program).as_str(), "pwsh" | "powershell");
-    shell.args.iter().any(|arg| {
-        arg == "-l"
-            || arg == "--login"
-            || (powershell
-                && (arg.eq_ignore_ascii_case("-login") || arg.eq_ignore_ascii_case("-l")))
+    if matches!(shell_name(&shell.program).as_str(), "pwsh" | "powershell") {
+        return shell
+            .args
+            .iter()
+            .any(|arg| arg.eq_ignore_ascii_case("-login") || arg.eq_ignore_ascii_case("-l"));
+    }
+    shell.args.iter().any(|arg| is_login_arg(arg))
+}
+
+/// Whether `arg` starts a POSIX-style shell as a login shell: `--login`, `-l`, or `l` among
+/// bundled short options, as in `-il`.
+pub(crate) fn is_login_arg(arg: &str) -> bool {
+    if arg == "--login" {
+        return true;
+    }
+    arg.strip_prefix('-').is_some_and(|options| {
+        !options.starts_with('-')
+            && options.contains('l')
+            && options.chars().all(|option| option.is_ascii_alphabetic())
     })
 }
 
@@ -1427,10 +1440,14 @@ mod tests {
             login(ShellCommand::new("bash").arg("--norc"), ShellHost::MacOs),
             ShellCommand::new("bash").arg("--login").arg("--norc")
         );
-        // A shell already told to log in is left alone.
+        // A shell already told to log in is left alone, also with bundled options.
         assert_eq!(
             login(ShellCommand::new("fish").arg("--login"), ShellHost::MacOs),
             ShellCommand::new("fish").arg("--login")
+        );
+        assert_eq!(
+            login(ShellCommand::new("bash").arg("-il"), ShellHost::MacOs),
+            ShellCommand::new("bash").arg("-il")
         );
         // pwsh's flag must lead and exists only on Unix.
         assert_eq!(

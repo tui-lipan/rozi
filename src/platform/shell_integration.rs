@@ -165,9 +165,8 @@ const BASH_LOGIN_ENV: &str = "ROZI_BASH_LOGIN";
 
 fn inject_bash(shell: ShellCommand, install_dir: &Path) -> (ShellCommand, Vec<(String, String)>) {
     let is_login_flag = |arg: &String| arg == "-l" || arg == "--login";
-    let bundled_login = |arg: &String| {
-        arg.len() > 2 && arg.starts_with('-') && !arg.starts_with("--") && arg[1..].contains('l')
-    };
+    let bundled_login =
+        |arg: &String| crate::platform::command::is_login_arg(arg) && !is_login_flag(arg);
     if shell.args.iter().any(bundled_login) {
         // A login flag bundled with others (`-il`) cannot be taken out on its own, and bash would
         // ignore `--rcfile` beside it.

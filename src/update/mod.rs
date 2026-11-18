@@ -1259,7 +1259,7 @@ pub(crate) fn sync_modifier_key_reporting(ctx: &mut Context<AppRoot>) {
         .keybindings
         .as_ref()
         .is_some_and(|state| !matches!(state.stage, crate::state::KeybindingEditorStage::List));
-    let worktree_preview = sidebar::worktrees::ctrl_preview_active(&ctx.state);
+    let worktree_preview = sidebar::ctrl_preview_active(&ctx.state);
     ctx.set_modifier_key_reporting(capturing || (picker && !editing_binding) || worktree_preview);
     // Pickers and the sidebar let Shift pause reporting so a Shift+drag host selection survives
     // its release.

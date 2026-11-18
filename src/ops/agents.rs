@@ -450,6 +450,34 @@ fn conversation_to_open(
     background_conversation(state, location)
 }
 
+/// What activating `location` does when `open` applies to it, as a row or the Agents view names it.
+pub(crate) fn open_label(
+    location: &AgentLocation,
+    open: crate::config::AgentRowOpen,
+) -> &'static str {
+    match open {
+        crate::config::AgentRowOpen::Pane => "new pane",
+        crate::config::AgentRowOpen::Switch
+            if matches!(location, AgentLocation::OtherSession { .. }) =>
+        {
+            "open there"
+        }
+        crate::config::AgentRowOpen::Switch => "go to",
+    }
+}
+
+/// What Ctrl+click on a sidebar row does, while Ctrl is held over it. `None` unless the row is a
+/// background run, the only agent row Ctrl+click treats differently.
+pub(crate) fn ctrl_hint(
+    state: &crate::state::State,
+    location: &AgentLocation,
+) -> Option<&'static str> {
+    (state.sidebar.ctrl_held
+        && crate::update::sidebar::ctrl_preview_active(state)
+        && background_conversation(state, location).is_some())
+    .then(|| open_label(location, state.config.sidebar.agents_config().open.other()))
+}
+
 /// See [`BackgroundConversation`]. `None` for a row of a session this client holds no connection
 /// to, whose panes it cannot read.
 pub(crate) fn background_conversation(

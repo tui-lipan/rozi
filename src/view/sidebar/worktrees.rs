@@ -125,8 +125,7 @@ fn checkout_row(state: &State, row: WorktreeTabRow) -> SidebarRow {
     // when there is one. Holding Ctrl turns it into what Ctrl+click opens instead.
     if !row.removing {
         let mut open = state.config.worktrees.sidebar_open;
-        if state.sidebar.ctrl_held && crate::update::sidebar::worktrees::ctrl_preview_active(state)
-        {
+        if state.sidebar.ctrl_held && crate::update::sidebar::ctrl_preview_active(state) {
             open = open.other();
         }
         let verb = match (open, strongest) {

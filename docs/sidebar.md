@@ -192,8 +192,9 @@ Activating a run goes to that agent: it focuses the pane in the session on scree
 or attaches the session first anywhere else. Ctrl+click or `Ctrl+Enter` on a run its program keeps
 in the background opens it in a new pane of the current session instead, where the agent reopens
 that conversation. The tab's **Open** setting, `open = "pane"`, makes that the plain click, and
-Ctrl+click then goes to the run. To go to the next agent that needs you without
-looking for it, bind `focus-next-agent-needing-attention` (see
+Ctrl+click then goes to the run. Hold `Ctrl` while hovering or selecting such a run and its right
+edge says what Ctrl+click does; this needs a terminal that reports modifier presses through the
+Kitty keyboard protocol. To go to the next agent that needs you without looking for it, bind `focus-next-agent-needing-attention` (see
 [Commands without default keys](keybindings.md#commands-without-default-keys)). Each press goes to
 the next agent that is waiting for you, failed, or finished a run you have not looked at, after the
 one on screen, in the [Agents view](sessions.md#go-to-an-agent)'s order.

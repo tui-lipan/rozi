@@ -440,7 +440,7 @@ impl Component for AppRoot {
 
     fn on_modifiers_changed(&mut self, modifiers: KeyMods, ctx: &mut Context<Self>) -> Update {
         let mut changed = ctx.state.sidebar.ctrl_held != modifiers.ctrl
-            && crate::update::sidebar::worktrees::ctrl_preview_active(&ctx.state);
+            && crate::update::sidebar::ctrl_preview_active(&ctx.state);
         ctx.state.sidebar.ctrl_held = modifiers.ctrl;
         if let Some(keybindings) = ctx.state.keybindings.as_mut()
             && keybindings.is_capturing()

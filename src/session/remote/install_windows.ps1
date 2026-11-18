@@ -35,7 +35,19 @@ function Assert-Directory($path) {
 }
 function Assert-Hash($path, $expected) {
   Assert-Regular $path
-  if ((Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash -ne $expected) {
+  # Windows PowerShell's module path can omit the module that provides Get-FileHash.
+  $sha256 = [Security.Cryptography.SHA256]::Create()
+  try {
+    $stream = [IO.File]::OpenRead($path)
+    try {
+      $actual = [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '')
+    } finally {
+      $stream.Dispose()
+    }
+  } finally {
+    $sha256.Dispose()
+  }
+  if ($actual -ne $expected) {
     throw "SHA-256 mismatch: $path"
   }
 }

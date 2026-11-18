@@ -27,9 +27,10 @@ pub(crate) fn close_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
     // not one, and does not cancel what the pointer is doing.
     crate::ops::resize_move::finish_shared_pointer_gesture(ctx);
     let scratch = crate::scratchpad::contains(&ctx.state, id);
+    let epoch = super::lifecycle_epoch(&ctx.state, id);
     match close_pane_inner(ctx, id, true) {
         Some(generation) => Update::with_command(prune_closed_command(
-            ctx.state.runtime_epoch,
+            epoch,
             id,
             generation,
             if scratch && ctx.state.scratch.panes.iter().all(|pane| pane.closing) {
@@ -68,12 +69,17 @@ pub(crate) fn remove_pane_after_exit(
     local: bool,
 ) -> Update {
     let scratch = local && crate::scratchpad::contains(&ctx.state, id);
+    let epoch = if local {
+        super::LOCAL_PANE_EPOCH
+    } else {
+        ctx.state.runtime_epoch
+    };
     // Release the server pane too. Its program is gone, so nothing is killed, but a pane left on
     // the server stays in `list-panes` with no place in the layout and nothing that can close it,
     // keeping its scrollback for as long as the session runs.
     match close_pane_inner_with_focus(ctx, id, true, true, Some(local)) {
         Some(generation) => Update::with_command(prune_closed_command(
-            ctx.state.runtime_epoch,
+            epoch,
             id,
             generation,
             if scratch && ctx.state.scratch.panes.iter().all(|pane| pane.closing) {
@@ -344,7 +350,7 @@ pub(crate) fn prune_closed_pane(
     id: PaneId,
     generation: u64,
 ) -> Update {
-    if epoch != ctx.state.runtime_epoch {
+    if epoch != super::lifecycle_epoch(&ctx.state, id) {
         return Update::none();
     }
     let still_closing = find_pane(&ctx.state, id)

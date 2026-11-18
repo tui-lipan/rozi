@@ -618,7 +618,7 @@ fn close_popup_keeps_the_popup_described_until_it_is_pruned() {
 
         backend
             .dispatch(crate::Msg::PruneClosed(
-                backend.state().runtime_epoch,
+                crate::pane::lifecycle::LOCAL_PANE_EPOCH,
                 crate::pane::id::POPUP_PANE_ID,
                 generation,
             ))

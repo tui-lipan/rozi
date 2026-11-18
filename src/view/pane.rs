@@ -2470,6 +2470,7 @@ mod tests {
                 crate::layout::anim::PaneAnimationStyle::Scale,
             ),
             active: true,
+            open_delay: std::time::Duration::ZERO,
         });
         assert!(
             !pane_lifecycle_settled(&pane, 1.0),

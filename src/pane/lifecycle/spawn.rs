@@ -169,8 +169,8 @@ pub(crate) fn spawn_pane_in_scratch(
             .canvas_bounds_from_terminal_viewport(ctx.viewport()),
         id,
     );
-    let generation = ctx.state.next_scratch_pty_generation;
-    ctx.state.next_scratch_pty_generation = generation.saturating_add(1);
+    let generation = ctx.state.next_local_pty_generation;
+    ctx.state.next_local_pty_generation = generation.saturating_add(1);
     let mut pane = Pane::new_local(id, ctx.state.config.scrollback, rect);
     pane.pty_generation = generation;
     pane.identity = identity;
@@ -241,7 +241,7 @@ pub(crate) fn spawn_pane_in_scratch(
         Update::full()
     } else {
         Update::with_command(open_timers_command(
-            ctx.state.runtime_epoch,
+            super::LOCAL_PANE_EPOCH,
             id,
             generation,
             anim::open_delay(ctx.state.config.animations),

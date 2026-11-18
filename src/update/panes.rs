@@ -179,15 +179,14 @@ pub(super) fn finish_open(
     id: PaneId,
     generation: u64,
 ) -> Update {
-    if epoch != ctx.state.runtime_epoch {
+    if epoch != crate::pane::lifecycle::lifecycle_epoch(&ctx.state, id) {
         return Update::none();
     }
     let opened = match find_pane_mut(&mut ctx.state, id) {
         Some(pane) if pane.pty_generation != generation => return Update::none(),
-        Some(pane) if !pane.closing => {
-            pane.opening = false;
-            true
-        }
+        // Only the timer that ends the opening counts. A pane whose transition was armed again
+        // (a session coming back from the background) can hear a second one.
+        Some(pane) if !pane.closing => std::mem::replace(&mut pane.opening, false),
         _ => false,
     };
     if opened {
@@ -204,13 +203,17 @@ pub(super) fn activate_pane(
     id: PaneId,
     generation: u64,
 ) -> Update {
-    if epoch != ctx.state.runtime_epoch {
+    if epoch != crate::pane::lifecycle::lifecycle_epoch(&ctx.state, id) {
         return Update::none();
     }
     let focused = ctx.state.focused_pane() == Some(id)
         || (id == crate::pane::id::POPUP_PANE_ID && ctx.state.popup.is_some());
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if pane.pty_generation != generation {
+            return Update::none();
+        }
+        // Already activated: a repeated timer must not pull focus back from wherever it went since.
+        if pane.terminal_active && pane.opening_animation.is_none() {
             return Update::none();
         }
         if !pane.closing {
@@ -893,7 +896,16 @@ mod tests {
                 state.config.animations,
                 pane
             ));
+            // A newer pane event, which a repeated open timer must not overwrite.
+            state.animation = crate::layout::anim::GeometryAnimation::Close;
         }
+        backend
+            .dispatch(crate::Msg::FinishOpen(0, id, generation))
+            .expect("repeated open timer");
+        assert_eq!(
+            backend.state().animation,
+            crate::layout::anim::GeometryAnimation::Close
+        );
 
         backend
             .dispatch(crate::Msg::ActivatePane(0, id, generation))
@@ -904,6 +916,19 @@ mod tests {
         assert_eq!(
             crate::layout::anim::pane_animation_for_pane(state.config.animations, pane).kind,
             crate::layout::anim::PaneAnimationStyle::Portal
+        );
+
+        // The user moves to the sidebar; the pane stays its workspace's focused pane.
+        backend
+            .dispatch(crate::Msg::RunAction(crate::input::Action::FocusSidebar))
+            .expect("focus the sidebar");
+        assert!(backend.state().sidebar.focused);
+        backend
+            .dispatch(crate::Msg::ActivatePane(0, id, generation))
+            .expect("repeated activation timer");
+        assert!(
+            backend.state().sidebar.focused,
+            "a repeated activation took focus back from the sidebar"
         );
     }
 

@@ -433,7 +433,10 @@ pub struct State {
     /// independent of `attachment` and `background`, so changing sessions cannot drop it.
     pub(crate) scratch_runtime: Option<crate::scratchpad::runtime::ScratchRuntime>,
     pub(crate) next_scratch_pane_id: PaneId,
-    pub(crate) next_scratch_pty_generation: u64,
+    /// Generations for client-local panes (scratch and popup), drawn from one counter for the
+    /// whole client. Their open and close timers are not fenced by a session's epoch, so a pane
+    /// identity must never come round again in another session.
+    pub(crate) next_local_pty_generation: u64,
     pub scratch_visible: bool,
     /// Focus to restore when the scratchpad is hidden again.
     pub scratch_return_focus: Option<PaneId>,
@@ -817,7 +820,7 @@ impl State {
             scratch: Workspace::new(0),
             scratch_runtime: None,
             next_scratch_pane_id: 1 << 31,
-            next_scratch_pty_generation: 1,
+            next_local_pty_generation: 1,
             scratch_visible: false,
             scratch_return_focus: None,
             scratch_height: None,

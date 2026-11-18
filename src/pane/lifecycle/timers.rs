@@ -64,3 +64,97 @@ pub(crate) fn open_timers_batch_command(
         }
     })
 }
+
+/// The epoch the open and close timers of a client-local pane (scratch or popup) carry. Scratch
+/// panes outlive every session switch, reconnect, and park, so their timers must not be tied to a
+/// session's epoch. A popup is closed on a switch or reconnect instead; it shares this epoch as
+/// client-local state, and its client-wide generation keeps an old popup's timer from matching a
+/// later one. Attachment ids are minted upward from zero and never reach it.
+pub const LOCAL_PANE_EPOCH: u64 = u64::MAX;
+
+/// The epoch pane `id`'s open and close timers are armed under and checked against: the current
+/// session's for a pane in its workspaces, [`LOCAL_PANE_EPOCH`] for a scratch or popup pane.
+pub fn lifecycle_epoch(state: &crate::state::State, id: PaneId) -> u64 {
+    if super::pane_is_local(state, id) {
+        LOCAL_PANE_EPOCH
+    } else {
+        state.runtime_epoch
+    }
+}
+
+/// Arm again, under the current epoch, the open and close transitions of the current attachment's
+/// panes that are still under way.
+///
+/// Each transition's timers carry the epoch they were armed under, and are dropped when they fire
+/// under another: while their attachment is parked, or after a reconnect gave it a new epoch.
+/// Without fresh ones an opening pane stays hidden and unfocusable, and a closing pane is never
+/// pruned. Call this whenever an attachment becomes current again. Scratch and popup panes need
+/// none of this: their timers carry [`LOCAL_PANE_EPOCH`].
+pub(crate) fn rearm_pane_transitions(state: &crate::state::State) -> Update {
+    let animations = state.config.animations;
+    let frame_rate = state.runtime_frame_rate();
+    let epoch = state.runtime_epoch;
+    let mut update = Update::none();
+    let mut closing = Vec::new();
+    let mut close_delay = Duration::ZERO;
+    for pane in state
+        .current()
+        .workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.panes)
+    {
+        let (id, generation) = (pane.id, pane.pty_generation);
+        // Each pane finishes on the recipe it started with, not on the config as it is now.
+        if pane.closing {
+            closing.push((id, generation));
+            close_delay = close_delay.max(crate::layout::anim::retained_pane_timeout_for_pane(
+                animations, pane, frame_rate,
+            ));
+        } else if pane.opening {
+            let (open_delay, activation_delay) = open_stages(animations, pane);
+            update = update.merge(Update::with_command(open_timers_command(
+                epoch,
+                id,
+                generation,
+                open_delay,
+                activation_delay,
+            )));
+        } else if crate::layout::anim::pane_opening_transition(pane) {
+            // Opened but not yet activated: only the second stage is outstanding.
+            let (open_delay, activation_delay) = open_stages(animations, pane);
+            update = update.merge(Update::with_command(Command::after(
+                activation_delay.saturating_sub(open_delay),
+                move |link: CommandLink<Msg>| {
+                    link.send(Msg::ActivatePane(epoch, id, generation));
+                },
+            )));
+        }
+    }
+    if !closing.is_empty() {
+        update = update.merge(Update::with_command(super::prune_closed_batch_command(
+            epoch,
+            closing,
+            close_delay,
+        )));
+    }
+    update
+}
+
+/// When a pane's open finishes its first stage and when it takes input, both from when it began
+/// opening: from the recipe it captured then, or the config for a pane that captured none.
+fn open_stages(
+    animations: crate::layout::anim::WindowAnimationConfig,
+    pane: &crate::state::Pane,
+) -> (Duration, Duration) {
+    match pane.opening_animation {
+        Some(snapshot) if snapshot.active => (
+            snapshot.open_delay,
+            snapshot.open_delay + snapshot.spec.open_duration,
+        ),
+        Some(_) => (Duration::ZERO, Duration::ZERO),
+        None => (
+            crate::layout::anim::open_delay(animations),
+            crate::layout::anim::activation_delay(animations),
+        ),
+    }
+}

@@ -3449,7 +3449,7 @@ fn a_failed_popup_spawn_tears_the_popup_down() {
 
         backend
             .dispatch(Msg::PruneClosed(
-                epoch,
+                crate::pane::lifecycle::LOCAL_PANE_EPOCH,
                 crate::pane::id::POPUP_PANE_ID,
                 generation,
             ))

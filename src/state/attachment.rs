@@ -391,6 +391,10 @@ impl Attachment {
         self.session_client = None;
         self.session_instance = None;
         self.shared = None;
+        // Layout work deferred while parked needs the pane metadata just dropped, and would run
+        // under an epoch the reconnect replaces. The reconnect's attach carries the whole layout.
+        self.pending_background_layout = None;
+        self.pending_background_closes.clear();
         self.remote_drag = None;
         self.remote_drag_snap.set(None);
         self.prune_replay_inputs_to_pending_spawns();

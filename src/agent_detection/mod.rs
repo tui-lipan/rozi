@@ -20,11 +20,11 @@ pub use definition::{
 };
 pub use spec::{AgentMatchSpec, AgentOrigin, AgentSpec, AgentStateSpec, build_definitions};
 
-use crate::platform::process::{ForegroundJob, ForegroundProcess};
+use crate::platform::process::{AgentProcessSet, ForegroundProcess};
 use crate::session::protocol::{AgentIdentity, DetectedAgentState};
 
 use definition::evaluate;
-use process::identify_job;
+use process::identify_set;
 
 /// Whether an OSC 7501 `app` names the agent `agent_id`: its definition ID, or a name the agent
 /// catalog knows it by (`claude-code` for `claude`).
@@ -61,15 +61,17 @@ pub(crate) struct AgentObservation {
     pub state: Option<DetectedAgentState>,
 }
 
-/// Which agent is running behind a pane, and the process in `job` that is it.
+/// Which agent is running behind a pane, and the process in `set` that is it.
 ///
 /// The expensive half of detection: naming the program means walking the host's process table for
-/// this pane's process-group members, so callers cache the answer rather than asking every poll.
-pub(crate) fn identify<'a, 'j>(
+/// this pane's processes, so callers cache the answer rather than asking every poll.
+/// `shell_program` is the program the pane's shell reports running, if any.
+pub(crate) fn identify<'a, 's>(
     catalog: &'a AgentCatalog,
-    job: Option<&'j ForegroundJob>,
-) -> Option<(&'a AgentDefinition, &'j ForegroundProcess)> {
-    identify_job(catalog, job?)
+    set: Option<&'s AgentProcessSet>,
+    shell_program: Option<&str>,
+) -> Option<(&'a AgentDefinition, &'s ForegroundProcess)> {
+    identify_set(catalog, set?, shell_program)
 }
 
 /// Whether `process` is the agent `id` by its own name or path, rather than only because a hint
@@ -161,7 +163,7 @@ pub(crate) fn claude_cli_available() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform::process::ForegroundProcess;
+    use crate::platform::process::{ForegroundJob, ForegroundProcess};
 
     fn process(pid: u32, name: &str, argv: &[&str], hint: Option<&str>) -> ForegroundProcess {
         ForegroundProcess {
@@ -193,7 +195,8 @@ mod tests {
 
     fn identify_group(job: &ForegroundJob) -> Option<String> {
         let catalog = catalog();
-        identify_job(&catalog, job).map(|(definition, _)| definition.id().to_string())
+        let set = AgentProcessSet::from_foreground_job(job);
+        identify_set(&catalog, &set, None).map(|(definition, _)| definition.id().to_string())
     }
 
     #[test]
@@ -234,7 +237,8 @@ mod tests {
         screen: &str,
         title: &str,
     ) -> Option<AgentObservation> {
-        let (definition, _) = super::identify(catalog, job)?;
+        let set = job.map(AgentProcessSet::from_foreground_job);
+        let (definition, _) = super::identify(catalog, set.as_ref(), None)?;
         Some(observe(catalog, definition, screen, title))
     }
 
@@ -307,6 +311,61 @@ mod tests {
             ],
         );
         assert_eq!(identify_group(&wrapped), Some("opencode".to_string()));
+    }
+
+    /// A Windows pane's descendant tree, the pane shell first: `(pid, parent, argv)`.
+    fn tree(processes: &[(u32, Option<u32>, &[&str])]) -> AgentProcessSet {
+        use crate::platform::process::{ObservedProcess, ProcessTopology};
+        AgentProcessSet {
+            root_pid: processes[0].0,
+            topology: ProcessTopology::DescendantTree,
+            processes: processes
+                .iter()
+                .map(|&(pid, parent_pid, argv)| ObservedProcess {
+                    process: process(pid, argv[0], argv, None),
+                    parent_pid,
+                })
+                .collect(),
+        }
+    }
+
+    fn identify_tree(set: &AgentProcessSet, shell_program: Option<&str>) -> Option<(String, u32)> {
+        let catalog = catalog();
+        super::identify(&catalog, Some(set), shell_program)
+            .map(|(definition, process)| (definition.id().to_string(), process.pid))
+    }
+
+    #[test]
+    fn a_descendant_tree_names_the_outermost_process_of_its_one_agent() {
+        let cli = r"C:\Users\u\AppData\Roaming\npm\node_modules\pi-coding-agent\dist\cli.js";
+        let pi = tree(&[
+            (1, None, &["pwsh.exe"]),
+            (2, Some(1), &[r"C:\Program Files\nodejs\node.exe", cli]),
+            (3, Some(2), &["node.exe", cli, "--worker"]),
+            (4, Some(3), &["rg.exe"]),
+        ]);
+        assert_eq!(identify_tree(&pi, None), Some(("pi".into(), 2)));
+    }
+
+    /// Nothing in a tree says which of two unrelated agents holds the terminal, such as a
+    /// background job beside the one in use, unless the shell reported which it started.
+    #[test]
+    fn agents_in_unrelated_branches_name_nothing_unless_the_shell_says_which() {
+        let set = tree(&[
+            (1, None, &["powershell.exe"]),
+            (2, Some(1), &["codex.exe"]),
+            (
+                3,
+                Some(1),
+                &["node.exe", "/npm/@anthropic-ai/claude-code/cli.js"],
+            ),
+        ]);
+        assert_eq!(identify_tree(&set, None), None);
+        assert_eq!(identify_tree(&set, Some("npx")), None);
+        assert_eq!(
+            identify_tree(&set, Some("claude")),
+            Some(("claude".into(), 3))
+        );
     }
 
     #[test]

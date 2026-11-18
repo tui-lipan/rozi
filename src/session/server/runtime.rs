@@ -8,8 +8,8 @@
 
 use super::*;
 use crate::platform::process::{
-    ForegroundJob, ForegroundLaunch, ForegroundProcess, LazyProcessScan, PlatformProcessInspector,
-    ProcessInspector,
+    AgentProcessSet, ForegroundJob, ForegroundLaunch, ForegroundProcess, LazyProcessScan,
+    PlatformProcessInspector, ProcessInspector, ProcessTopology,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -2076,14 +2076,14 @@ pub(super) fn derive_detected_agent(
     pane: &mut ServerPane,
     agents: Option<&AgentCatalog>,
     foreground_program: Option<&str>,
-    foreground_job: Option<&ForegroundJob>,
+    agent_processes: Option<&AgentProcessSet>,
     process_refreshed: bool,
 ) -> Option<DetectedAgent> {
     // The sweep that notices a process leaving runs once, and a publisher's rows outlive that
     // process by up to a poll of its own. So what the pane runs is followed under rows too, or a
     // withdrawn row would hand the pane back to an agent that is long gone.
     if process_refreshed && let Some(agents) = agents {
-        refresh_agent_identity(pane, agents, foreground_program, foreground_job);
+        refresh_agent_identity(pane, agents, foreground_program, agent_processes);
     }
     // An agent publisher's rows describe all its sessions, while screen detection sees only the
     // session in view. Activity rows say nothing about the pane's agent, so they leave it alone.
@@ -2113,10 +2113,10 @@ fn refresh_agent_identity(
     pane: &mut ServerPane,
     agents: &AgentCatalog,
     foreground_program: Option<&str>,
-    foreground_job: Option<&ForegroundJob>,
+    agent_processes: Option<&AgentProcessSet>,
 ) {
     let adopting = std::mem::take(&mut pane.agent.adopting);
-    let named = identify_pane_agent(pane, agents, foreground_program, foreground_job);
+    let named = identify_pane_agent(pane, agents, foreground_program, agent_processes);
     let identity = named
         .as_ref()
         .map(|named| named.definition.id().to_string());
@@ -2220,7 +2220,11 @@ fn compute_pane_runtime(
     // pane exits, its own exit code is at least as informative a fallback as leaving this `None`.
     let last_exit_status = last_exit_status.or(pane.exited);
     let path = derive_path_runtime(pane, semantic.cwd.as_ref(), inspector);
-    let (foreground_job, process_refreshed) = foreground_job_evidence(
+    let ProcessEvidence {
+        foreground_job,
+        agent_processes,
+        refreshed: process_refreshed,
+    } = foreground_job_evidence(
         pane,
         inspector,
         command_phase,
@@ -2255,7 +2259,7 @@ fn compute_pane_runtime(
         pane,
         agents,
         foreground.program.as_deref(),
-        foreground_job.as_ref(),
+        agent_processes.as_ref(),
         process_refreshed,
     );
     if pane_ref.is_some() {
@@ -2357,8 +2361,19 @@ struct ForegroundEvidence {
     launch: Option<ForegroundLaunch>,
 }
 
+/// What one poll learned about a pane's processes.
+struct ProcessEvidence {
+    /// The foreground process group, for navigation and launch metadata.
+    foreground_job: Option<ForegroundJob>,
+    /// The processes the pane's agent may be among, read only when `refreshed`.
+    agent_processes: Option<AgentProcessSet>,
+    /// This poll swept the processes afresh, so agent identity is due a refresh too.
+    refreshed: bool,
+}
+
 /// Refresh the complete foreground process group on command changes and at the slower process
-/// cadence, reusing it between polls. The group walk is shared by navigation and agent detection.
+/// cadence, reusing it between polls. The group walk is shared by navigation and agent detection;
+/// a platform without foreground groups reads the agent's processes from the same scan instead.
 fn foreground_job_evidence(
     pane: &mut ServerPane,
     inspector: &impl ProcessInspector,
@@ -2366,7 +2381,12 @@ fn foreground_job_evidence(
     shell_program: Option<&str>,
     allow_refresh: bool,
     scan: &mut LazyProcessScan,
-) -> (Option<ForegroundJob>, bool) {
+) -> ProcessEvidence {
+    let evidence = |foreground_job, agent_processes, refreshed| ProcessEvidence {
+        foreground_job,
+        agent_processes,
+        refreshed,
+    };
     let active = matches!(
         command_phase,
         PaneCommandPhase::Executing | PaneCommandPhase::Unknown
@@ -2389,14 +2409,14 @@ fn foreground_job_evidence(
         pane.agent.hold = None;
     }
     if !allow_refresh {
-        return (leader, false);
+        return evidence(leader, None, false);
     }
     if !active {
         remember_process_probe(pane, probe, None);
-        return (None, changed);
+        return evidence(None, None, changed);
     }
     if !process_probe_is_stale(pane, &probe) {
-        return (pane.agent.foreground_job.clone().or(leader), false);
+        return evidence(pane.agent.foreground_job.clone().or(leader), None, false);
     }
 
     let observed = pane
@@ -2404,8 +2424,12 @@ fn foreground_job_evidence(
         .as_ref()
         .and_then(|pty| inspector.foreground_job_in(pty, scan.get()))
         .or(leader);
+    let agent_processes = match pane.pty.as_ref() {
+        Some(pty) => inspector.agent_processes_in(pty, scan.get(), observed.as_ref()),
+        None => observed.as_ref().map(AgentProcessSet::from_foreground_job),
+    };
     remember_process_probe(pane, probe, observed.clone());
-    (observed, true)
+    evidence(observed, agent_processes, true)
 }
 
 fn process_probe_is_stale(pane: &ServerPane, probe: &AgentProbe) -> bool {
@@ -3261,7 +3285,7 @@ fn identify_pane_agent<'a>(
     pane: &ServerPane,
     agents: &'a AgentCatalog,
     foreground_program: Option<&str>,
-    foreground_job: Option<&ForegroundJob>,
+    agent_processes: Option<&AgentProcessSet>,
 ) -> Option<NamedAgent<'a>> {
     let configured_hint = ["ROZI_AGENT", "HERDR_AGENT"].into_iter().find_map(|key| {
         pane.env
@@ -3269,16 +3293,30 @@ fn identify_pane_agent<'a>(
             .rev()
             .find_map(|(candidate, value)| (candidate == key).then(|| value.clone()))
     });
-    let foreground_job = agent_detection_job(
-        foreground_job,
-        foreground_program,
-        configured_hint.as_deref(),
-    );
-    let foreground_job = foreground_job?;
-    let (definition, process) = crate::agent_detection::identify(agents, Some(&foreground_job))?;
+    let hinted = |set: Option<&AgentProcessSet>| {
+        agent_detection_set(set, foreground_program, configured_hint.as_deref())
+    };
+    let observed = hinted(agent_processes)?;
+    // A descendant tree that names nothing, ambiguous or unreadable, leaves what the shell reported
+    // running, as it would on a platform with no process inspection at all.
+    let fallback = (observed.topology == ProcessTopology::DescendantTree)
+        .then(|| hinted(None))
+        .flatten();
+    let (set, (definition, process)) =
+        match crate::agent_detection::identify(agents, Some(&observed), foreground_program) {
+            Some(named) => (&observed, named),
+            None => {
+                let fallback = fallback.as_ref()?;
+                (
+                    fallback,
+                    crate::agent_detection::identify(agents, Some(fallback), foreground_program)?,
+                )
+            }
+        };
     let prompted = crate::agent_detection::launch_carries_prompt(agents, definition, process);
     let process = super::AgentProcess {
         pid: process.pid,
+        started: process.started,
         name: process.name.clone(),
         stand_in: !crate::agent_detection::process_is_agent(agents, process, definition.id()),
     };
@@ -3286,7 +3324,7 @@ fn identify_pane_agent<'a>(
         .agent
         .process
         .as_ref()
-        .is_some_and(|previous| agent_process_replaced(previous, &process, &foreground_job));
+        .is_some_and(|previous| agent_process_replaced(previous, &process, set));
     Some(NamedAgent {
         definition,
         process,
@@ -3309,7 +3347,7 @@ fn identify_pane_agent<'a>(
 fn agent_process_replaced(
     previous: &super::AgentProcess,
     current: &super::AgentProcess,
-    job: &ForegroundJob,
+    set: &AgentProcessSet,
 ) -> bool {
     if previous.stand_in && !current.stand_in {
         return true;
@@ -3318,26 +3356,32 @@ fn agent_process_replaced(
         (0, 0) => previous.name != current.name,
         (0, _) => previous.stand_in && previous.name != current.name,
         (_, 0) => false,
-        (pid, _) => !job.processes.iter().any(|process| process.pid == pid),
+        (pid, _) => !set.contains(pid, previous.started),
     }
 }
 
-fn agent_detection_job(
-    foreground_job: Option<&ForegroundJob>,
+fn agent_detection_set(
+    agent_processes: Option<&AgentProcessSet>,
     foreground_program: Option<&str>,
     configured_hint: Option<&str>,
-) -> Option<ForegroundJob> {
-    let mut job = foreground_job.cloned().or_else(|| {
+) -> Option<AgentProcessSet> {
+    let mut set = agent_processes.cloned().or_else(|| {
         (foreground_program.is_some() || configured_hint.is_some()).then(|| {
-            synthetic_foreground_job(foreground_program.unwrap_or_default(), configured_hint)
+            AgentProcessSet::from_foreground_job(&synthetic_foreground_job(
+                foreground_program.unwrap_or_default(),
+                configured_hint,
+            ))
         })
     })?;
     if let Some(hint) = configured_hint
-        && let Some(process) = job.processes.first_mut()
+        && let Some(observed) = set.processes.first_mut()
     {
-        process.agent_hint.get_or_insert_with(|| hint.to_string());
+        observed
+            .process
+            .agent_hint
+            .get_or_insert_with(|| hint.to_string());
     }
-    Some(job)
+    Some(set)
 }
 
 fn synthetic_foreground_job(program: &str, agent_hint: Option<&str>) -> ForegroundJob {
@@ -5985,7 +6029,13 @@ mod tests {
                     agent_hint: None,
                 }],
             };
-            derive_detected_agent(&mut pane, Some(&catalog()), None, Some(&job), true);
+            derive_detected_agent(
+                &mut pane,
+                Some(&catalog()),
+                None,
+                Some(&AgentProcessSet::from_foreground_job(&job)),
+                true,
+            );
             assert!(pane.agent.identity.is_some());
             pane.agent.launch.is_none()
         };
@@ -6042,7 +6092,13 @@ mod tests {
 
     /// Detect against `job` the way a refreshing sweep does, and say whether a launch is open.
     fn sweep(pane: &mut ServerPane, job: &ForegroundJob) -> bool {
-        derive_detected_agent(pane, Some(&catalog()), None, Some(job), true);
+        derive_detected_agent(
+            pane,
+            Some(&catalog()),
+            None,
+            Some(&AgentProcessSet::from_foreground_job(job)),
+            true,
+        );
         pane.agent.launch.is_some()
     }
 
@@ -6190,7 +6246,14 @@ mod tests {
         pane.agent.launch = None;
         pane.terminal.process_bytes("⠦ Working...\r\n".as_bytes());
         let state = |pane: &mut ServerPane, job: &ForegroundJob| {
-            derive_detected_agent(pane, Some(&catalog()), None, Some(job), true).map(|d| d.state)
+            derive_detected_agent(
+                pane,
+                Some(&catalog()),
+                None,
+                Some(&AgentProcessSet::from_foreground_job(job)),
+                true,
+            )
+            .map(|d| d.state)
         };
         let old = agent_job(100, &[(100, "sv"), (101, "pi")]);
         assert_eq!(state(&mut pane, &old), Some(DetectedAgentState::Working));
@@ -6204,7 +6267,13 @@ mod tests {
     /// One server poll against `job`, published the way the runtime loop publishes it. The sweep
     /// runs against the given job; the poll then reuses it, as it would until the next sweep.
     fn publish(pane: &mut ServerPane, job: &ForegroundJob) -> PaneRuntimeState {
-        derive_detected_agent(pane, Some(&catalog()), None, Some(job), true);
+        derive_detected_agent(
+            pane,
+            Some(&catalog()),
+            None,
+            Some(&AgentProcessSet::from_foreground_job(job)),
+            true,
+        );
         pane.agent.probe = Some(AgentProbe {
             foreground_program: None,
             command_phase: PaneCommandPhase::Unknown,
@@ -6328,6 +6397,7 @@ mod tests {
     fn a_process_replacement_needs_the_previous_process_gone() {
         let process = |pid: u32, name: &str, stand_in: bool| crate::session::server::AgentProcess {
             pid,
+            started: None,
             name: name.into(),
             stand_in,
         };
@@ -6335,7 +6405,7 @@ mod tests {
             agent_process_replaced(
                 &previous,
                 &current,
-                &agent_job(10, &[(10, "pi"), (11, "pi")]),
+                &AgentProcessSet::from_foreground_job(&agent_job(10, &[(10, "pi"), (11, "pi")])),
             )
         };
         assert!(!replaced(
@@ -6356,6 +6426,44 @@ mod tests {
             process(10, "bash", true),
             process(11, "pi", false)
         ));
+        // Its PID now belongs to a process that started later.
+        let mut set = AgentProcessSet::from_foreground_job(&agent_job(10, &[(10, "pi")]));
+        set.processes[0].process.started = Some(2);
+        let started = |started| crate::session::server::AgentProcess {
+            started: Some(started),
+            ..process(10, "pi", false)
+        };
+        assert!(!agent_process_replaced(&started(2), &started(2), &set));
+        assert!(agent_process_replaced(&started(1), &started(2), &set));
+    }
+
+    /// A descendant tree that names no agent, because its agents are in unrelated branches or its
+    /// runtimes' arguments could not be read, still leaves the agent the shell reported starting.
+    #[test]
+    fn a_tree_naming_no_agent_leaves_the_one_the_shell_reported() {
+        use crate::platform::process::ObservedProcess;
+        let observed = |pid, parent_pid, name: &str| ObservedProcess {
+            process: ForegroundProcess {
+                pid,
+                started: None,
+                name: name.into(),
+                executable: None,
+                argv: Vec::new(),
+                agent_hint: None,
+            },
+            parent_pid,
+        };
+        let set = AgentProcessSet {
+            root_pid: 1,
+            topology: ProcessTopology::DescendantTree,
+            processes: vec![
+                observed(1, None, "pwsh.exe"),
+                observed(2, Some(1), "node.exe"),
+            ],
+        };
+        let mut pane = make_pane();
+        derive_detected_agent(&mut pane, Some(&catalog()), Some("pi"), Some(&set), true);
+        assert_eq!(pane.agent.identity.as_deref(), Some("pi"));
     }
 
     /// Grok blinks `⚠ Action Required` into its title and out again about every 1.1 s while it

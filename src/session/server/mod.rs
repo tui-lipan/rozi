@@ -626,6 +626,8 @@ struct TrackedAgentReference {
 pub struct AgentProcess {
     /// Zero when the platform could not inspect the job and the sweep worked from a name alone.
     pub pid: u32,
+    /// The process's start, where the platform reports one, so a reused `pid` is not taken for it.
+    pub started: Option<u64>,
     pub name: String,
     /// Named only by a `ROZI_AGENT` hint, not by anything about the process itself: the shell the
     /// agent will be launched from, standing in for it until it is.

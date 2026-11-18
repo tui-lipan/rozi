@@ -45,8 +45,8 @@ rozi finds a pane's working directory from the first of these that is available:
 4. The pane's launch directory.
 5. The configured `cwd`.
 
-Windows has no process inspection, so live directory and foreground-program updates there need shell
-integration.
+On Windows rozi does not read a pane's directory or foreground program from its processes, so live
+directory and foreground-program updates there need shell integration.
 
 A directory reported for another host, such as inside an SSH session, can appear in titles, but
 rozi never starts a new local pane in it.

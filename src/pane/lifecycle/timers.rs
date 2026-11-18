@@ -65,9 +65,11 @@ pub(crate) fn open_timers_batch_command(
     })
 }
 
-/// The epoch the open and close timers of a client-local pane (scratch or popup) carry. Those
-/// panes belong to no session and outlive every switch, reconnect, and park, so their timers must
-/// not be tied to a session's epoch. Attachment ids are minted upward from zero and never reach it.
+/// The epoch the open and close timers of a client-local pane (scratch or popup) carry. Scratch
+/// panes outlive every session switch, reconnect, and park, so their timers must not be tied to a
+/// session's epoch. A popup is closed on a switch or reconnect instead; it shares this epoch as
+/// client-local state, and its client-wide generation keeps an old popup's timer from matching a
+/// later one. Attachment ids are minted upward from zero and never reach it.
 pub const LOCAL_PANE_EPOCH: u64 = u64::MAX;
 
 /// The epoch pane `id`'s open and close timers are armed under and checked against: the current

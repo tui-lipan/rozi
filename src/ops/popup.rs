@@ -49,8 +49,10 @@ pub(crate) fn open(
         width.unwrap_or(0.6),
         height.unwrap_or(0.6),
     );
-    let generation = ctx.state.current().next_pty_generation;
-    ctx.state.current_mut().next_pty_generation = generation.saturating_add(1);
+    // Not the attachment's counter: that restarts in every session, and a stale timer of an
+    // earlier session's popup would then match this one.
+    let generation = ctx.state.next_local_pty_generation;
+    ctx.state.next_local_pty_generation = generation.saturating_add(1);
     let mut pane = Pane::new_local(POPUP_PANE_ID, ctx.state.config.scrollback, rect);
     pane.pty_generation = generation;
     pane.identity = PaneIdentity {
@@ -418,5 +420,67 @@ mod tests {
         state.scratch.focused_pane = Some(42);
         state.current_mut().focused_pane = Some(1);
         assert_eq!(state.focused_pane(), Some(42));
+    }
+
+    /// A popup's timers are not fenced by its session's epoch, so a timer left over from a popup in
+    /// another session must never match the one open now.
+    #[test]
+    fn a_stale_timer_from_another_sessions_popup_leaves_this_popup_alone() {
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+            let attach = |backend: &mut tui_lipan::TestBackend<crate::AppRoot>, name: &str| {
+                let (client, rx) = crate::session::client::SessionClient::test_channel();
+                let state = backend.state_mut();
+                let current = state.current_mut();
+                current.session_name = Some(name.into());
+                current.session_attached = true;
+                current.connection = crate::state::ConnectionState::Connected;
+                current.session_client = Some(client);
+                current.pending_session_attach = None;
+                rx
+            };
+            let open = |backend: &mut tui_lipan::TestBackend<crate::AppRoot>| {
+                let (reply, response) = std::sync::mpsc::channel();
+                let request = serde_json::from_str(r#"{"cmd":"popup","command":"true"}"#).unwrap();
+                backend
+                    .dispatch(crate::Msg::ControlRequest(
+                        crate::control::ControlEnvelope::local(request, reply),
+                    ))
+                    .expect("open a popup");
+                assert!(response.recv().expect("popup reply").ok);
+                backend
+                    .state()
+                    .popup
+                    .as_ref()
+                    .expect("popup")
+                    .pty_generation
+            };
+
+            let _first_rx = attach(&mut backend, "first");
+            let stale = open(&mut backend);
+            // Another session comes forward: its popup goes, its timers cannot be called back.
+            {
+                let state = backend.state_mut();
+                state.popup = None;
+                state.attachment = crate::state::Attachment::new();
+                state.runtime_epoch = state.mint_attachment_id();
+            }
+            let _second_rx = attach(&mut backend, "second");
+            open(&mut backend);
+
+            backend
+                .dispatch(crate::Msg::ActivatePane(
+                    crate::pane::lifecycle::LOCAL_PANE_EPOCH,
+                    POPUP_PANE_ID,
+                    stale,
+                ))
+                .expect("the first popup's activation fires late");
+            let popup = backend.state().popup.as_ref().expect("popup");
+            assert!(
+                !popup.terminal_active && popup.opening_animation.is_some(),
+                "a stale timer activated the new popup"
+            );
+        });
     }
 }

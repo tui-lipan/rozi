@@ -52,6 +52,7 @@ fn scale_snapshot() -> PaneAnimationSnapshot {
             scan_direction: ScanDirection::TopLeft,
         },
         active: true,
+        open_delay: Duration::ZERO,
     }
 }
 

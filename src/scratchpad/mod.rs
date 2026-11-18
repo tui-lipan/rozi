@@ -1284,7 +1284,7 @@ mod tests {
             let state = backend.state_mut();
             // Past the pane the helper seeds, so the new one is a pane of its own.
             state.next_scratch_pane_id = scratch.scratch.panes[0].id + 1;
-            state.next_scratch_pty_generation = scratch.scratch.panes[0].pty_generation + 1;
+            state.next_local_pty_generation = scratch.scratch.panes[0].pty_generation + 1;
             state.scratch = scratch.scratch;
             state.scratch_runtime = scratch.scratch_runtime.take();
             state.scratch_visible = true;

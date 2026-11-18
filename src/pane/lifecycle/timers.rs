@@ -91,8 +91,8 @@ pub fn lifecycle_epoch(state: &crate::state::State, id: PaneId) -> u64 {
 pub(crate) fn rearm_pane_transitions(state: &crate::state::State) -> Update {
     let animations = state.config.animations;
     let frame_rate = state.runtime_frame_rate();
-    let mut opening = Vec::new();
-    let mut activating = Vec::new();
+    let epoch = state.runtime_epoch;
+    let mut update = Update::none();
     let mut closing = Vec::new();
     let mut close_delay = Duration::ZERO;
     for pane in state
@@ -101,41 +101,32 @@ pub(crate) fn rearm_pane_transitions(state: &crate::state::State) -> Update {
         .iter()
         .flat_map(|workspace| &workspace.panes)
     {
-        let target = (pane.id, pane.pty_generation);
+        let (id, generation) = (pane.id, pane.pty_generation);
+        // Each pane finishes on the recipe it started with, not on the config as it is now.
         if pane.closing {
-            closing.push(target);
-            // Each pane closes on the recipe it started with, not on the config as it is now.
+            closing.push((id, generation));
             close_delay = close_delay.max(crate::layout::anim::retained_pane_timeout_for_pane(
                 animations, pane, frame_rate,
             ));
         } else if pane.opening {
-            opening.push(target);
+            let (open_delay, activation_delay) = open_stages(animations, pane);
+            update = update.merge(Update::with_command(open_timers_command(
+                epoch,
+                id,
+                generation,
+                open_delay,
+                activation_delay,
+            )));
         } else if crate::layout::anim::pane_opening_transition(pane) {
             // Opened but not yet activated: only the second stage is outstanding.
-            activating.push(target);
-        }
-    }
-    let epoch = state.runtime_epoch;
-    let open_delay = crate::layout::anim::open_delay(animations);
-    let activation_delay = crate::layout::anim::activation_delay(animations);
-    let mut update = Update::none();
-    if !opening.is_empty() {
-        update = update.merge(Update::with_command(open_timers_batch_command(
-            epoch,
-            opening,
-            open_delay,
-            activation_delay,
-        )));
-    }
-    if !activating.is_empty() {
-        update = update.merge(Update::with_command(Command::after(
-            activation_delay.saturating_sub(open_delay),
-            move |link: CommandLink<Msg>| {
-                for (id, generation) in activating {
+            let (open_delay, activation_delay) = open_stages(animations, pane);
+            update = update.merge(Update::with_command(Command::after(
+                activation_delay.saturating_sub(open_delay),
+                move |link: CommandLink<Msg>| {
                     link.send(Msg::ActivatePane(epoch, id, generation));
-                }
-            },
-        )));
+                },
+            )));
+        }
     }
     if !closing.is_empty() {
         update = update.merge(Update::with_command(super::prune_closed_batch_command(
@@ -145,4 +136,23 @@ pub(crate) fn rearm_pane_transitions(state: &crate::state::State) -> Update {
         )));
     }
     update
+}
+
+/// When a pane's open finishes its first stage and when it takes input, both from when it began
+/// opening: from the recipe it captured then, or the config for a pane that captured none.
+fn open_stages(
+    animations: crate::layout::anim::WindowAnimationConfig,
+    pane: &crate::state::Pane,
+) -> (Duration, Duration) {
+    match pane.opening_animation {
+        Some(snapshot) if snapshot.active => (
+            snapshot.open_delay,
+            snapshot.open_delay + snapshot.spec.open_duration,
+        ),
+        Some(_) => (Duration::ZERO, Duration::ZERO),
+        None => (
+            crate::layout::anim::open_delay(animations),
+            crate::layout::anim::activation_delay(animations),
+        ),
+    }
 }

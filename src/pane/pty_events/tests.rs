@@ -1101,7 +1101,11 @@ fn pane_animation_styles_keep_the_pty_grid_stable() {
                 spec.scale_from = 0.6;
                 spec.open_duration = std::time::Duration::from_millis(360);
             }
-            pane.opening_animation = Some(PaneAnimationSnapshot { spec, active: true });
+            pane.opening_animation = Some(PaneAnimationSnapshot {
+                spec,
+                active: true,
+                open_delay: std::time::Duration::ZERO,
+            });
         }
         backend.render();
         if style == PaneAnimationStyle::Scale {
@@ -1225,7 +1229,11 @@ fn pane_animation_styles_keep_the_pty_grid_stable() {
         let mut spec = builtin_animation(PaneAnimationStyle::Scale);
         spec.scale_from = 0.6;
         spec.close_duration = std::time::Duration::from_millis(360);
-        pane.closing_animation = Some(PaneAnimationSnapshot { spec, active: true });
+        pane.closing_animation = Some(PaneAnimationSnapshot {
+            spec,
+            active: true,
+            open_delay: std::time::Duration::ZERO,
+        });
     }
     backend.render();
     let closing_snapshot = backend.capture_ui_snapshot();

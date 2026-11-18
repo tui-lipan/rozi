@@ -3041,8 +3041,10 @@ fn pane_transitions_under_way_finish_on_a_new_epoch() {
             current.workspaces[0]
                 .panes
                 .extend([closing, opening, activating]);
-            // Turned off after pane 2 began closing: it still closes on the recipe it began with.
+            // Turned off after the panes began their transitions: each still finishes on the recipe
+            // it began with.
             state.config.animations.close = false;
+            state.config.animations.spawn = false;
             (epoch, second_stage)
         };
 
@@ -3056,6 +3058,18 @@ fn pane_transitions_under_way_finish_on_a_new_epoch() {
         assert!(
             crate::pane::lifecycle::find_pane(backend.state(), 2).is_some(),
             "the closing pane was pruned before its close animation ended"
+        );
+        assert!(
+            crate::pane::lifecycle::find_pane(backend.state(), 3)
+                .expect("opening pane")
+                .opening,
+            "the opening pane skipped the open delay it began with"
+        );
+        assert!(
+            !crate::pane::lifecycle::find_pane(backend.state(), 4)
+                .expect("activating pane")
+                .terminal_active,
+            "the pane past its first stage skipped the open motion it began with"
         );
         // The second stage plus a few frames, still well short of a repeated 150 ms first stage.
         backend.advance(second_stage + Duration::from_millis(50));

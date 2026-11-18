@@ -237,6 +237,9 @@ pub struct PaneAnimationOverrides {
 pub struct PaneAnimationSnapshot {
     pub spec: PaneAnimationSpec,
     pub active: bool,
+    /// How long an opening pane waits before its open motion starts, as configured when it began
+    /// opening. Zero for a close, and for an open that does not wait.
+    pub open_delay: Duration,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -306,6 +309,7 @@ pub(crate) fn snapshot_for_open(
     PaneAnimationSnapshot {
         spec: resolved,
         active: animations.enabled && animations.spawn && resolved.kind != PaneAnimationStyle::Off,
+        open_delay: open_delay(animations),
     }
 }
 
@@ -317,6 +321,7 @@ pub(crate) fn snapshot_for_close(
     PaneAnimationSnapshot {
         spec: resolved,
         active: animations.enabled && animations.close && resolved.kind != PaneAnimationStyle::Off,
+        open_delay: Duration::ZERO,
     }
 }
 
@@ -1986,7 +1991,11 @@ mod tests {
         let mut spec = builtin_animation(PaneAnimationStyle::Portal);
         spec.fade = false;
         pane.opening = true;
-        pane.opening_animation = Some(PaneAnimationSnapshot { spec, active: true });
+        pane.opening_animation = Some(PaneAnimationSnapshot {
+            spec,
+            active: true,
+            open_delay: Duration::ZERO,
+        });
         assert!(!pane_opacity_animates(animations, &pane));
         assert_eq!(pane_opacity_target(animations, &pane), 1.0);
 

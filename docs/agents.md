@@ -634,9 +634,9 @@ unsent text, a dialog, or a streaming response. Install it from the **Discover**
 Each row shows the conversation's state as Claude reports it, including permission waits and
 questions, and carries the conversation ID that
 [native resume](sessions.md#reopen-an-agent-conversation) reopens. The extension works on Linux
-and macOS, in local and remote panes. It does not work on Windows, where rozi cannot tell which
-process a pane runs, so Claude Code panes there show what screen detection reads and do not reopen
-their conversation.
+and macOS, in local and remote panes. It does not work on Windows, where rozi reports no foreground
+process group, which the extension needs to recognize a Claude Code client. Claude Code panes there
+show what screen detection reads and do not reopen their conversation.
 
 ### Codex threads
 

@@ -610,6 +610,66 @@ mod tests {
         });
     }
 
+    /// A live lock's row offers an unlock in place of the ✕, which acts on the first press.
+    #[test]
+    fn a_locked_checkout_unlocks_from_the_tab_on_one_press() {
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, outbound) = backend();
+            nudge(&mut backend);
+            let _ = sent_worktree_requests(&outbound);
+            let mut locked = tree(LINKED, true);
+            locked.lock = Some(crate::git::worktrees::WorktreeLock {
+                reason: "agent".into(),
+                stale: false,
+            });
+            let listing = &mut backend.state_mut().sidebar.worktrees;
+            listing.entries = vec![tree(REPO, false), locked];
+            listing.loaded = true;
+            // Rows: header, primary, linked checkout, "New worktree".
+            let close = Msg::SidebarRowClose { panel: 0, index: 2 };
+
+            backend.dispatch(close.clone()).unwrap();
+            // A second press while the unlock is queued must not send another.
+            backend.dispatch(close).unwrap();
+            assert_eq!(backend.state().sidebar.pending_row_close, None);
+            let requests = sent_worktree_requests(&outbound);
+            let [(id, WorktreeRequest::Unlock { path, .. })] = requests.as_slice() else {
+                panic!("one unlock request, got {requests:?}");
+            };
+            assert_eq!(path, LINKED);
+
+            // The glyph stays put while the unlock runs, then the row turns removable at once,
+            // without waiting for the host to list the checkouts again.
+            let row = |state: &crate::state::State| {
+                state
+                    .worktree_tab_items()
+                    .into_iter()
+                    .find_map(|item| match item {
+                        crate::state::WorktreeTabItem::Checkout(row) if row.tree.path == LINKED => {
+                            Some((row.unlockable, row.closable))
+                        }
+                        _ => None,
+                    })
+            };
+            assert_eq!(row(backend.state()), Some((true, false)));
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch,
+                    request_id: *id,
+                    result: WorktreeResult::Unlocked {
+                        path: LINKED.into(),
+                    },
+                })
+                .unwrap();
+            assert_eq!(row(backend.state()), Some((false, true)));
+            assert!(
+                backend.state().replaceable_toasts.is_empty(),
+                "the row changing is the feedback"
+            );
+        });
+    }
+
     #[test]
     fn a_checkout_is_removed_on_the_second_press_and_a_dirty_one_rearms_to_force() {
         crate::test_support::on_large_stack(|| {

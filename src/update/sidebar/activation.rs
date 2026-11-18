@@ -25,6 +25,10 @@ pub(crate) fn row_close(ctx: &mut Context<AppRoot>, panel: usize, index: usize) 
     let Some(close) = row.close else {
         return Update::none();
     };
+    if let crate::state::SidebarClose::WorktreeUnlock { path } = close {
+        ctx.state.sidebar.pending_row_close = None;
+        return crate::ops::worktrees::unlock_from_sidebar(ctx, path);
+    }
     if ctx.state.sidebar.pending_row_close.take() != Some(close.clone()) {
         ctx.state.sidebar.pending_row_close = Some(close);
         return crate::ops::confirm::arm(ctx);
@@ -46,6 +50,7 @@ pub(crate) fn row_close(ctx: &mut Context<AppRoot>, panel: usize, index: usize) 
         crate::state::SidebarClose::Worktree { path, force } => {
             crate::ops::worktrees::remove_from_sidebar(ctx, path, force)
         }
+        crate::state::SidebarClose::WorktreeUnlock { .. } => Update::none(),
         crate::state::SidebarClose::StreamAction { row, action } => {
             crate::ops::sidebar_streams::fire_action(&ctx.state, &row, &action);
             Update::full()

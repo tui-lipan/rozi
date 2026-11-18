@@ -195,7 +195,8 @@ The picker and the sidebar show a locked checkout as `Locked`. When the lock nam
 `pid <N>` and that process is no longer running on the session host, the checkout shows as
 `Stale lock`. A lock that names no process is never stale.
 
-Select a locked checkout and press `Ctrl+U` to remove its lock. This works for any lock, so check
+Select a locked checkout and press `Ctrl+U` to remove its lock, or click the padlock that replaces
+the ✕ on its row in the sidebar's Worktrees tab. This works for any lock, so check
 that nothing still uses the checkout before unlocking one that is not stale. Unlocking changes
 nothing else: the checkout and its branch stay.
 

@@ -978,11 +978,38 @@ pub(crate) fn unlock_selected(ctx: &mut Context<AppRoot>) -> Update {
     else {
         return Update::none();
     };
+    start_unlock(ctx, cwd, tree)
+}
+
+/// A locked checkout's unlock glyph in the Worktrees tab was clicked.
+pub(crate) fn unlock_from_sidebar(ctx: &mut Context<AppRoot>, path: String) -> Update {
+    let listing = &ctx.state.sidebar.worktrees;
+    let Some((_, cwd)) = listing.source.clone() else {
+        return Update::none();
+    };
+    let Some(tree) = listing
+        .entries
+        .iter()
+        .find(|tree| tree.path == path)
+        .cloned()
+    else {
+        return Update::none();
+    };
+    start_unlock(ctx, cwd, tree)
+}
+
+/// Ask the session host to lift a checkout's lock, stale or not.
+fn start_unlock(
+    ctx: &mut Context<AppRoot>,
+    cwd: String,
+    tree: crate::git::worktrees::WorktreeInfo,
+) -> Update {
     if !writable(ctx) {
         crate::pane::pty_events::notify_error(ctx, "Unlock failed", "Client is read-only");
         return Update::full();
     }
-    if tree.lock.is_none() || selected_changing(&ctx.state) {
+    let target = ctx.state.current().remote_target.clone();
+    if tree.lock.is_none() || ctx.state.worktree_changing(&tree.path, target.as_ref()) {
         return Update::none();
     }
     if let Some(picker) = ctx.state.worktree_picker.as_mut() {
@@ -1073,6 +1100,12 @@ fn start_remove(
             delete_branch,
         },
     )
+}
+
+fn clear_lock(entries: &mut [crate::git::worktrees::WorktreeInfo], path: &str) {
+    if let Some(tree) = entries.iter_mut().find(|tree| tree.path == path) {
+        tree.lock = None;
+    }
 }
 
 pub(crate) fn apply_result(
@@ -1204,10 +1237,24 @@ pub(crate) fn apply_result(
                 }
             }
             (WorktreeOperationKind::Unlock { .. }, WorktreeResult::Unlocked { path }) => {
+                // Clear the lock now, as a removal drops its row: until the list asked for above
+                // arrives, the row would show the lock again. The row changing is the feedback, so
+                // only an unlock nothing on screen shows is announced.
+                if sidebar_here {
+                    clear_lock(&mut ctx.state.sidebar.worktrees.entries, &path);
+                }
                 if picker_here {
+                    if let Some(picker) = ctx.state.worktree_picker.as_mut() {
+                        clear_lock(&mut picker.entries, &path);
+                    }
                     return relist(ctx);
                 }
-                crate::pane::pty_events::notify_info(ctx, format!("Unlocked worktree `{path}`"));
+                if !sidebar_here {
+                    crate::pane::pty_events::notify_info(
+                        ctx,
+                        format!("Unlocked worktree `{path}`"),
+                    );
+                }
             }
             (
                 WorktreeOperationKind::Remove { path, force: false },

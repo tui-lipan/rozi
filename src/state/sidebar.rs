@@ -96,6 +96,9 @@ pub enum SidebarClose {
     Pane(crate::pane::id::PaneId),
     /// Remove a linked checkout, never its branch. `force` once Git has refused a dirty one.
     Worktree { path: String, force: bool },
+    /// Lift a checkout's lock, the same as the worktree picker's `Ctrl+U`. Not destructive, so it
+    /// acts on the first gesture and shows an unlock glyph in place of the ✕.
+    WorktreeUnlock { path: String },
     /// Kill the session: shut its server down, the same as the picker's `Ctrl+K`.
     Session {
         name: String,
@@ -270,6 +273,8 @@ pub struct WorktreeTabRow {
     pub closable: bool,
     /// Git refused to remove it as dirty, so its ✕ forces the removal.
     pub force: bool,
+    /// Locked by a live owner: the ✕ is replaced by an unlock glyph.
+    pub unlockable: bool,
 }
 
 impl crate::state::State {
@@ -309,14 +314,18 @@ impl crate::state::State {
                     .cloned()
                     .unwrap_or_default();
                 let removing = self.worktree_removing(&tree.path, target.as_ref());
+                // An unlock in the queue counts too: a removal on top of it is refused.
+                let changing = self.worktree_changing(&tree.path, target.as_ref());
                 items.push(WorktreeTabItem::Checkout(WorktreeTabRow {
                     current: &tree.path == cwd,
                     closable: tree.linked
                         && !tree.bare
                         && tree.lock.as_ref().is_none_or(|lock| lock.stale)
                         && sessions.is_empty()
-                        // An unlock in the queue counts too: a removal on top of it is refused.
-                        && !self.worktree_changing(&tree.path, target.as_ref()),
+                        && !changing,
+                    // Kept while its unlock runs, so the glyph under the pointer stays put until
+                    // the row turns removable; a second press finds the unlock queued and waits.
+                    unlockable: tree.lock.as_ref().is_some_and(|lock| !lock.stale),
                     force: listing.force_remove.as_ref() == Some(&tree.path),
                     removing,
                     sessions,

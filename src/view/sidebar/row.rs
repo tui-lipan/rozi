@@ -160,6 +160,8 @@ pub(super) struct CloseAffordance {
     pub armed: bool,
     /// The pointer is on the ✕ itself rather than elsewhere on the row.
     pub pointed: bool,
+    /// Lifts a lock rather than destroying anything: an unlock glyph that hovers in the accent.
+    pub unlock: bool,
 }
 
 /// Content columns supplied to the framework Tree, which owns the intervening tree prefix.
@@ -580,7 +582,19 @@ fn detail_item(detail: Vec<(String, Style)>) -> Option<ListItem> {
 fn close_affordance(ctx: &Context<AppRoot>, close: CloseAffordance) -> Element {
     let panel = close.panel;
     let index = close.index;
-    let style = super::super::fg_only(&ctx.state.theme.muted);
+    let theme = &ctx.state.theme;
+    let style = super::super::fg_only(&theme.muted);
+    let (glyph, hover) = if close.unlock {
+        (
+            ctx.state.config.worktree_unlock_icon(),
+            theme
+                .accent
+                .fg
+                .map_or(theme.status.success, |paint| paint.color()),
+        )
+    } else {
+        ("✕", theme.status.error)
+    };
     let region: Element = MouseRegion::new()
         .on_click(crate::view::sidebar::callback(ctx, move |_| {
             Msg::SidebarRowClose { panel, index }
@@ -595,10 +609,7 @@ fn close_affordance(ctx: &Context<AppRoot>, close: CloseAffordance) -> Element {
                 hovered,
             }
         }))
-        .hover_effect(VisualEffect::transform_fg(ColorTransform::tint(
-            ctx.state.theme.status.error,
-            1.0,
-        )))
+        .hover_effect(VisualEffect::transform_fg(ColorTransform::tint(hover, 1.0)))
         .child(
             // `Auto` width is load-bearing: a flexing wrapper would compete with the title for the
             // row and drag the ✕ into the middle of it instead of pinning it to the edge.
@@ -606,7 +617,7 @@ fn close_affordance(ctx: &Context<AppRoot>, close: CloseAffordance) -> Element {
                 .padding((0, 1, 0, 0))
                 .width(Length::Auto)
                 .height(Length::Px(1))
-                .child(Text::new("✕").style(style).height(Length::Px(1))),
+                .child(Text::new(glyph).style(style).height(Length::Px(1))),
         )
         .into();
     region.key(close_hover_key(panel, index))

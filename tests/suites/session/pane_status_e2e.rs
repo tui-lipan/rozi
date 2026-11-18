@@ -18,7 +18,12 @@ const PANE_GENERATION: u64 = 1;
 fn pane_status_broadcasts_and_survives_detach_reattach() {
     let server = spawn_listener(ServerSettings::default());
     let (mut controller, _) = attach_client(server.endpoint(), server.session(), "controller");
-    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    let (shell, command_shell) = resolve_launch_argv(
+        None,
+        None,
+        &ShellEnv::from_process(),
+        rozi::platform::command::LoginShell::Never,
+    );
     controller.write_control(&ClientMessage::SpawnPane {
         placement: Some(crate::common::spawn_placement(
             0,

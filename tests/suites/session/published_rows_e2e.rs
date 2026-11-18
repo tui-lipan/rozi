@@ -34,7 +34,12 @@ fn row(id: &str, status: &str, active: bool) -> PublishedRow {
 }
 
 fn spawn_pane(controller: &mut crate::common::TestConnection) {
-    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    let (shell, command_shell) = resolve_launch_argv(
+        None,
+        None,
+        &ShellEnv::from_process(),
+        rozi::platform::command::LoginShell::Never,
+    );
     controller.write_control(&ClientMessage::SpawnPane {
         placement: Some(crate::common::spawn_placement(
             0,

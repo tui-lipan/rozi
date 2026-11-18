@@ -298,7 +298,12 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
 
     // A session may claim the checkout only after its first pane exists. Once claimed, Git removal
     // remains blocked even when `force` is requested.
-    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    let (shell, command_shell) = resolve_launch_argv(
+        None,
+        None,
+        &ShellEnv::from_process(),
+        rozi::platform::command::LoginShell::Never,
+    );
     writable.write_control(&ClientMessage::SpawnPane {
         placement: Some(crate::common::spawn_placement(0, &[(41, 1)])),
         pane_id: 41,

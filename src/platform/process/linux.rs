@@ -220,6 +220,26 @@ fn process_group_member(process_group_id: u32, pid: u32) -> Option<ForegroundPro
     })
 }
 
+pub(super) fn identity(pid: u32) -> Option<super::ProcessIdentity> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let close = stat.rfind(')')?;
+    let name = stat.get(stat.find('(')? + 1..close)?.to_string();
+    let parent = stat
+        .get(close + 2..)?
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()?;
+    let argv0 = read_nul_records(&format!("/proc/{pid}/cmdline"))
+        .into_iter()
+        .next();
+    Some(super::ProcessIdentity {
+        parent,
+        name,
+        argv0,
+    })
+}
+
 fn read_process_stat(pid: u32) -> Option<(u32, String)> {
     parse_process_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
 }

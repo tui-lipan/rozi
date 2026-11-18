@@ -224,7 +224,12 @@ fn restart_restores_the_session(state: SnapshotState) {
 }
 
 fn spawn_powershell(client: &mut TestConnection) {
-    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    let (shell, command_shell) = resolve_launch_argv(
+        None,
+        None,
+        &ShellEnv::from_process(),
+        rozi::platform::command::LoginShell::Never,
+    );
     client.write_control(&ClientMessage::SpawnPane {
         placement: Some(crate::common::spawn_placement(
             0,

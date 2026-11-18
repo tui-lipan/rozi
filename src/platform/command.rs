@@ -897,20 +897,25 @@ pub fn program_exists(program: &str) -> bool {
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-
-        let executable = |path: &std::path::Path| {
-            path.metadata().is_ok_and(|metadata| {
-                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
-            })
-        };
         if program.contains('/') {
-            return executable(std::path::Path::new(program));
+            return is_executable_file(std::path::Path::new(program));
         }
-        std::env::var_os("PATH").is_some_and(|path| {
-            std::env::split_paths(&path).any(|dir| executable(&dir.join(program)))
-        })
+        std::env::var_os("PATH").is_some_and(|path| program_on_path(program, &path))
     }
+}
+
+/// Whether the bare name `program` is an executable file in one of `path`'s directories.
+#[cfg(unix)]
+pub fn program_on_path(program: &str, path: &std::ffi::OsStr) -> bool {
+    std::env::split_paths(path).any(|dir| is_executable_file(&dir.join(program)))
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.metadata()
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
 }
 
 /// Whether starting `program` - a path, or a name looked up on `PATH` - runs the file at
@@ -1001,9 +1006,146 @@ fn node_script_position(argv: &[String]) -> Option<usize> {
     Some(position)
 }
 
+/// `login_shell`: whether a pane's interactive shell starts as a login shell, reading the login
+/// files (`~/.zprofile`, `~/.bash_profile`, `~/.profile`, …) where `PATH` is usually set.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LoginShell {
+    /// Login shells on macOS, where every terminal starts one; plain shells elsewhere.
+    #[default]
+    Auto,
+    Always,
+    /// Add nothing. A login flag the user put in `shell` still applies.
+    Never,
+}
+
+impl LoginShell {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Always => "always",
+            Self::Never => "never",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "always" => Some(Self::Always),
+            "never" => Some(Self::Never),
+            _ => None,
+        }
+    }
+
+    fn wanted_on(self, host: ShellHost) -> bool {
+        match self {
+            Self::Auto => host == ShellHost::MacOs,
+            Self::Always => true,
+            Self::Never => false,
+        }
+    }
+}
+
+/// The OS a shell launch is resolved for, passed in so every branch is testable on any host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShellHost {
+    MacOs,
+    Windows,
+    OtherUnix,
+}
+
+impl ShellHost {
+    fn current() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::MacOs
+        } else if cfg!(windows) {
+            Self::Windows
+        } else {
+            Self::OtherUnix
+        }
+    }
+}
+
+/// A shell's lowercased program name without directory or `.exe`, for matching shell families.
+pub(crate) fn shell_name(program: &str) -> String {
+    let name = program
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(program)
+        .to_ascii_lowercase();
+    match name.strip_suffix(".exe") {
+        Some(stem) => stem.to_string(),
+        None => name,
+    }
+}
+
+/// Whether `args` already ask `shell` to start as a login shell.
+pub(crate) fn is_login_shell(shell: &ShellCommand) -> bool {
+    if matches!(shell_name(&shell.program).as_str(), "pwsh" | "powershell") {
+        return shell
+            .args
+            .iter()
+            .any(|arg| arg.eq_ignore_ascii_case("-login") || arg.eq_ignore_ascii_case("-l"));
+    }
+    shell.args.iter().any(|arg| is_login_arg(arg))
+}
+
+/// Whether `arg` starts a POSIX-style shell as a login shell: `--login`, `-l`, or `l` among
+/// bundled short options, as in `-il`.
+pub(crate) fn is_login_arg(arg: &str) -> bool {
+    if arg == "--login" {
+        return true;
+    }
+    arg.strip_prefix('-').is_some_and(|options| {
+        !options.starts_with('-')
+            && options.contains('l')
+            && options.chars().all(|option| option.is_ascii_alphabetic())
+    })
+}
+
+/// `shell` with its login flag added when `login` asks for one on `host`.
+///
+/// Each shell is told with its own flag rather than the `-` prefix on `argv[0]` that `login(1)`
+/// uses, because a pane's launch is an argv that crosses the session wire. A shell this does not
+/// recognize starts unchanged, as does one whose arguments already make it a login shell.
+fn with_login_flag(shell: ShellCommand, login: LoginShell, host: ShellHost) -> ShellCommand {
+    if !login.wanted_on(host) || is_login_shell(&shell) {
+        return shell;
+    }
+    let flag = match shell_name(&shell.program).as_str() {
+        // bash takes long options only before short ones, so its flag is the long spelling.
+        "bash" => "--login",
+        "sh" | "zsh" | "ksh" | "mksh" | "dash" | "ash" | "yash" | "fish" | "nu" | "xonsh" => "-l",
+        // csh and tcsh accept `-l` only as their sole argument.
+        "csh" | "tcsh" if shell.args.is_empty() => "-l",
+        // `-Login` is Unix-only and must come first.
+        "pwsh" if host != ShellHost::Windows => "-Login",
+        _ => return shell,
+    };
+    let mut args = Vec::with_capacity(shell.args.len() + 1);
+    args.push(flag.to_string());
+    args.extend(shell.args);
+    ShellCommand {
+        program: shell.program,
+        args,
+    }
+}
+
 /// Resolve the interactive-shell launch policy. `configured` is the user's `shell` config value
 /// (already normalized to argv form by `config::file`); empty is treated as "not configured".
-pub fn resolve_interactive_shell(configured: Option<&[String]>, env: &ShellEnv) -> ShellCommand {
+/// `login` then adds the shell's login flag (see [`LoginShell`]).
+pub fn resolve_interactive_shell(
+    configured: Option<&[String]>,
+    env: &ShellEnv,
+    login: LoginShell,
+) -> ShellCommand {
+    with_login_flag(
+        configured_or_default_shell(configured, env),
+        login,
+        ShellHost::current(),
+    )
+}
+
+fn configured_or_default_shell(configured: Option<&[String]>, env: &ShellEnv) -> ShellCommand {
     if let Some(command) = configured.and_then(ShellCommand::from_argv) {
         return command;
     }
@@ -1058,9 +1200,10 @@ pub fn resolve_launch_argv(
     shell: Option<&[String]>,
     command_shell: Option<&[String]>,
     env: &ShellEnv,
+    login: LoginShell,
 ) -> (Vec<String>, Vec<String>) {
     (
-        resolve_interactive_shell(shell, env).as_argv(),
+        resolve_interactive_shell(shell, env, login).as_argv(),
         resolve_command_shell(command_shell, env).as_argv(),
     )
 }
@@ -1275,8 +1418,58 @@ mod tests {
         };
         let configured = argv(&["fish", "--login"]);
         assert_eq!(
-            resolve_interactive_shell(Some(&configured), &env),
+            resolve_interactive_shell(Some(&configured), &env, LoginShell::Never),
             ShellCommand::new("fish").arg("--login")
+        );
+    }
+
+    #[test]
+    fn login_flag_is_each_shells_own_and_never_doubled() {
+        let login = |shell: ShellCommand, host| with_login_flag(shell, LoginShell::Auto, host);
+        // Auto means login shells on macOS only.
+        assert_eq!(
+            login(ShellCommand::new("/bin/zsh"), ShellHost::MacOs),
+            ShellCommand::new("/bin/zsh").arg("-l")
+        );
+        assert_eq!(
+            login(ShellCommand::new("/bin/zsh"), ShellHost::OtherUnix),
+            ShellCommand::new("/bin/zsh")
+        );
+        // bash rejects a short option before a long one, so it gets `--login`, first.
+        assert_eq!(
+            login(ShellCommand::new("bash").arg("--norc"), ShellHost::MacOs),
+            ShellCommand::new("bash").arg("--login").arg("--norc")
+        );
+        // A shell already told to log in is left alone, also with bundled options.
+        assert_eq!(
+            login(ShellCommand::new("fish").arg("--login"), ShellHost::MacOs),
+            ShellCommand::new("fish").arg("--login")
+        );
+        assert_eq!(
+            login(ShellCommand::new("bash").arg("-il"), ShellHost::MacOs),
+            ShellCommand::new("bash").arg("-il")
+        );
+        // pwsh's flag must lead and exists only on Unix.
+        assert_eq!(
+            login(ShellCommand::new("pwsh").arg("-NoLogo"), ShellHost::MacOs),
+            ShellCommand::new("pwsh").arg("-Login").arg("-NoLogo")
+        );
+        assert_eq!(
+            with_login_flag(
+                ShellCommand::new("pwsh.exe"),
+                LoginShell::Always,
+                ShellHost::Windows
+            ),
+            ShellCommand::new("pwsh.exe")
+        );
+        // csh takes `-l` only alone; an unknown shell starts unchanged.
+        assert_eq!(
+            login(ShellCommand::new("tcsh").arg("-f"), ShellHost::MacOs),
+            ShellCommand::new("tcsh").arg("-f")
+        );
+        assert_eq!(
+            login(ShellCommand::new("elvish"), ShellHost::MacOs),
+            ShellCommand::new("elvish")
         );
     }
 
@@ -1288,11 +1481,11 @@ mod tests {
             ..ShellEnv::default()
         };
         assert_eq!(
-            resolve_interactive_shell(None, &env),
+            resolve_interactive_shell(None, &env, LoginShell::Never),
             ShellCommand::new("/bin/zsh")
         );
         assert_eq!(
-            resolve_interactive_shell(None, &ShellEnv::default()),
+            resolve_interactive_shell(None, &ShellEnv::default(), LoginShell::Never),
             ShellCommand::new("/bin/sh")
         );
     }
@@ -1305,7 +1498,7 @@ mod tests {
             ..ShellEnv::default()
         };
         assert_eq!(
-            resolve_interactive_shell(Some(&[]), &env),
+            resolve_interactive_shell(Some(&[]), &env, LoginShell::Never),
             ShellCommand::new("/bin/zsh")
         );
     }
@@ -1417,7 +1610,7 @@ mod tests {
             shell_var: Some("/bin/fish".to_string()),
             ..ShellEnv::default()
         };
-        let (shell, command_shell) = resolve_launch_argv(None, None, &env);
+        let (shell, command_shell) = resolve_launch_argv(None, None, &env, LoginShell::Never);
         assert_eq!(shell, vec!["/bin/fish".to_string()]);
         assert_eq!(command_shell, vec!["/bin/sh".to_string(), "-c".to_string()]);
     }

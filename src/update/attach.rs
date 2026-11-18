@@ -190,6 +190,7 @@ pub(crate) fn spawn_state_panes_on_session(
             crate::platform::shell_integration::resolve_interactive_shell(
                 ctx.state.config.shell.as_deref(),
                 &shell_env,
+                ctx.state.config.login_shell,
                 ctx.state.config.shell_integration.mode,
                 &crate::platform::shell_integration::InjectionEnv::from_process(),
             );

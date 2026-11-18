@@ -284,6 +284,11 @@ pub(crate) enum ParsedCli {
         /// `false` keeps the server from writing snapshots (`--no-resurrect`).
         resurrect: bool,
     },
+    /// Hidden: print this process's environment between two copies of a nonce, for reading the
+    /// user's login environment (`platform::login_environment`).
+    PrintEnvironment {
+        nonce: String,
+    },
     /// Hidden remote-side stdio proxy.
     RemoteServe {
         name: String,
@@ -434,6 +439,7 @@ fn help_option_values(option: &str, next: Option<&str>) -> usize {
         | "--socket"
         | "--server"
         | "--remote-serve"
+        | "--print-environment"
         | "--remote-control"
         | "--remote-call"
         | "--remote-serve-existing" => 1,
@@ -644,6 +650,11 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     startup_nonce: Some(nonce),
                     resurrect: !no_resurrect,
                 });
+            }
+            "--print-environment" => {
+                let nonce = require_value(&mut iter, "--print-environment requires a nonce")?;
+                reject_trailing_control_args(&mut iter, "--print-environment")?;
+                return Ok(ParsedCli::PrintEnvironment { nonce });
             }
             "--remote-serve" => {
                 let name = require_value(&mut iter, "--remote-serve requires a session name")?;

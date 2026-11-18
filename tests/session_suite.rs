@@ -14,6 +14,9 @@ mod published_rows_e2e;
 mod record_e2e;
 #[path = "suites/session/session_file_tree.rs"]
 mod session_file_tree;
+#[cfg(unix)]
+#[path = "suites/session/session_login_environment.rs"]
+mod session_login_environment;
 #[path = "suites/session/session_multi_client.rs"]
 mod session_multi_client;
 #[path = "suites/session/session_platform_env.rs"]

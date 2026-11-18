@@ -73,6 +73,7 @@ pub mod environment;
 pub(crate) mod errno;
 pub(crate) mod extensions;
 pub mod ipc;
+pub mod login_environment;
 pub mod notifications;
 pub mod process;
 pub mod progress;

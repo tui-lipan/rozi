@@ -63,6 +63,31 @@ impl ProcessScan {
     }
 }
 
+/// What identifies one process when walking up the process tree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessIdentity {
+    pub parent: u32,
+    /// The kernel's short name for the process, such as `sshd` or `zsh`.
+    pub name: String,
+    /// `argv[0]` as the process was started; a login shell's begins with `-`. `None` when this
+    /// process may not read it, as for another user's.
+    pub argv0: Option<String>,
+}
+
+/// `pid`'s parent, name, and `argv[0]`, on Linux and macOS; `None` elsewhere or when `pid` is
+/// gone.
+pub fn identity(pid: u32) -> Option<ProcessIdentity> {
+    #[cfg(target_os = "linux")]
+    return linux::identity(pid);
+    #[cfg(target_os = "macos")]
+    return macos::identity(pid);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
 /// A [`ProcessScan`] captured on first use and then reused, so a poll cycle walks at most once and
 /// only when some pane actually needs it.
 #[derive(Debug, Default)]
@@ -226,5 +251,35 @@ impl ProcessInspector for NullProcessInspector {
     }
     fn foreground_program(&self, _pty: &TerminalPty) -> Option<String> {
         None
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod identity_tests {
+    /// A login shell is recognized by its `argv[0]`, so the reader must return what the process
+    /// was started with, not its executable's name.
+    #[test]
+    fn a_process_reports_its_parent_and_the_argv0_it_was_started_with() {
+        use std::os::unix::process::CommandExt;
+
+        let mut child = std::process::Command::new("sleep")
+            .arg0("-sleep")
+            .arg("5")
+            .spawn()
+            .expect("sleep starts");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let identity = loop {
+            // Until `exec` completes, the child still reports this test binary's arguments.
+            let identity = super::identity(child.id()).expect("child is running");
+            if identity.argv0.as_deref() == Some("-sleep") || std::time::Instant::now() > deadline {
+                break identity;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(identity.argv0.as_deref(), Some("-sleep"));
+        assert_eq!(identity.parent, std::process::id());
+        assert_eq!(identity.name, "sleep");
     }
 }

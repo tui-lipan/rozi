@@ -24,6 +24,10 @@
 #   command_shell = ["cmd.exe", "/D", "/S", "/C"]
 #command_shell = ["/bin/sh", "-c"]
 
+# Start pane shells as login shells, which read ~/.zprofile, ~/.bash_profile, and the
+# like: "auto" (on macOS only), "always", or "never".
+#login_shell = "auto"
+
 # Working directory for new panes. Defaults to the directory rozi was launched from.
 #cwd = "~/code"
 

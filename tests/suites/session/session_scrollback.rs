@@ -61,7 +61,12 @@ fn server_capacity_is_per_pane_and_independent_of_attaching_client_config() {
 
 fn populate_history(endpoint: &rozi::platform::ipc::IpcEndpoint, session: &str) {
     let (mut client, _) = attach_client(endpoint, session, "producer");
-    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    let (shell, command_shell) = resolve_launch_argv(
+        None,
+        None,
+        &ShellEnv::from_process(),
+        rozi::platform::command::LoginShell::Never,
+    );
     client.write_control(&ClientMessage::SpawnPane {
         placement: Some(crate::common::spawn_placement(0, &[(PANE_ID, GENERATION)])),
         local: false,

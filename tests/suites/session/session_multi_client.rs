@@ -183,7 +183,12 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
         attach_client(server.endpoint(), server.session(), "controller");
     let (mut follower, _) = attach_client(server.endpoint(), server.session(), "follower");
     let controller_id = attached_client_id(&attached);
-    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    let (shell, command_shell) = resolve_launch_argv(
+        None,
+        None,
+        &ShellEnv::from_process(),
+        rozi::platform::command::LoginShell::Never,
+    );
     let test_binary = std::env::current_exe().expect("session test binary");
     controller.write_control(&ClientMessage::SpawnPane {
         placement: Some(crate::common::spawn_placement(
@@ -492,7 +497,12 @@ fn consumed_media_reaches_two_local_clients_and_a_late_remote_over_the_protocol(
     let name =
         base64::engine::general_purpose::STANDARD.encode(path.as_os_str().as_encoded_bytes());
     let command = format!("\x1b_Ga=T,t=t,f=32,s=1,v=1,i=7,p=1,C=1,q=2;{name}\x1b\\");
-    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    let (shell, command_shell) = resolve_launch_argv(
+        None,
+        None,
+        &ShellEnv::from_process(),
+        rozi::platform::command::LoginShell::Never,
+    );
     controller.write_control(&ClientMessage::SpawnPane {
         placement: Some(crate::common::spawn_placement(
             0,

@@ -22,6 +22,9 @@ use tui_lipan::prelude::TerminalPty;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForegroundProcess {
     pub pid: u32,
+    /// When the process started, in platform units, so a reused PID is not mistaken for it. `None`
+    /// where the platform does not report it.
+    pub started: Option<u64>,
     pub name: String,
     pub executable: Option<String>,
     pub argv: Vec<String>,
@@ -32,6 +35,67 @@ pub struct ForegroundProcess {
 pub struct ForegroundJob {
     pub process_group_id: u32,
     pub processes: Vec<ForegroundProcess>,
+}
+
+/// The processes a pane's agent may be among, as one observation.
+///
+/// Separate from [`ForegroundJob`] because not every platform has one: a POSIX terminal's
+/// foreground process group says which job holds the terminal, which navigation, resurrection and
+/// launch metadata rely on. Windows has no such group, only the tree of processes descended from
+/// the pane's own process, and some of those may be background jobs. That tree is good evidence of
+/// *which agent* runs in the pane, but not of what holds its input, so it feeds agent identity only.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentProcessSet {
+    /// The process group ID for [`ProcessTopology::ForegroundGroup`], or the pane's own process
+    /// for [`ProcessTopology::DescendantTree`].
+    pub root_pid: u32,
+    pub topology: ProcessTopology,
+    /// Parents before their children for a descendant tree; the group leader first for a group.
+    pub processes: Vec<ObservedProcess>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProcessTopology {
+    /// Members of the terminal's foreground process group.
+    ForegroundGroup,
+    /// The pane process and its descendants, whatever holds the terminal.
+    DescendantTree,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ObservedProcess {
+    pub process: ForegroundProcess,
+    /// The parent's PID, where it is known and is itself in the set's tree.
+    pub parent_pid: Option<u32>,
+}
+
+impl AgentProcessSet {
+    pub fn from_foreground_job(job: &ForegroundJob) -> Self {
+        Self {
+            root_pid: job.process_group_id,
+            topology: ProcessTopology::ForegroundGroup,
+            processes: job
+                .processes
+                .iter()
+                .map(|process| ObservedProcess {
+                    process: process.clone(),
+                    parent_pid: None,
+                })
+                .collect(),
+        }
+    }
+
+    /// Whether the process identified by `pid` and `started` is still in the set. A PID whose
+    /// recorded start differs from the one observed now belongs to a different process.
+    pub fn contains(&self, pid: u32, started: Option<u64>) -> bool {
+        self.processes.iter().any(|observed| {
+            observed.process.pid == pid
+                && match (started, observed.process.started) {
+                    (Some(before), Some(now)) => before == now,
+                    _ => true,
+                }
+        })
+    }
 }
 
 /// One pass over the host's process table, shared by every pane in a poll cycle.
@@ -50,15 +114,19 @@ pub struct ForegroundJob {
 pub struct ProcessScan {
     #[cfg(target_os = "linux")]
     entries: Vec<linux::ScannedProcess>,
+    #[cfg(windows)]
+    snapshot: windows::ProcessSnapshot,
 }
 
 impl ProcessScan {
-    /// Walk the process table now. Linux reuses this host-wide scan; macOS queries one process
-    /// group directly and Windows reports process inspection unavailable.
+    /// Walk the process table now. Linux and Windows reuse this host-wide scan; macOS queries one
+    /// process group directly.
     pub fn capture() -> Self {
         Self {
             #[cfg(target_os = "linux")]
             entries: linux::scan_processes(),
+            #[cfg(windows)]
+            snapshot: windows::ProcessSnapshot::capture(),
         }
     }
 }
@@ -182,6 +250,7 @@ pub trait ProcessInspector {
         let launch = self.foreground_launch(pty).unwrap_or_default();
         Some(ForegroundProcess {
             pid: 0,
+            started: None,
             name,
             executable: launch
                 .executable
@@ -215,6 +284,22 @@ pub trait ProcessInspector {
     fn foreground_job_in(&self, pty: &TerminalPty, scan: &ProcessScan) -> Option<ForegroundJob> {
         let _ = scan;
         self.foreground_job(pty)
+    }
+
+    /// The processes this pane's agent may be among, for agent identity only.
+    ///
+    /// `foreground_job` is what [`foreground_job_in`](Self::foreground_job_in) just returned for
+    /// the same pane, so a platform whose foreground group is also its agent evidence answers
+    /// without walking again. That is the default. A platform with no foreground group overrides
+    /// this to return the pane's descendant tree from `scan` instead.
+    fn agent_processes_in(
+        &self,
+        pty: &TerminalPty,
+        scan: &ProcessScan,
+        foreground_job: Option<&ForegroundJob>,
+    ) -> Option<AgentProcessSet> {
+        let _ = (pty, scan);
+        foreground_job.map(AgentProcessSet::from_foreground_job)
     }
 }
 

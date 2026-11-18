@@ -9,7 +9,18 @@ use std::path::PathBuf;
 
 use tui_lipan::prelude::TerminalPty;
 
-use super::ProcessInspector;
+use super::{AgentProcessSet, ForegroundJob, ProcessInspector, ProcessScan};
+
+/// The host's process table, captured once per poll cycle. See [`ProcessScan`].
+#[derive(Debug, Default)]
+pub struct ProcessSnapshot {}
+
+impl ProcessSnapshot {
+    pub fn capture() -> Self {
+        // TODO(windows backend): ToolHelp snapshot.
+        Self {}
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WindowsProcessInspector;
@@ -20,6 +31,17 @@ impl ProcessInspector for WindowsProcessInspector {
     }
 
     fn foreground_program(&self, _pty: &TerminalPty) -> Option<String> {
+        None
+    }
+
+    fn agent_processes_in(
+        &self,
+        pty: &TerminalPty,
+        scan: &ProcessScan,
+        _foreground_job: Option<&ForegroundJob>,
+    ) -> Option<AgentProcessSet> {
+        // TODO(windows backend): descendant tree of `pty.pid()` from `scan.snapshot`.
+        let _ = (pty, &scan.snapshot);
         None
     }
 }

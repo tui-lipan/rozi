@@ -208,9 +208,11 @@ fn foreground_job_for_group(
 }
 
 fn process_group_member(process_group_id: u32, pid: u32) -> Option<ForegroundProcess> {
-    let (group, name) = read_process_stat(pid)?;
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let (group, name) = parse_process_stat(&stat)?;
     (group == process_group_id).then(|| ForegroundProcess {
         pid,
+        started: parse_start_time(&stat),
         name,
         executable: std::fs::read_link(format!("/proc/{pid}/exe"))
             .ok()

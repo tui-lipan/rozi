@@ -166,6 +166,7 @@ mod tests {
     fn process(pid: u32, name: &str, argv: &[&str], hint: Option<&str>) -> ForegroundProcess {
         ForegroundProcess {
             pid,
+            started: None,
             name: name.into(),
             executable: None,
             argv: argv.iter().map(|value| (*value).into()).collect(),

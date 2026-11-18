@@ -3345,6 +3345,7 @@ fn synthetic_foreground_job(program: &str, agent_hint: Option<&str>) -> Foregrou
         process_group_id: 0,
         processes: vec![ForegroundProcess {
             pid: 0,
+            started: None,
             name: program.to_string(),
             executable: None,
             argv: vec![program.to_string()],
@@ -4963,6 +4964,7 @@ mod tests {
             process_group_id: 42,
             processes: vec![ForegroundProcess {
                 pid: 42,
+                started: None,
                 name: "nvim".into(),
                 executable: Some("/usr/bin/nvim".into()),
                 argv: vec!["nvim".into(), ".".into()],
@@ -5111,6 +5113,7 @@ mod tests {
             process_group_id: 42,
             processes: vec![ForegroundProcess {
                 pid: 42,
+                started: None,
                 name: "python3".into(),
                 executable: Some("/usr/bin/python3".into()),
                 argv: vec!["python3".into(), "/opt/bin/agent".into(), "--go".into()],
@@ -5130,6 +5133,7 @@ mod tests {
             processes: vec![
                 ForegroundProcess {
                     pid: 40,
+                    started: None,
                     name: "npm".into(),
                     executable: Some("/usr/bin/npm".into()),
                     argv: vec!["npm".into(), "exec".into(), "nvim".into()],
@@ -5137,6 +5141,7 @@ mod tests {
                 },
                 ForegroundProcess {
                     pid: 41,
+                    started: None,
                     name: "nvim".into(),
                     executable: Some("/usr/bin/nvim".into()),
                     argv: vec!["nvim".into(), ".".into()],
@@ -5156,6 +5161,7 @@ mod tests {
             process_group_id: 40,
             processes: vec![ForegroundProcess {
                 pid: 41,
+                started: None,
                 name: "nvim".into(),
                 executable: Some("/usr/bin/nvim".into()),
                 argv: vec!["nvim".into()],
@@ -5174,6 +5180,7 @@ mod tests {
             process_group_id: 42,
             processes: vec![ForegroundProcess {
                 pid: 42,
+                started: None,
                 name: "python3".into(),
                 executable: Some("/usr/bin/python3".into()),
                 argv: Vec::new(),
@@ -5971,6 +5978,7 @@ mod tests {
                 process_group_id: 100,
                 processes: vec![ForegroundProcess {
                     pid: 100,
+                    started: None,
                     name: "codex".into(),
                     executable: None,
                     argv: argv.iter().map(|arg| (*arg).into()).collect(),
@@ -6022,6 +6030,7 @@ mod tests {
                 .iter()
                 .map(|&(pid, name)| ForegroundProcess {
                     pid,
+                    started: None,
                     name: name.into(),
                     executable: None,
                     argv: vec![name.into()],

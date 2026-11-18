@@ -915,6 +915,7 @@ impl SessionServer {
                 cell_width,
                 cell_height,
                 spawn_env,
+                agent_resume,
             } => {
                 if local && self.client_read_only(client_id) {
                     return vec![(
@@ -963,12 +964,38 @@ impl SessionServer {
                 } else {
                     (env, shell, command_shell)
                 };
+                // A conversation the agent definitions cannot reopen fails the spawn: a plain shell
+                // in its place would look like the conversation opened and was empty.
+                let agent_resume = match agent_resume {
+                    None => None,
+                    Some(resume) => {
+                        match self.agent_resume_launch(&resume.agent, &resume.session, false) {
+                            Some(launch) => Some(launch),
+                            None => {
+                                return vec![(
+                                    Target::Sender,
+                                    ServerMessage::SpawnResult {
+                                        pane_id,
+                                        local,
+                                        generation,
+                                        pid: None,
+                                        ok: false,
+                                        error: Some(format!(
+                                            "agent `{}` cannot reopen this conversation",
+                                            resume.agent
+                                        )),
+                                    },
+                                )];
+                            }
+                        }
+                    }
+                };
                 let request = SpawnRequest {
                     pane_id,
                     owner: local.then_some(client_id),
                     generation,
                     launch,
-                    agent_resume: None,
+                    agent_resume,
                     cwd,
                     title,
                     cols,

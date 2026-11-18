@@ -1137,6 +1137,7 @@ fn a_guest_pane_runs_with_the_owner_shell_runner_and_environment() {
         cell_width: 0,
         cell_height: 0,
         spawn_env: Some(env.clone()),
+        agent_resume: None,
     };
     let value = |env: &[(String, String)], key: &str| {
         env.iter()

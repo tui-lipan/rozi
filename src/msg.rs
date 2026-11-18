@@ -546,6 +546,9 @@ pub enum Msg {
     /// can point at a different agent by the time it is used.
     AgentPickerSelect(crate::state::AgentLocation),
     AgentPickerActivate(crate::state::AgentLocation),
+    /// Ctrl+Enter in the Agents view: switch to a background conversation, or reopen it in a new
+    /// pane, whichever Enter does not.
+    AgentPickerActivateOther(crate::state::AgentLocation),
     CloseRemotePicker,
     RemotePickerHostQueryChanged(String),
     RemotePickerHostSelect(crate::session::remote::RemoteTarget),

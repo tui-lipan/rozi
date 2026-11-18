@@ -3509,6 +3509,7 @@ mod tests {
                 | crate::session::protocol::Capability::SessionPublish
                 | crate::session::protocol::Capability::AgentConversations
                 | crate::session::protocol::Capability::AgentAttachments => "0.0.50",
+                crate::session::protocol::Capability::SpawnAgentResume => "0.1.1",
                 _ => "0.0.44",
             };
             assert_eq!(cap.introduced_in(), expected, "{cap}");

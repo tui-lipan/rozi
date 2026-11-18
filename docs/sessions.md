@@ -212,7 +212,8 @@ pull request number, and the reason — so typing a branch or a host name narrow
 `Enter` goes to the highlighted agent. In the session on screen, it moves focus to the agent's pane;
 on the agent you are in, it only closes Agents. Anywhere else, rozi attaches to that session first
 and then focuses the pane — and, for a program running several agents, the agent's own row inside
-it. The host and session do not have to be open already.
+it. The host and session do not have to be open already. On a run its program keeps in the
+background, `Ctrl+Enter` [opens it in a new pane](sidebar.md#agents) instead.
 
 Only agents in sessions this client holds, the one on screen or in the background, have a time. What an agent's terminal shows, as the
 [Activity tab](sidebar.md#activity) reads it, needs an attached session; see

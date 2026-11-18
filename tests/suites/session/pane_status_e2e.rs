@@ -45,6 +45,7 @@ fn pane_status_broadcasts_and_survives_detach_reattach() {
         cell_width: 0,
         cell_height: 0,
         spawn_env: None,
+        agent_resume: None,
     });
     read_until(&mut controller, |frame| {
         matches!(

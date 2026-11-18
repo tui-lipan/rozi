@@ -503,6 +503,9 @@
 [sidebar.settings.agents]
 # The same choice for the Agents tab, kept apart from Activity's.
 #worktrees = "separate"
+# What a click or Enter on a run kept in the background does, here and in the Agents view:
+# "switch" goes to it, "pane" reopens it in a new pane. Ctrl+click and Ctrl+Enter do the other.
+#open = "switch"
 
 [sidebar.settings.files]
 # Show the search field above the tree.

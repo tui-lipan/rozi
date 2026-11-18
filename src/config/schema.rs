@@ -2083,6 +2083,36 @@ pub struct SidebarActivityConfig {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SidebarAgentsConfig {
     pub worktrees: WorktreeLayout,
+    /// What activating a conversation running in the background of its pane does.
+    pub open: AgentRowOpen,
+}
+
+/// What a click or Enter on an agent conversation running in the background of its pane does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AgentRowOpen {
+    /// Go to its pane and ask the program there to show it.
+    #[default]
+    Switch,
+    /// Reopen it in a new pane of the current session.
+    Pane,
+}
+
+impl AgentRowOpen {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "switch" => Some(Self::Switch),
+            "pane" => Some(Self::Pane),
+            _ => None,
+        }
+    }
+
+    /// What Ctrl+click and Ctrl+Enter do instead.
+    pub fn other(self) -> Self {
+        match self {
+            Self::Switch => Self::Pane,
+            Self::Pane => Self::Switch,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2178,6 +2208,7 @@ impl SidebarTab {
         Self::Agents {
             config: SidebarAgentsConfig {
                 worktrees: WorktreeLayout::Separate,
+                open: AgentRowOpen::Switch,
             },
         }
     }
@@ -2500,6 +2531,20 @@ pub struct SidebarConfig {
     pub background: bool,
     /// End-cap style for sidebar tabs. Half-block is not available on tab bars.
     pub tab_style: CapStyle,
+}
+
+impl SidebarConfig {
+    /// The Agents tab's options, which also govern the Agents view and agent rows in Activity.
+    /// The defaults when the tab is not in the catalog.
+    pub fn agents_config(&self) -> SidebarAgentsConfig {
+        self.tabs
+            .iter()
+            .find_map(|tab| match tab {
+                SidebarTab::Agents { config } => Some(*config),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
 }
 
 impl Default for SidebarConfig {

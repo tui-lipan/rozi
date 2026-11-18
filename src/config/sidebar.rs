@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use super::file::{SidebarFileConfig, SidebarTabSpec};
 use super::input::parse_user_command_action;
+use super::schema::AgentRowOpen;
 use super::schema::{
     SIDEBAR_MAX_SPLIT_RATIO, SIDEBAR_MIN_COMMAND_INTERVAL_SECS, SIDEBAR_MIN_SPLIT_RATIO,
     SIDEBAR_TREE_MAX_ENTRIES_LIMIT, SidebarConfig, SidebarLauncherEntry, SidebarPosition,
@@ -97,7 +98,18 @@ pub fn builtin_tab_settings(id: &str) -> Vec<SettingSpec> {
                 "List coding agents here too. The Agents tab lists every agent either way.",
             ),
         ],
-        "agents" => vec![worktrees],
+        "agents" => vec![
+            worktrees,
+            SettingSpec::choice(
+                "open",
+                "Open",
+                "switch",
+                &[("switch", "Switch"), ("pane", "New pane")],
+            )
+            .with_description(
+                "What a click on a background conversation does. Ctrl+click does the other.",
+            ),
+        ],
         other => tree_view(other).map(tree).unwrap_or_default(),
     }
 }
@@ -272,7 +284,14 @@ pub(crate) fn apply_builtin_settings(
                     .and_then(SettingValue::as_bool)
                     .unwrap_or_default();
             }
-            SidebarTab::Agents { config } => config.worktrees = worktree_layout(&group),
+            SidebarTab::Agents { config } => {
+                config.worktrees = worktree_layout(&group);
+                config.open = group
+                    .value("open")
+                    .and_then(SettingValue::as_str)
+                    .and_then(AgentRowOpen::parse)
+                    .unwrap_or_default();
+            }
             SidebarTab::Tree { view, config } => {
                 *config = tree_config(*view, &group, on_click, warnings);
             }
@@ -863,7 +882,7 @@ mod tests {
 
         // The Agents tab takes the same choice on its own: setting one leaves the other alone.
         let (config, warnings) = parse(
-            "tabs = [\"activity\", \"agents\"]\n[settings.agents]\nworktrees = \"repository\"\n",
+            "tabs = [\"activity\", \"agents\"]\n[settings.agents]\nworktrees = \"repository\"\nopen = \"pane\"\n",
         );
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(
@@ -873,6 +892,7 @@ mod tests {
                 SidebarTab::Agents {
                     config: crate::config::SidebarAgentsConfig {
                         worktrees: crate::config::WorktreeLayout::Repository,
+                        open: crate::config::AgentRowOpen::Pane,
                     },
                 },
             ]

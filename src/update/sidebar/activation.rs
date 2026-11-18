@@ -86,7 +86,8 @@ pub(crate) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usiz
 }
 
 /// Ctrl+click or Ctrl+Enter: a checkout opens as whichever of session and pane a plain activation
-/// does not. Any other row does what a plain activation does.
+/// does not, and so does a background agent conversation of switching and a new pane. Any other
+/// row does what a plain activation does.
 pub(crate) fn row_ctrl_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usize) -> Update {
     activate(ctx, panel, index, true)
 }
@@ -105,7 +106,9 @@ fn activate(ctx: &mut Context<AppRoot>, panel: usize, index: usize, alternate: b
         RowTarget::Inert => Update::none(),
         RowTarget::Pane(id) => focus_pane(ctx, id),
         RowTarget::PublishedRow { pane_id, row } => activate_published_row(ctx, pane_id, row),
-        RowTarget::Agent(location) => crate::ops::agents::activate_from_sidebar(ctx, location),
+        RowTarget::Agent(location) => {
+            crate::ops::agents::activate_from_sidebar(ctx, location, alternate)
+        }
         RowTarget::TreeToggle(key) => {
             crate::update::sidebar::tree_rows::toggle_key(ctx, panel, key)
         }

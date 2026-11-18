@@ -64,14 +64,25 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     let selected_entry = selected_row.map(|index| &rows[index]);
     let selected_is_other_session = selected_entry
         .is_some_and(|entry| matches!(entry.row.location, AgentLocation::OtherSession { .. }));
+    // A conversation behind its pane can also reopen in a pane of its own: Enter does what the
+    // `open` setting says, and Ctrl+Enter the other.
+    let background = selected_entry.is_some_and(|entry| {
+        crate::ops::agents::background_conversation(&ctx.state, &entry.row.location).is_some()
+    });
+    let open = ctx.state.config.sidebar.agents_config().open;
+    let go_label = if selected_is_other_session {
+        "open there"
+    } else {
+        "go to"
+    };
+    let label = |open: crate::config::AgentRowOpen| match open {
+        crate::config::AgentRowOpen::Pane if background => "new pane",
+        _ => go_label,
+    };
     let actions = vec![
         OverlayAction::new(
             "enter",
-            if selected_is_other_session {
-                "open there"
-            } else {
-                "go to"
-            },
+            label(open),
             picker
                 .selected
                 .clone()
@@ -80,6 +91,16 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
             selected_entry.is_some_and(|entry| !entry.current),
         )
         .hint_only(),
+        OverlayAction::new(
+            "ctrl-enter",
+            label(open.other()),
+            picker
+                .selected
+                .clone()
+                .map(Msg::AgentPickerActivateOther)
+                .unwrap_or(Msg::CloseAgentPicker),
+            background,
+        ),
     ];
     let fallback = ctx
         .link()

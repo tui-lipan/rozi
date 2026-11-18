@@ -332,7 +332,7 @@ fn execute_action_inner(
         }
         Action::FocusNextAgentNeedingAttention => {
             match crate::ops::agents::next_agent_needing_attention(&ctx.state) {
-                Some(location) => crate::ops::agents::activate_from_sidebar(ctx, location),
+                Some(location) => crate::ops::agents::go_to(ctx, location),
                 None => Update::none(),
             }
         }

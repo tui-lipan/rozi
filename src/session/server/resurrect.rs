@@ -970,30 +970,45 @@ impl SessionServer {
             return None;
         }
         let saved = saved?;
-        if saved.session.is_empty()
-            || saved.session.len() > MAX_NATIVE_SESSION
-            // A reference is echoed by whatever agent receives it. Control characters are not part
-            // of any conversation id and a terminal would act on them.
-            || saved.session.chars().any(char::is_control)
-        {
-            return None;
-        }
-        let definition = self.settings.agents.by_id(&saved.agent)?;
-        let argv = if saved.reported {
-            definition.reported_resume_command(&saved.session)?
-        } else {
-            definition.resume_command(&saved.session)?
-        };
-        let launch = crate::pane::launch::PaneLaunch::direct(argv).ok()?;
+        let launch = self.agent_resume_launch(&saved.agent, &saved.session, saved.reported)?;
         // One conversation, one pane. Two panes reopening the same agent session would leave both
         // writing into one history, and neither of them is the one the user was talking to.
         if !resumed.insert((saved.agent.clone(), saved.session.clone())) {
             return None;
         }
+        Some(launch)
+    }
+
+    /// How the agent definitions this server has loaded reopen `session`, or `None` when `agent`
+    /// declares no resume command or the reference is not one to pass to a program.
+    /// `reported` picks the command for a conversation the agent's own hooks reported.
+    pub(super) fn agent_resume_launch(
+        &self,
+        agent: &str,
+        session: &str,
+        reported: bool,
+    ) -> Option<AgentResumeLaunch> {
+        if session.is_empty()
+            || session.len() > MAX_NATIVE_SESSION
+            // A reference is echoed by whatever agent receives it. Control characters are not part
+            // of any conversation id and a terminal would act on them.
+            || session.chars().any(char::is_control)
+            // Whoever published the row chose it, and the agent would read it as an option, such
+            // as one that turns its permission prompts off.
+            || session.starts_with('-')
+        {
+            return None;
+        }
+        let definition = self.settings.agents.by_id(agent)?;
+        let argv = if reported {
+            definition.reported_resume_command(session)?
+        } else {
+            definition.resume_command(session)?
+        };
         Some(AgentResumeLaunch {
             label: definition.label().to_string(),
-            launch,
-            attach: definition.attach_command(&saved.session),
+            launch: crate::pane::launch::PaneLaunch::direct(argv).ok()?,
+            attach: definition.attach_command(session),
         })
     }
 
@@ -3828,7 +3843,12 @@ mod tests {
             crate::config::RestoreMode::Auto,
         );
 
-        for session in ["", "abc\u{1b}[2J", &"x".repeat(MAX_NATIVE_SESSION + 1)] {
+        for session in [
+            "",
+            "abc\u{1b}[2J",
+            "--dangerously-skip-permissions",
+            &"x".repeat(MAX_NATIVE_SESSION + 1),
+        ] {
             let saved = saved_pane("claude", session, None);
             assert!(
                 matches!(

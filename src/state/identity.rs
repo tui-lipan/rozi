@@ -21,6 +21,10 @@ pub struct PaneIdentity {
     /// enters the command string, so the shell expands `"$VAR"` as one word instead of re-parsing
     /// it for command syntax. Never persisted — a restored pane re-derives whatever it needs.
     pub env: Vec<(String, String)>,
+    /// An agent conversation the pane reopens in place of `launch`, by the session server's resume
+    /// command for that agent. Never persisted: a restored pane resumes whatever its agent last
+    /// reported.
+    pub agent_resume: Option<crate::session::protocol::SpawnAgentResume>,
 }
 
 impl PaneIdentity {

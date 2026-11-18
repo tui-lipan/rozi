@@ -114,6 +114,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
         cell_width: 0,
         cell_height: 0,
         spawn_env: None,
+        agent_resume: None,
     });
 
     let mut saw_spawn = false;

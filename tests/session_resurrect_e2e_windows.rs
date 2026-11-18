@@ -255,6 +255,7 @@ fn spawn_powershell(client: &mut TestConnection) {
         cell_width: 0,
         cell_height: 0,
         spawn_env: None,
+        agent_resume: None,
     });
     read_until(client, |frame| match frame {
         Frame::Control(ServerMessage::SpawnResult {

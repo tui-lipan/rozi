@@ -91,6 +91,7 @@ fn populate_history(endpoint: &rozi::platform::ipc::IpcEndpoint, session: &str) 
         cell_width: 0,
         cell_height: 0,
         spawn_env: None,
+        agent_resume: None,
     });
     let mut output = Vec::new();
     read_until(&mut client, |frame| {

@@ -776,6 +776,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
         replay,
         custom_title: title,
         env: spawn_env,
+        agent_resume,
         ..
     } = identity;
     // A replay command (see `PaneIdentity::replay`) spawns a plain interactive shell and is
@@ -820,6 +821,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
         palette,
         shell,
         command_shell,
+        agent_resume,
     };
     if scratch {
         if let Some(client) = state.scratch_client() {

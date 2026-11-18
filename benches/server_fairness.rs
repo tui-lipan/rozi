@@ -288,6 +288,7 @@ impl FairnessFixture {
                 shell,
                 command_shell: Vec::new(),
                 spawn_env: Vec::new(),
+                agent_resume: None,
             });
             wait_for_fairness_pane(&events, pane_id);
         }
@@ -478,6 +479,7 @@ impl SnapshotFixture {
                 ],
                 command_shell: Vec::new(),
                 spawn_env: Vec::new(),
+                agent_resume: None,
             });
             wait_for_snapshot_pane(&events, pane_id);
         }

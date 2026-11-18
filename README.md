@@ -157,7 +157,8 @@ Some process inspection and shell integration details differ by platform.
 It also builds and runs on NetBSD, where it is packaged in pkgsrc. That platform is
 community-supported: no prebuilt binaries, and CI builds and tests it without gating a merge.
 
-See [Platform support](docs/platform-support.md).
+See [Platform support](docs/platform-support.md), and its
+[Windows limitations](docs/platform-support.md#windows-limitations) before you use rozi on Windows.
 
 ## How rozi is built
 

@@ -44,6 +44,27 @@ Other platform-dependent behavior:
 
 See [Remote sessions](remote.md) for differences between local and SSH-attached sessions.
 
+## Windows limitations
+
+Commands, configuration, and automation are the same on Windows, but a few things work differently
+or not at all:
+
+- **Directory and program tracking need shell integration**, because rozi cannot read them from a
+  pane's processes. See [Shell integration](#shell-integration).
+- **Profile capture leaves out native program arguments.** See
+  [What capture saves](profiles.md#what-capture-saves).
+- **Coding agents** are recognized from the processes the pane's shell started, and their state is
+  read from the screen. The [claude-rozi-sessions](agents.md#claude-code-background-sessions)
+  extension does not work, so Claude Code conversations are not listed one by one and do not
+  reopen.
+- **Sharing a session with other accounts** (`rozi sessions share`) is not available.
+- **SSH connections are not shared.** A Windows client authenticates for each command it runs on a
+  remote host, so load a key into an SSH agent to avoid repeated password prompts. Installing rozi
+  automatically onto a Windows host needs `scp` on your machine.
+- **Some keys never reach rozi**, such as Windows-key chords and `Alt+Enter`. See
+  [Input differences](#input-differences).
+- **x86-64 only.** There is no ARM64 Windows release.
+
 ## Files and directories
 
 | Purpose | Linux and macOS | Windows |
@@ -57,8 +78,7 @@ Set `ROZI_CONFIG` to use a different configuration file on any platform.
 
 rozi keeps local session data and private connections between clients and session servers restricted
 to the owning operating-system user. On Linux and macOS, the session owner can share a named
-session with selected local accounts via `rozi sessions share`; cross-user session sharing is
-unsupported on Windows. Remote sessions use SSH authentication; rozi does not expose local sessions
+session with selected local accounts via `rozi sessions share`. Remote sessions use SSH authentication; rozi does not expose local sessions
 over the network.
 
 ## Shell integration

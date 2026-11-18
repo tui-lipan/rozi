@@ -1902,8 +1902,6 @@ pub const INPUT_MAX_SCROLL_MULTIPLIER: u16 = 50;
 
 pub const SIDEBAR_MIN_WIDTH: u16 = 16;
 pub const SIDEBAR_MAX_WIDTH: u16 = 80;
-pub const SIDEBAR_MIN_SPLIT_RATIO: f32 = 0.15;
-pub const SIDEBAR_MAX_SPLIT_RATIO: f32 = 0.85;
 pub const SIDEBAR_MIN_COMMAND_INTERVAL_SECS: u64 = 5;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -2514,8 +2512,6 @@ impl SidebarDockLayout {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SidebarConfig {
     pub startup: bool,
-    /// Legacy visibility used only to seed startup memory when no local memory exists.
-    pub migrated_docks: Option<[bool; 2]>,
     pub presets: Vec<SidebarLayoutPreset>,
     pub layout: SidebarDockLayout,
     pub tabs: Vec<SidebarTab>,
@@ -2567,7 +2563,6 @@ impl Default for SidebarConfig {
         );
         Self {
             startup: false,
-            migrated_docks: None,
             layout: SidebarDockLayout::default(),
             presets: Vec::new(),
             tabs,

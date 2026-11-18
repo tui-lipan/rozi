@@ -1105,15 +1105,12 @@ mod tests {
             config.sidebar.startup = true;
             let first = root(config.clone()).create_state(&());
             assert_eq!(first.sidebar.shown, [true, true]);
-            config.sidebar.migrated_docks = Some([false, true]);
-            let migrated = root(config.clone()).create_state(&());
-            assert_eq!(migrated.sidebar.shown, [false, true]);
             ops::sidebar_memory::save(Some([true, false])).unwrap();
             let remembered = root(config.clone()).create_state(&());
             assert_eq!(
                 remembered.sidebar.shown,
                 [true, false],
-                "local memory overrides migration seeds"
+                "local memory overrides the startup default"
             );
             std::fs::write(&file.path, "broken memory").unwrap();
             let client = root(config);
@@ -1123,7 +1120,7 @@ mod tests {
                     .iter()
                     .any(|message| message.contains("remembered sidebars"))
             );
-            assert_eq!(client.create_state(&()).sidebar.shown, [false, true]);
+            assert_eq!(client.create_state(&()).sidebar.shown, [true, true]);
         });
     }
 

@@ -512,7 +512,7 @@ impl SidebarState {
             panels,
             ..Self::default()
         };
-        state.initialize_visibility(config.startup, config.migrated_docks);
+        state.initialize_visibility(config.startup, None);
         state
     }
 
@@ -902,8 +902,10 @@ mod docking_tests {
     fn geometry_uses_one_budget_and_restores_after_resize() {
         let mut config = crate::config::Config::default();
         config.sidebar.startup = true;
-        config.sidebar.migrated_docks = Some([true, true]);
-        let state = crate::state::State::new(config, Theme::default());
+        let mut state = crate::state::State::new(config, Theme::default());
+        state
+            .sidebar
+            .initialize_visibility(true, Some([true, true]));
         for width in 0..180 {
             let rect = Rect {
                 x: 0,

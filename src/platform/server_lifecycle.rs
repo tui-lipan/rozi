@@ -640,6 +640,12 @@ mod imp {
 
     pub fn install_shutdown_handler() -> io::Result<()> {
         let _ = HANDLE_SHUTDOWN.set(());
+        // Ignoring Ctrl+C is inherited: a server started from a process that ignores it, as an
+        // OpenSSH session does, would pass that on to every pane, where Ctrl+C would then
+        // interrupt nothing. Clearing it here, before any pane spawns, gives panes the normal
+        // processing. The server itself has no console to receive Ctrl+C from.
+        // SAFETY: a null handler with `FALSE` only clears this process's ignore flag.
+        unsafe { SetConsoleCtrlHandler(None, FALSE) };
         install_console_handler()
     }
 

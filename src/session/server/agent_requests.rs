@@ -1192,8 +1192,15 @@ impl SessionServer {
             return false;
         }
         let id = slot.request.clone();
-        let blocked = self.input_locked
-            || self.validate_agent_input_reference(target).is_err()
+        // The same guards as the first typing: the pane must have been quiet for the whole quiet
+        // window, so a draft someone just started is never sent with the request.
+        let quiet = self
+            .agent_requests
+            .stopped_since
+            .get(target)
+            .is_some_and(|since| self.agent_requests.quiet_since(target.pane.pane_id, *since));
+        let blocked = !quiet
+            || self.typing_blocker(target).is_some()
             || self.refuse_unannounced_dialog(target.pane.pane_id).is_err();
         if blocked {
             // Typed nowhere yet; the next pump looks again, until the turn is given up on.
@@ -1412,13 +1419,19 @@ impl SessionServer {
         if let Some(busy) = self.agent_requests.answering(to) {
             return Some(format!("the agent is answering request `{busy}`"));
         }
+        self.typing_blocker(to)
+    }
+
+    /// What makes typing into `to`'s pane unsafe now, whether a request is first typed or typed
+    /// again: anything but the request it may already be answering.
+    fn typing_blocker(&self, to: &protocol::AgentRef) -> Option<String> {
         if let Err(response) = self.validate_agent_input_reference(to) {
             return Some(error_text(response));
         }
         if self.input_locked {
             return Some("the session's input is locked".into());
         }
-        if self.has_conflicting_prompt(to, true) {
+        if self.has_prompt_in_progress(to, true) {
             return Some("the agent has a prompt or history read in progress".into());
         }
         None

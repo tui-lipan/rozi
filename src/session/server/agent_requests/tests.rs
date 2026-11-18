@@ -458,6 +458,36 @@ fn a_request_that_leaves_no_trace_is_typed_once_more_then_fails() {
 }
 
 #[test]
+fn a_dropped_request_is_never_typed_over_fresh_input() {
+    let mut rig = Rig::new(&[3]);
+    let request = rig.ask(None, 3, "What is 2+3?");
+    let typed = format!("Request {}", request.id);
+    assert!(rig.typed_into(3, &typed));
+    // The agent is seen stopped long enough to be ready for typing, before anyone types.
+    rig.server.pump_agent_requests();
+    let quiet = Duration::from_millis(150);
+    rig.server.agent_requests.quiet = quiet;
+    std::thread::sleep(quiet);
+
+    // Someone starts a draft just as the dropped request is checked.
+    rig.server.agent_requests.delivery_check = Duration::ZERO;
+    rig.server
+        .session_write_input(3, b"draft".to_vec())
+        .unwrap();
+    assert!(rig.typed_into(3, "draft"));
+    rig.server.pump_agent_requests();
+    assert_eq!(rig.server.agent_requests.slots[&rig.agent(3)].attempts, 1);
+
+    std::thread::sleep(quiet);
+    rig.server.pump_agent_requests();
+    assert_eq!(rig.server.agent_requests.slots[&rig.agent(3)].attempts, 2);
+    assert!(
+        rig.typed_into(3, &typed),
+        "typed again once the pane was quiet"
+    );
+}
+
+#[test]
 fn only_a_pane_showing_the_request_counts_as_having_taken_it() {
     let mut rig = Rig::new(&[3, 4]);
     rig.server.agent_requests.delivery_check = Duration::ZERO;

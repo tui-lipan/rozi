@@ -321,8 +321,8 @@ to the session, every client receives whole images instead.
 
 Limits:
 
-- Programs in a pane on Windows cannot show images; see
-  [Windows limitations](platform-support.md#windows-limitations).
+- On Windows, Kitty images in panes require a release build. Builds installed with `cargo install`
+  use the Windows ConPTY, which drops Kitty graphics.
 - Kitty protocol animation frames are not supported, apart from edits to an image's first frame.
   Programs that redraw an image can still animate it.
 - Each pane keeps up to 200 MiB of image data, and evicts the oldest images beyond that. A client

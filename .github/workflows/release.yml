@@ -425,6 +425,23 @@ jobs:
             exit 1
           }
 
+      - name: Download Windows ConPTY
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: bash
+        env:
+          CONPTY_VERSION: "1.25.261109001"
+          CONPTY_SHA256: "3d77f535df848e44225c2a8912ac844fecb23f3057732b639f3034b587496f09"
+        run: |
+          set -euo pipefail
+          package="microsoft.windows.console.conpty"
+          archive="$RUNNER_TEMP/conpty.nupkg"
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://api.nuget.org/v3-flatcontainer/${package}/${CONPTY_VERSION}/${package}.${CONPTY_VERSION}.nupkg" \
+            --output "$archive"
+          printf '%s  %s\n' "$CONPTY_SHA256" "$archive" | sha256sum --check
+          7z e "$archive" "-o$RUNNER_TEMP/conpty" \
+            runtimes/win-x64/native/conpty.dll build/native/runtimes/x64/OpenConsole.exe
+
       - name: Package canonical archive
         id: package
         shell: bash
@@ -437,6 +454,7 @@ jobs:
             cp "target/${{ matrix.target }}/release/rozi.exe" "dist/${stem}/rozi.exe"
             cp "target/${{ matrix.target }}/release/rozi-launcher.exe" \
               "dist/${stem}/rozi-launcher.exe"
+            cp "$RUNNER_TEMP/conpty/conpty.dll" "$RUNNER_TEMP/conpty/OpenConsole.exe" "dist/${stem}/"
           else
             cp "target/${{ matrix.target }}/release/rozi" "dist/${stem}/rozi"
           fi
@@ -461,6 +479,8 @@ jobs:
             "dist/verify/${stem}/rozi.exe" --version | grep -F "$version"
             test -x "dist/verify/${stem}/rozi-launcher.exe" || \
               test -f "dist/verify/${stem}/rozi-launcher.exe"
+            cmp "$RUNNER_TEMP/conpty/conpty.dll" "dist/verify/${stem}/conpty.dll"
+            cmp "$RUNNER_TEMP/conpty/OpenConsole.exe" "dist/verify/${stem}/OpenConsole.exe"
           else
             tar -xzf "dist/${stem}.tar.gz" -C dist/verify
             "dist/verify/${stem}/rozi" --version | grep -F "$version"
@@ -502,7 +522,9 @@ jobs:
               New-Item -ItemType Directory -Path $managedBin, $managedVersion -Force | Out-Null
               $launcher = Join-Path $managedBin 'rozi.exe'
               Copy-Item -LiteralPath $packagedLauncher -Destination $launcher
-              Copy-Item -LiteralPath $packagedPayload -Destination (Join-Path $managedVersion 'rozi.exe')
+              foreach ($name in 'rozi.exe', 'conpty.dll', 'OpenConsole.exe') {
+                  Copy-Item -LiteralPath (Join-Path $packagedRoot $name) -Destination $managedVersion
+              }
               [IO.File]::WriteAllText(
                   (Join-Path $managedRoot 'active'),
                   $version,

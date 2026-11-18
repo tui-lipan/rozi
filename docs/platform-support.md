@@ -57,8 +57,8 @@ or not at all:
   read from the screen. The [claude-rozi-sessions](agents.md#claude-code-background-sessions)
   extension does not work, so Claude Code conversations are not listed one by one and do not
   reopen.
-- **Programs in a Windows pane cannot show images**, because the Windows pseudoconsole does not
-  pass Kitty graphics on to rozi.
+- **Kitty images in panes** work in Windows release builds. Builds installed with `cargo install`
+  use the Windows ConPTY, which drops Kitty graphics.
 - **Sharing a session with other accounts** (`rozi sessions share`) is not available.
 - **SSH connections are not shared.** A Windows client authenticates for each command it runs on a
   remote host, so load a key into an SSH agent to avoid repeated password prompts. Installing rozi

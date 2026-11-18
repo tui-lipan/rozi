@@ -119,6 +119,14 @@ pub(crate) fn sync_worktrees_tab(ctx: &mut Context<AppRoot>) -> bool {
             },
         };
         ctx.state.sidebar.worktrees = listing;
+        // A confirmation belongs to the listing it was armed in. Another repository, or the same
+        // path on another host, can have a checkout at that path that must not inherit it.
+        if matches!(
+            ctx.state.sidebar.pending_row_close,
+            Some(crate::state::SidebarClose::Worktree { .. })
+        ) {
+            ctx.state.sidebar.pending_row_close = None;
+        }
         changed = true;
     }
     let listing = &ctx.state.sidebar.worktrees;
@@ -653,6 +661,48 @@ mod tests {
             backend.dispatch(LOCKED_ROW_CLOSE).unwrap();
             assert!(backend.state().worktree_operations.is_empty());
             assert!(sent_worktree_requests(&outbound).is_empty());
+        });
+    }
+
+    /// An armed ✕ does not carry over to a checkout at the same path in the next repository listed.
+    #[test]
+    fn an_armed_removal_does_not_follow_its_path_to_another_listing() {
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, outbound) = backend();
+            nudge(&mut backend);
+            let (id, _) = sent_worktree_requests(&outbound).remove(0);
+            list(&mut backend, id);
+            // Rows: header, primary, linked checkout, "New worktree".
+            let close = Msg::SidebarRowClose { panel: 0, index: 2 };
+            backend.dispatch(close.clone()).unwrap();
+            assert!(backend.state().sidebar.pending_row_close.is_some());
+
+            const OTHER: &str = "/src/other";
+            report_location(&mut backend, OTHER);
+            nudge(&mut backend);
+            let requests = sent_worktree_requests(&outbound);
+            let [(id, WorktreeRequest::List { cwd })] = requests.as_slice() else {
+                panic!("one list request, got {requests:?}");
+            };
+            assert_eq!(cwd, OTHER);
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .dispatch(Msg::SessionWorktreeResult {
+                    epoch,
+                    request_id: *id,
+                    result: WorktreeResult::Listed {
+                        worktrees: vec![tree(OTHER, false), tree(LINKED, true)],
+                        sessions: Default::default(),
+                    },
+                })
+                .unwrap();
+            assert_eq!(backend.state().sidebar.pending_row_close, None);
+
+            backend.dispatch(close).unwrap();
+            assert!(
+                sent_worktree_requests(&outbound).is_empty(),
+                "the first press in the new listing only arms"
+            );
         });
     }
 

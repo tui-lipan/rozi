@@ -2476,7 +2476,7 @@ fn with_escaped_agents(
     }
     let escaped = inspector.marked_processes_in(
         scan.get(),
-        set.root_pid,
+        &set,
         marker,
         &|image| crate::agent_detection::may_be_agent_image(agents, image),
         &|process| crate::agent_detection::is_agent_process(agents, process),
@@ -6521,12 +6521,12 @@ mod tests {
             fn marked_processes_in(
                 &self,
                 _scan: &ProcessScan,
-                root: u32,
+                tree: &AgentProcessSet,
                 marker: &str,
                 may_be_agent: &dyn Fn(&str) -> bool,
                 _is_agent: &dyn Fn(&ForegroundProcess) -> bool,
             ) -> Option<Vec<ObservedProcess>> {
-                assert_eq!((root, marker), (1, "m"));
+                assert_eq!((tree.root_pid, marker), (1, "m"));
                 assert!(may_be_agent("node.exe") && !may_be_agent("rg.exe"));
                 self.1.set(self.1.get() + 1);
                 self.0.clone()

@@ -341,9 +341,9 @@ pub trait ProcessInspector {
         foreground_job.map(AgentProcessSet::from_foreground_job)
     }
 
-    /// Agents started from the pane `root` that left its process tree, found by the pane's
-    /// `marker` in their environment, each with its own descendants after it. Each escaped
-    /// process has no `parent_pid`.
+    /// Agents a pane started that left its process tree `tree`, found by the pane's `marker` in
+    /// their environment, each with its own descendants after it. Each escaped process has no
+    /// `parent_pid`.
     ///
     /// `None` when the lookup could not look at everything it would have to, such as more
     /// candidates than it reads, so that finding nothing is not mistaken for there being nothing.
@@ -352,15 +352,18 @@ pub trait ProcessInspector {
     /// `may_be_agent` is a cheap check on an executable name that picks which processes are read
     /// at all, and `is_agent` the full check on one that was; a process's environment is read only
     /// once both pass. The agent catalog supplies both, so no agent is named here.
+    ///
+    /// `tree` is the pane's own tree as [`agent_processes_in`](Self::agent_processes_in) read it,
+    /// with the PID-reuse checks that took; a process outside it counts as escaped.
     fn marked_processes_in(
         &self,
         scan: &ProcessScan,
-        root: u32,
+        tree: &AgentProcessSet,
         marker: &str,
         may_be_agent: &dyn Fn(&str) -> bool,
         is_agent: &dyn Fn(&ForegroundProcess) -> bool,
     ) -> Option<Vec<ObservedProcess>> {
-        let _ = (scan, root, marker, may_be_agent, is_agent);
+        let _ = (scan, tree, marker, may_be_agent, is_agent);
         Some(Vec::new())
     }
 }

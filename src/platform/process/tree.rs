@@ -118,7 +118,14 @@ impl ProcessTable {
 
     /// Those of `pids` that no other of them has among its descendants, by PID: the roots of the
     /// trees they belong to. In a parent cycle the lowest PID stands for the rest.
-    pub fn outermost(&self, pids: &[u32]) -> Vec<u32> {
+    ///
+    /// `started` gives a process's start time, as for [`Self::descendants`], so a parent link
+    /// through a reused PID does not put one of `pids` under another.
+    pub fn outermost(
+        &self,
+        pids: &[u32],
+        mut started: impl FnMut(&TableEntry) -> Option<u64>,
+    ) -> Vec<u32> {
         let mut sorted = pids.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
@@ -128,7 +135,7 @@ impl ProcessTable {
                 continue;
             }
             let covered: HashSet<u32> = self
-                .descendants(pid, |_| ((), None))
+                .descendants(pid, |entry| ((), started(entry)))
                 .map(|walk| walk.members.iter().map(|member| member.pid).collect())
                 .unwrap_or_else(|| HashSet::from([pid]));
             taken.retain(|(earlier, _)| !covered.contains(earlier));
@@ -314,9 +321,24 @@ mod tests {
             (40, 41),
             (41, 40),
         ]);
-        assert_eq!(table.outermost(&[20, 30, 10]), [10, 30]);
-        assert_eq!(table.outermost(&[5, 30]), [30]);
-        assert_eq!(table.outermost(&[41, 40]), [40]);
+        let outermost = |pids: &[u32]| table.outermost(pids, |_| None);
+        assert_eq!(outermost(&[20, 30, 10]), [10, 30]);
+        assert_eq!(outermost(&[5, 30]), [30]);
+        assert_eq!(outermost(&[41, 40]), [40]);
+    }
+
+    /// The Git Bash case the fallback exists for: an agent whose shim parent exited, and whose
+    /// parent PID a later process now holds. Under that process is not where it is.
+    #[test]
+    fn a_link_through_a_reused_pid_keeps_both_outermost() {
+        // 600 names 500 as its parent, but started before 500 did.
+        let table = table(&[(500, 1), (600, 500)]);
+        let started = HashMap::from([(500, 300), (600, 200)]);
+        assert_eq!(
+            table.outermost(&[500, 600], |entry| started.get(&entry.pid).copied()),
+            [500, 600]
+        );
+        assert_eq!(table.outermost(&[500, 600], |_| None), [500]);
     }
 
     #[test]

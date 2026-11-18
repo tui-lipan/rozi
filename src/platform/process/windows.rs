@@ -117,15 +117,18 @@ impl ProcessSnapshot {
     /// See [`ProcessInspector::marked_processes_in`].
     fn marked_processes(
         &self,
-        root: u32,
+        tree: &AgentProcessSet,
         marker: &str,
         may_be_agent: &dyn Fn(&str) -> bool,
         is_agent: &dyn Fn(&ForegroundProcess) -> bool,
     ) -> Option<Vec<ObservedProcess>> {
-        let Some(tree) = self.table.descendants(root, |_| ((), None)) else {
-            return Some(Vec::new());
-        };
-        let in_tree: HashSet<u32> = tree.members.iter().map(|member| member.pid).collect();
+        // The pane's tree as already walked, creation times checked: a process whose parent PID
+        // went to a later process is not in it, so it can still be found here as escaped.
+        let in_tree: HashSet<u32> = tree
+            .processes
+            .iter()
+            .map(|observed| observed.process.pid)
+            .collect();
         let has_msys_shell = self
             .table
             .entries()
@@ -149,8 +152,16 @@ impl ProcessSnapshot {
             })
             .map(|entry| entry.pid)
             .collect();
+        let mut started = HashMap::new();
+        let outermost = self.table.outermost(&marked, |entry| {
+            *started.entry(entry.pid).or_insert_with(|| {
+                LimitedHandle::open(entry.pid)
+                    .ok()
+                    .and_then(|handle| handle.creation_time())
+            })
+        });
         let members = self.table.trees_of(
-            &self.table.outermost(&marked),
+            &outermost,
             |entry| {
                 let process = observe(entry);
                 let started = process.started;
@@ -220,13 +231,13 @@ impl ProcessInspector for WindowsProcessInspector {
     fn marked_processes_in(
         &self,
         scan: &ProcessScan,
-        root: u32,
+        tree: &AgentProcessSet,
         marker: &str,
         may_be_agent: &dyn Fn(&str) -> bool,
         is_agent: &dyn Fn(&ForegroundProcess) -> bool,
     ) -> Option<Vec<ObservedProcess>> {
         scan.snapshot
-            .marked_processes(root, marker, may_be_agent, is_agent)
+            .marked_processes(tree, marker, may_be_agent, is_agent)
     }
 }
 

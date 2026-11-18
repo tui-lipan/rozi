@@ -153,8 +153,18 @@ impl SessionServer {
         reference: &protocol::AgentRef,
         result: bool,
     ) -> bool {
+        (result && self.agent_requests.answering(reference).is_some())
+            || self.has_prompt_in_progress(reference, result)
+    }
+
+    /// Whether a history read or a prompt waiting on its turn is under way for `reference`. With
+    /// `result`, any waiting prompt counts; without it, only one that will read the response.
+    pub(super) fn has_prompt_in_progress(
+        &self,
+        reference: &protocol::AgentRef,
+        result: bool,
+    ) -> bool {
         self.agent_history.contains_key(&reference.pane.pane_id)
-            || (result && self.agent_requests.answering(reference).is_some())
             || self.agent_waits.values().any(|wait| {
                 wait.turn
                     .as_ref()

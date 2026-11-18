@@ -37,8 +37,9 @@
 //! - [`shell_integration`] - shipped per-shell integration scripts and their injection points
 //!   (Phase 8): bash, zsh, fish, PowerShell, and cmd.
 //! - [`process`] - the `ProcessInspector` trait plus per-OS `cwd`/`foreground_program` fallbacks
-//!   (Phase 9), wired into `session::server`'s pane-runtime-state computation (Phase 6). Windows is
-//!   an explicit "unavailable" implementation per the plan (no PEB or process-tree probing).
+//!   (Phase 9), wired into `session::server`'s pane-runtime-state computation (Phase 6). Windows
+//!   reads the pane's descendant process tree for agent identity only; it has no cwd or
+//!   foreground job.
 //! - [`ansi`] - whether plain stdout (help, not the TUI) can render SGR styling, including the
 //!   Windows virtual-terminal switch a legacy console needs before it can.
 //! - [`notifications`] - desktop notifications (Phase 10).

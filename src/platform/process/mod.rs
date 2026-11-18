@@ -9,8 +9,11 @@
 //! - [`linux`] - **implemented**: `/proc/<pid>/cwd` plus bounded foreground process-group records.
 //! - [`macos`] - **implemented, unverified** (no macOS runtime in this environment; cross-compile
 //!   checked only): `proc_pidvnodepathinfo` for cwd and `libproc` foreground-group enumeration.
-//! - [`windows`] - **implemented as explicit unavailable**, per the plan (no PEB/process-tree
-//!   probing on Windows).
+//! - [`windows`] - **implemented for agent identity**: the pane's descendant tree from one
+//!   ToolHelp snapshot, with each member's executable, creation time, and command line read
+//!   through a limited-information handle. No cwd, foreground program, or foreground job.
+//!
+//! [`tree`] is the bounded descendant walk the Windows backend runs over its snapshot.
 //!
 //! [`process_gone`] is separate from pane inspection: it asks whether one recorded process ID has
 //! exited, as a lock or pidfile left behind by another program names it.
@@ -175,8 +178,8 @@ impl LazyProcessScan {
 /// Whether the process `pid` has certainly exited on this host.
 ///
 /// `started` is the start time recorded alongside the PID, in this platform's units: on Linux the
-/// clock ticks since boot of `/proc/<pid>/stat`, which tells a reused PID from the original. Other
-/// platforms only check that the PID exists. Any doubt, such as a process this user may not
+/// clock ticks since boot of `/proc/<pid>/stat`, and on Windows the creation time as a FILETIME,
+/// which tells a reused PID from the original. macOS only checks that the PID exists. Any doubt, such as a process this user may not
 /// signal, answers `false`.
 pub fn process_gone(pid: u32, started: Option<u64>) -> bool {
     #[cfg(unix)]
@@ -200,10 +203,7 @@ pub fn process_gone(pid: u32, started: Option<u64>) -> bool {
         false
     }
     #[cfg(windows)]
-    {
-        let _ = started;
-        windows::process_gone(pid)
-    }
+    return windows::process_gone(pid, started);
     #[cfg(not(any(unix, windows)))]
     {
         let _ = (pid, started);
@@ -215,6 +215,9 @@ pub fn process_gone(pid: u32, started: Option<u64>) -> bool {
 pub mod linux;
 #[cfg(target_os = "macos")]
 pub mod macos;
+// Compiled everywhere so its tests run on every target; only Windows walks a tree today.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub mod tree;
 #[cfg(windows)]
 pub mod windows;
 

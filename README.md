@@ -20,6 +20,11 @@
   <img src="assets/demo.gif" alt="A recording of rozi: new panes tile beside an editor, the layout changes from Master to Grid to Scrollable and Dwindle, a pane floats and is dragged, and the view moves between workspaces" width="960">
 </p>
 
+<p align="center">
+  <a href="https://youtu.be/c2DmQFkcXCg">Watch the two-minute video</a>: layouts, coding agents, sessions,
+  graphics, and scripting.
+</p>
+
 rozi is a terminal multiplexer built for how terminals get used now: several coding agents at
 once, work spread across machines, terminals that show images, and Windows next to Linux and
 macOS. Panes tile themselves the way a tiling window manager places windows, sessions keep running

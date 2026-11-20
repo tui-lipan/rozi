@@ -266,7 +266,6 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::CloseThemePicker => overlays::close_theme_picker(ctx),
         Msg::PreviewTheme(index) => overlays::preview_theme(ctx, index),
         Msg::SelectTheme(index) => overlays::select_theme(ctx, index),
-        Msg::HostTerminalColorsChanged => crate::ops::theme::host_terminal_colors_changed(ctx),
         Msg::ThemeTick => overlays::theme_tick(ctx),
         Msg::ConfigFileChanged => overlays::config_file_changed(ctx),
         Msg::ExtensionStoreChanged => crate::ops::config::extension_store_changed(ctx),
@@ -1387,7 +1386,9 @@ fn post_update_sync(
     sync_modifier_key_reporting(ctx);
     // Repairs: the host terminal's window title, after the focused pane or session changes.
     host_title::sync(ctx);
-    // Repairs: whether a translucent host terminal shows through the canvas, after a theme change.
+    // Repairs: the framework's app-wide theme and translucent backdrop passthrough, after a theme
+    // or cursor-blink change.
+    crate::ops::theme::sync_app_theme(ctx);
     crate::ops::theme::sync_host_default_background(ctx);
     // Repairs: drag-and-drop registration with the host, and drags over panes that have gone.
     crate::ops::drag_and_drop::sync(ctx);

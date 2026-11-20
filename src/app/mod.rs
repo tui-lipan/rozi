@@ -62,7 +62,6 @@ pub struct AppRoot {
     /// turn it off: their scripted keys would land on the card instead of the panes.
     welcome: bool,
     event_hub: events::EventHub,
-    render_host_terminal_color_generation: Cell<u64>,
     /// Whether the DevTools App tab republish timer runs. Armed from `view()` once DevTools shows,
     /// and stopped by the first tick that finds it hidden.
     pub(crate) devtools_metrics_ticking: Cell<bool>,
@@ -101,7 +100,6 @@ impl Default for AppRoot {
             release_notes: None,
             welcome: false,
             event_hub: events::EventHub::default(),
-            render_host_terminal_color_generation: Cell::new(0),
             devtools_metrics_ticking: Cell::new(false),
             handover: state::HandoverSlot::default(),
             finds_binaries: false,
@@ -151,7 +149,6 @@ impl AppRoot {
             release_notes,
             welcome,
             event_hub: events::EventHub::default(),
-            render_host_terminal_color_generation: Cell::new(0),
             devtools_metrics_ticking: Cell::new(false),
             handover: state::HandoverSlot::default(),
             finds_binaries: true,
@@ -398,6 +395,7 @@ impl Component for AppRoot {
         // Set here, not through `App::title`, so the first frame already carries the configured
         // title rather than a placeholder the first update replaces.
         crate::update::host_title::sync(ctx);
+        ops::theme::sync_app_theme(ctx);
         ops::theme::sync_host_default_background(ctx);
         // Register for drops before the first drag can arrive, rather than on the first update.
         ops::drag_and_drop::sync(ctx);
@@ -429,6 +427,8 @@ impl Component for AppRoot {
         commands::sync_if_needed(ctx);
         crate::update::sync_modifier_key_reporting(ctx);
         crate::update::host_title::sync(ctx);
+        ops::theme::sync_app_theme(ctx);
+        ops::theme::sync_host_default_background(ctx);
         // Key routing can mutate the layout without going through `handle_msg` (prefix-mode window
         // management), so schedule the same commit chokepoint here to publish those changes.
         crate::ops::session::schedule_layout_commit(ctx);
@@ -473,18 +473,19 @@ impl Component for AppRoot {
         )
     }
 
+    fn on_host_theme_changed(&mut self, ctx: &mut Context<Self>) -> Update {
+        let update = ops::theme::host_terminal_colors_changed(ctx);
+        ops::theme::sync_app_theme(ctx);
+        ops::theme::sync_host_default_background(ctx);
+        update
+    }
+
     fn on_focus_changed(&self, change: &FocusChanged) -> Option<Self::Message> {
         framework_focus_message(change)
     }
 
     fn view(&self, ctx: &Context<Self>) -> Element {
         ctx.set_pointer_mode(ctx.state.config.cursor.pointer.runtime());
-        let host_color_generation = ctx.host_terminal_color_generation();
-        if host_color_generation > self.render_host_terminal_color_generation.get() {
-            self.render_host_terminal_color_generation
-                .set(host_color_generation);
-            ctx.link().send(Msg::HostTerminalColorsChanged);
-        }
         if ctx.devtools_visible() {
             ctx.set_devtools_metrics(|| ctx.state.current().runtime_metrics().devtools_rows());
             if !self.devtools_metrics_ticking.replace(true) {

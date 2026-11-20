@@ -7,23 +7,54 @@ use crate::ops::focus::request_theme_picker_focus;
 use crate::state::{AlertPaint, Mode, State, ThemePickerPreview, ensure_rozi_color};
 use crate::{AppRoot, Msg, schedule_theme_tick};
 
-/// Apply the client cursor preference without changing the stored theme.
-pub(crate) fn cursor_theme(
-    mut theme: Theme,
+/// Resolve the client cursor preference onto a caret palette without mutating the stored theme.
+fn resolved_caret_palette(
+    mut caret: CaretPalette,
     blink: crate::config::CursorBlink,
     host: Option<tui_lipan::style::TerminalCursorStyle>,
-) -> Theme {
+) -> CaretPalette {
     if let Some(blinking) = blink
         .override_blinking()
         .or(host.map(|style| style.blinking))
     {
         // TerminalDefault couples shape and blink. Resolve its shape before overriding blink.
-        if theme.caret.shape == CaretShape::TerminalDefault {
-            theme.caret.shape = host.map_or(CaretShape::Block, |style| style.shape);
+        if caret.shape == CaretShape::TerminalDefault {
+            caret.shape = host.map_or(CaretShape::Block, |style| style.shape);
         }
-        theme.caret.blinking = blinking;
+        caret.blinking = blinking;
     }
+    caret
+}
+
+/// Apply the client cursor preference without changing the stored theme.
+#[cfg(test)]
+pub(crate) fn cursor_theme(
+    mut theme: Theme,
+    blink: crate::config::CursorBlink,
+    host: Option<tui_lipan::style::TerminalCursorStyle>,
+) -> Theme {
+    theme.caret = resolved_caret_palette(theme.caret, blink, host);
     theme
+}
+
+/// Keep the framework's app-wide theme aligned with `state.theme` and the active cursor-blink
+/// policy so toasts, portals, DevTools, and every subtree share one live theme without a root
+/// `ThemeProvider`.
+pub(crate) fn sync_app_theme(ctx: &mut Context<AppRoot>) {
+    let desired_caret = resolved_caret_palette(
+        ctx.state.theme.caret,
+        ctx.state.config.cursor.blink,
+        ctx.host_cursor_style(),
+    );
+    let original_caret = std::mem::replace(&mut ctx.state.theme.caret, desired_caret);
+    let already_synced = *ctx.theme_ref() == ctx.state.theme;
+    if already_synced {
+        ctx.state.theme.caret = original_caret;
+        return;
+    }
+    let effective = ctx.state.theme.clone();
+    ctx.state.theme.caret = original_caret;
+    ctx.set_theme(effective);
 }
 
 pub(crate) fn system_theme_from_host_colors(colors: HostTerminalColors) -> Theme {
@@ -111,12 +142,6 @@ pub(crate) fn reapply_active_theme(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(crate) fn host_terminal_colors_changed(ctx: &mut Context<AppRoot>) -> Update {
-    let generation = ctx.host_terminal_color_generation();
-    if generation <= ctx.state.host_terminal_color_generation {
-        return Update::none();
-    }
-    ctx.state.host_terminal_color_generation = generation;
-
     let Some(colors) = ctx.host_terminal_colors() else {
         return Update::none();
     };
@@ -724,7 +749,7 @@ mod tests {
         }
     }
 
-    fn pane_palette_background(state: &State, id: PaneId) -> Option<Color> {
+    pub(super) fn pane_palette_background(state: &State, id: PaneId) -> Option<Color> {
         state.current().workspaces[0]
             .panes
             .iter()
@@ -1107,5 +1132,58 @@ mod cursor_tests {
         );
         assert!(forced.caret.blinking);
         assert_eq!(forced.caret.shape, CaretShape::Bar);
+    }
+
+    #[test]
+    fn host_theme_change_updates_app_theme_and_pane_palette_directly() {
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let _config_lock = crate::test_support::lock_config_file();
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            let system_index = crate::config::theme_choices()
+                .iter()
+                .position(|choice| choice.id() == "system")
+                .expect("system choice");
+            backend
+                .dispatch(Msg::SelectTheme(system_index))
+                .expect("select system theme");
+
+            let colors = HostTerminalColors {
+                fg: Color::rgb(235, 240, 245),
+                bg: Color::rgb(18, 22, 30),
+                ansi: [
+                    Color::rgb(20, 24, 32),
+                    Color::rgb(220, 60, 70),
+                    Color::rgb(80, 200, 120),
+                    Color::rgb(230, 190, 90),
+                    Color::rgb(90, 150, 230),
+                    Color::rgb(190, 110, 220),
+                    Color::rgb(90, 210, 210),
+                    Color::rgb(210, 215, 225),
+                    Color::rgb(110, 115, 130),
+                    Color::rgb(245, 95, 105),
+                    Color::rgb(115, 230, 155),
+                    Color::rgb(250, 215, 125),
+                    Color::rgb(125, 180, 250),
+                    Color::rgb(215, 145, 245),
+                    Color::rgb(125, 235, 235),
+                    Color::rgb(250, 252, 255),
+                ],
+                ansi_reported: HostTerminalColors::ALL_ANSI_REPORTED,
+                cursor: None,
+            };
+            assert!(
+                backend
+                    .set_host_terminal_colors(colors)
+                    .expect("deliver host terminal colors")
+            );
+            assert_eq!(backend.state().theme.surface.backdrop, colors.bg);
+            assert_eq!(backend.theme().surface.backdrop, colors.bg);
+            let pane_id = backend.state().current().workspaces[0].panes[0].id;
+            assert_eq!(
+                tests::pane_palette_background(backend.state(), pane_id),
+                Some(colors.bg)
+            );
+        });
     }
 }

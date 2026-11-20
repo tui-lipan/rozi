@@ -3,8 +3,8 @@
 # approvals, footer versus transcript interrupt hints - are asserted inline in
 # `src/agent_detection/mod.rs`, where they can also be run against another agent's rules.
 source = "capture"
-captured_at = "2026-08-20..2026-10-12"
-notes = "Claude Code v2.1.237 first-launch cases; current-version queued-input screenshot added 2026-09-01; v2.1.294 unnumbered trust dialog added 2026-10-12"
+captured_at = "2026-08-20..2026-11-20"
+notes = "Claude Code v2.1.237 first-launch cases; queued-input screen added 2026-09-01; v2.1.294 unnumbered trust dialog added 2026-10-12; v2.1.329 usage-limit pause added 2026-11-20"
 
 # Caught, where Codex's and Copilot's equivalents were not: the option cursor starts its line, which
 # is the shape Claude's own rule looks for. Kept because a first-run dialog is the single screen a

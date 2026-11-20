@@ -154,6 +154,8 @@ struct DeliverySlot {
     delivered: Instant,
     /// Whether the agent has been seen leaving its stopped state since delivery.
     departed: bool,
+    /// A blocker held the turn open. Wait for work to resume or for a fresh quiet window.
+    waiting_after_screen_block: bool,
     /// Whether the request has been seen on the agent's screen, so it is known to have arrived.
     shown: bool,
     /// How many times the request has been typed.
@@ -1120,18 +1122,10 @@ impl SessionServer {
             let response = response.clone();
             return self.finish_request_turn(target, TurnOutcome::Answered(response));
         }
-        // Reports can say the run stopped while the live screen is still waiting, for example
-        // while Claude is paused at its usage limit. Keep the request open until the pause clears.
         let stopped = runtime.state.is_stopped();
-        if stopped
-            && self.validate_agent_input_reference(target).is_ok()
-            && self
-                .refuse_blocked_agent_screen(target.pane.pane_id)
-                .is_err()
-        {
+        if !self.request_turn_ready(target, runtime.state) {
             return;
         }
-        self.agent_requests.observe(target, stopped);
         let undetected_turn = self.agent_requests.undetected_turn;
         let slot = self
             .agent_requests
@@ -1168,6 +1162,37 @@ impl SessionServer {
         if turn_ended || undetected {
             self.answer_request_from_screen(target);
         }
+    }
+
+    /// A screen can clear before the agent reports work again. Wait out that gap before
+    /// treating the old stopped report as a turn ending or a delivery timing out.
+    fn request_turn_ready(
+        &mut self,
+        target: &protocol::AgentRef,
+        state: protocol::AgentState,
+    ) -> bool {
+        let was_blocked = self.agent_requests.slots[target].waiting_after_screen_block;
+        let working = state == protocol::AgentState::Working;
+        let screen_blocked = (!working || was_blocked)
+            && self.validate_agent_input_reference(target).is_ok()
+            && self
+                .refuse_blocked_agent_screen(target.pane.pane_id)
+                .is_err();
+        let stopped_since = self
+            .agent_requests
+            .observe(target, state.is_stopped() && !screen_blocked);
+        let waiting_after_screen_block = screen_blocked
+            || (was_blocked
+                && !working
+                && stopped_since.is_none_or(|since| {
+                    !self.agent_requests.quiet_since(target.pane.pane_id, since)
+                }));
+        self.agent_requests
+            .slots
+            .get_mut(target)
+            .expect("listed slot")
+            .waiting_after_screen_block = waiting_after_screen_block;
+        !waiting_after_screen_block
     }
 
     /// Whether request `id` still needs proof its agent took it: it is unanswered, and its agent
@@ -1403,21 +1428,26 @@ impl SessionServer {
         if recorded_session.is_some() && native_session != recorded_session {
             return Readiness::Fail("the agent moved to another conversation".into());
         }
-        let Some(stopped_since) = self.agent_requests.observe(&to, runtime.state.is_stopped())
-        else {
+        if !runtime.state.is_stopped() {
+            self.agent_requests.observe(&to, false);
             return Readiness::Wait(format!("the agent is {}", runtime.state.as_str()));
-        };
+        }
         if let Some(reason) = self.delivery_blocker(&to) {
             return Readiness::Wait(reason);
         }
+        if let Err(response) = self.refuse_blocked_agent_screen(to.pane.pane_id) {
+            self.agent_requests.observe(&to, false);
+            return Readiness::Wait(error_text(response));
+        }
+        let stopped_since = self
+            .agent_requests
+            .observe(&to, true)
+            .expect("stopped agent has a timestamp");
         if !self
             .agent_requests
             .quiet_since(to.pane.pane_id, stopped_since)
         {
             return Readiness::Wait("waiting for the agent's pane to settle".into());
-        }
-        if let Err(response) = self.refuse_blocked_agent_screen(to.pane.pane_id) {
-            return Readiness::Wait(error_text(response));
         }
         if recorded_session.is_none() {
             let info = self.agent_requests.info_mut(id).expect("queued request");
@@ -1478,6 +1508,7 @@ impl SessionServer {
                 tracker: AgentTurnTracker::new(true, Some(state), false, Some(fence)),
                 delivered: Instant::now(),
                 departed: false,
+                waiting_after_screen_block: false,
                 shown: false,
                 attempts: 1,
                 before,

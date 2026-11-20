@@ -169,7 +169,7 @@ pub struct AgentStateRule {
     pub any_of: Vec<Pattern>,
     /// None of these may match.
     pub none_of: Vec<Pattern>,
-    /// A dialog no hook announces: it refuses a prompt even when a report says the agent is ready.
+    /// A live screen blocker that overrides reports for automated prompts and requests.
     pub outranks_reports: bool,
 }
 

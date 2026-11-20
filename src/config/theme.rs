@@ -104,11 +104,11 @@ fn load_custom_theme(path: &std::path::Path) -> std::result::Result<Theme, Strin
         .map_err(|err| err.to_string().trim_end().to_string())
 }
 
-/// Resolve a `[theme].name` to a concrete theme. `system_theme` supplies the host-derived
-/// theme for the reserved `system` name; an unknown name falls back to the default theme and a
+/// Resolve a `[theme].name` to a concrete theme. `host_colors` supplies the probed terminal
+/// palette for the reserved `system` name; an unknown name falls back to the default theme and a
 /// custom file that fails to load falls back to Lipan, the base its `extends` defaults to, both
 /// with a warning.
-pub fn resolve_theme(name: &str, system_theme: Option<&Theme>) -> ResolvedTheme {
+pub fn resolve_theme(name: &str, host_colors: Option<HostTerminalColors>) -> ResolvedTheme {
     let fallback = custom_theme_base();
     let mut warnings = Vec::new();
     let choice = match resolve_choice(name) {
@@ -120,13 +120,15 @@ pub fn resolve_theme(name: &str, system_theme: Option<&Theme>) -> ResolvedTheme 
     };
     match choice {
         ThemeChoice::System => {
-            let theme = ensure_rozi_color(system_theme.cloned().unwrap_or_else(|| {
-                warnings.push(
-                    "System theme unavailable because terminal colors could not be queried; using ANSI"
-                        .to_string(),
-                );
-                ThemePreset::ANSI.theme()
-            }));
+            let theme = ensure_rozi_color(
+                host_colors.map(Theme::from_host_colors).unwrap_or_else(|| {
+                    warnings.push(
+                        "System theme unavailable because terminal colors could not be queried; using ANSI"
+                            .to_string(),
+                    );
+                    ThemePreset::ANSI.theme()
+                }),
+            );
             ResolvedTheme {
                 theme,
                 watch_path: None,

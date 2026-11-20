@@ -21,8 +21,6 @@ use startup::{StartupCwd, StartupProfile, StartupSession, StartupTasks};
 
 pub struct AppRoot {
     config: Config,
-    initial_theme: Theme,
-    initial_system_theme: Option<Theme>,
     startup_profile: Option<StartupProfile>,
     /// The first pane's directory for a created session (`sessions new --cwd`, `worktrees open`).
     startup_cwd: Option<StartupCwd>,
@@ -78,8 +76,6 @@ impl Default for AppRoot {
     fn default() -> Self {
         let config = Config::default();
         Self {
-            initial_theme: ThemePreset::ROZI.theme(),
-            initial_system_theme: None,
             config,
             startup_profile: None,
             startup_cwd: None,
@@ -108,11 +104,8 @@ impl Default for AppRoot {
 }
 
 impl AppRoot {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         config: Config,
-        initial_theme: Theme,
-        initial_system_theme: Option<Theme>,
         startup_profile: Option<StartupProfile>,
         mut startup_messages: Vec<String>,
         control_listener: Option<crate::platform::ipc::IpcListener>,
@@ -134,8 +127,6 @@ impl AppRoot {
         });
         Self {
             config,
-            initial_theme,
-            initial_system_theme,
             startup_profile,
             startup_cwd: None,
             startup_messages,
@@ -172,8 +163,6 @@ impl AppRoot {
     ) -> Self {
         let mut app = Self::new(
             config,
-            ThemePreset::LIPAN.theme(),
-            None,
             None,
             Vec::new(),
             Some(listener),
@@ -195,8 +184,6 @@ impl AppRoot {
     pub(crate) fn configured_for_test_without_control(config: Config) -> Self {
         let mut app = Self::new(
             config,
-            ThemePreset::LIPAN.theme(),
-            None,
             None,
             Vec::new(),
             None,
@@ -214,23 +201,6 @@ impl AppRoot {
         app.welcome = false;
         app.watch_hangup = false;
         app
-    }
-
-    fn start_theme_watcher(ctx: &mut Context<Self>) {
-        let Some(path) =
-            config::resolve_choice(&ctx.state.config.theme.name).and_then(|choice| match choice {
-                config::ThemeChoice::Custom { path, .. } => Some(path),
-                _ => None,
-            })
-        else {
-            return;
-        };
-        match ThemeWatcher::new(path, config::custom_theme_base()) {
-            Ok(watcher) => ctx.state.theme_watcher = Some(watcher),
-            Err(err) => {
-                crate::pane::pty_events::notify_error(ctx, "Theme watch failed", err.to_string());
-            }
-        }
     }
 
     fn prepare_session_start(&mut self, ctx: &mut Context<Self>) -> SessionStart {
@@ -315,14 +285,11 @@ impl Component for AppRoot {
     type State = State;
 
     fn create_state(&self, _props: &Self::Properties) -> Self::State {
+        let default_theme = ThemePreset::ROZI.theme();
         let mut state = if let Some(startup) = self.startup_profile.clone() {
-            State::from_profile(
-                self.config.clone(),
-                self.initial_theme.clone(),
-                startup.profile,
-            )
+            State::from_profile(self.config.clone(), default_theme, startup.profile)
         } else {
-            State::new(self.config.clone(), self.initial_theme.clone())
+            State::new(self.config.clone(), default_theme)
         };
         if let Some(remembered) = self.sidebar_memory {
             state
@@ -341,7 +308,6 @@ impl Component for AppRoot {
                 }
             }
         }
-        state.system_theme = self.initial_system_theme.clone();
         state.relaunch.handover = self.handover.clone();
         state.relaunch.finds_binaries = self.finds_binaries;
         state.control_socket_path = self
@@ -364,11 +330,16 @@ impl Component for AppRoot {
         if self.startup_tasks && self.config.remote.reconnect_on_launch {
             state.remote.reconnect_hosts = crate::session::read_reconnect_hosts();
         }
-        ops::theme::apply_terminal_palette_to_state(&mut state);
         state
     }
 
     fn init(&mut self, ctx: &mut Context<Self>) -> Option<Command> {
+        let resolved =
+            config::resolve_theme(&ctx.state.config.theme.name, ctx.host_terminal_colors());
+        self.startup_messages.extend(resolved.warnings);
+        ops::theme::apply_resolved_theme(ctx, resolved.theme);
+        ops::theme::install_theme_watcher(ctx, resolved.watch_path.as_deref());
+
         ctx.set_scroll_wheel_multiplier(ctx.state.config.input.scroll_multiplier);
         sync_cursor_trail(ctx);
         ctx.state.terminal_presentation_subscription =
@@ -379,7 +350,6 @@ impl Component for AppRoot {
         if !messages.is_empty() {
             crate::pane::pty_events::notify_error(ctx, "Startup warning", messages.join("\n"));
         }
-        Self::start_theme_watcher(ctx);
         if !ctx.state.remote.reconnect_hosts.is_empty() {
             ops::session::seed_host_registry(ctx);
             let targets = ctx.state.remote.reconnect_hosts.clone();
@@ -396,7 +366,6 @@ impl Component for AppRoot {
         // title rather than a placeholder the first update replaces.
         crate::update::host_title::sync(ctx);
         ops::theme::sync_app_theme(ctx);
-        ops::theme::sync_host_default_background(ctx);
         // Register for drops before the first drag can arrive, rather than on the first update.
         ops::drag_and_drop::sync(ctx);
         let tasks = StartupTasks {
@@ -428,7 +397,6 @@ impl Component for AppRoot {
         crate::update::sync_modifier_key_reporting(ctx);
         crate::update::host_title::sync(ctx);
         ops::theme::sync_app_theme(ctx);
-        ops::theme::sync_host_default_background(ctx);
         // Key routing can mutate the layout without going through `handle_msg` (prefix-mode window
         // management), so schedule the same commit chokepoint here to publish those changes.
         crate::ops::session::schedule_layout_commit(ctx);
@@ -476,7 +444,6 @@ impl Component for AppRoot {
     fn on_host_theme_changed(&mut self, ctx: &mut Context<Self>) -> Update {
         let update = ops::theme::host_terminal_colors_changed(ctx);
         ops::theme::sync_app_theme(ctx);
-        ops::theme::sync_host_default_background(ctx);
         update
     }
 
@@ -1054,8 +1021,6 @@ mod tests {
             let root = |config| {
                 AppRoot::new(
                     config,
-                    Theme::default(),
-                    None,
                     None,
                     Vec::new(),
                     None,

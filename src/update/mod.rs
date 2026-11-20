@@ -1389,7 +1389,6 @@ fn post_update_sync(
     // Repairs: the framework's app-wide theme and translucent backdrop passthrough, after a theme
     // or cursor-blink change.
     crate::ops::theme::sync_app_theme(ctx);
-    crate::ops::theme::sync_host_default_background(ctx);
     // Repairs: drag-and-drop registration with the host, and drags over panes that have gone.
     crate::ops::drag_and_drop::sync(ctx);
 

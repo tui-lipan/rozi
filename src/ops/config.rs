@@ -193,29 +193,9 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     }
     let mut new_config = loaded.config;
 
-    let system_theme = ctx.state.system_theme.clone();
-    let resolved = crate::config::resolve_theme(&new_config.theme.name, system_theme.as_ref());
-
-    let had_theme_watcher = ctx.state.theme_watcher.is_some();
-    ctx.state.theme_watcher = None;
-    let mut start_theme_tick = false;
-    if let Some(path) = &resolved.watch_path {
-        match ThemeWatcher::new(path.clone(), crate::config::custom_theme_base()) {
-            Ok(watcher) => {
-                ctx.state.theme_watcher = Some(watcher);
-                start_theme_tick = !had_theme_watcher;
-            }
-            Err(err) => {
-                crate::pane::pty_events::notify_error(ctx, "Theme watch failed", err.to_string());
-            }
-        }
-    }
-    let host_bg = crate::ops::theme::host_background(&ctx.state);
-    ctx.state.theme = crate::ops::theme::apply_backdrop_policy(
-        resolved.theme,
-        host_bg,
-        new_config.pane.background_follows_terminal,
-    );
+    let resolved = crate::config::resolve_theme(&new_config.theme.name, ctx.host_terminal_colors());
+    let start_theme_tick =
+        crate::ops::theme::install_theme_watcher(ctx, resolved.watch_path.as_deref());
 
     // Same trick for the clock repaint loop: it reschedules itself only while a clock segment
     // is configured, so it needs a kick here exactly when it wasn't already running.
@@ -257,6 +237,7 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     ctx.state.extension_generations = extension_generations;
     crate::ops::command_visibility::forget_retired(&mut ctx.state);
     ctx.state.config = new_config;
+    crate::ops::theme::apply_resolved_theme(ctx, resolved.theme);
     let update_check_interval = (!had_update_check)
         .then(|| ctx.state.update_check_interval())
         .flatten();
@@ -287,7 +268,6 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     if ctx.state.sidebar_shown() && ctx.state.sidebar.focused {
         crate::update::sidebar::refocus_body(ctx);
     }
-    crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);
     crate::update::workbar::request_command_polls(ctx);
     crate::ops::services::reconcile_services(ctx);
     let start_services_tick =

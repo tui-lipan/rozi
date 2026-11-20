@@ -224,8 +224,8 @@ rozi --session agent-<TASK> capture-pane --target <RETURNED_ID> --wait-for 'Read
 rozi sessions kill agent-<TASK>
 ```
 
-- `sessions new --detach` starts the session with no panes and returns; the first `split` opens
-  one. Without `--detach` it opens a UI in the calling terminal, so never run it that way.
+- `sessions new --detach` starts a session and returns. Add `--cwd <DIR>` to start it with a shell,
+  or use `split` later. Without `--detach` it opens a UI in the calling terminal, so never run it that way.
 - Always add `--no-resurrect`, so a session you fail to kill leaves no `Restorable` entry in the
   user's session picker.
 - Pick a name that says what the session is for. If the name is already running the command fails:
@@ -466,7 +466,7 @@ the extension itself.
 rozi sessions list --format json
 rozi sessions attach <NAME> [--read-only | --follow | --take-control]
 rozi sessions new <NAME> [--profile <PROFILE> | --cwd <DIR>]
-rozi sessions new <NAME> --detach [--no-resurrect]
+rozi sessions new <NAME> --detach [--cwd <DIR>] [--no-resurrect]
 rozi sessions kill <NAME>
 ```
 

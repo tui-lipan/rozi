@@ -281,6 +281,7 @@ pub(crate) enum ParsedCli {
         fresh: bool,
         config_path: Option<String>,
         startup_nonce: Option<String>,
+        cwd: Option<String>,
         /// `false` keeps the server from writing snapshots (`--no-resurrect`).
         resurrect: bool,
     },
@@ -321,6 +322,7 @@ pub(crate) enum SessionsCommand {
     /// `sessions new <NAME> --detach [--no-resurrect] [--remote <HOST>]`.
     NewDetached {
         name: String,
+        cwd: Option<String>,
         /// `false` for `--no-resurrect`: the server never writes a snapshot.
         resurrect: bool,
         remote: Option<String>,
@@ -610,6 +612,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     fresh: false,
                     config_path: cli.config_path,
                     startup_nonce: None,
+                    cwd: None,
                     resurrect: true,
                 });
             }
@@ -632,6 +635,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     fresh: true,
                     config_path: cli.config_path,
                     startup_nonce: None,
+                    cwd: None,
                     resurrect: true,
                 });
             }
@@ -642,12 +646,20 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     return Err(format!("{flag} requires a 32-digit hexadecimal nonce"));
                 }
                 let no_resurrect = iter.next_if(|arg| arg == "--no-resurrect").is_some();
+                let cwd = if flag == "--fresh-server-start"
+                    && iter.next_if(|arg| arg == "--cwd").is_some()
+                {
+                    Some(require_value(&mut iter, "--cwd requires a directory")?)
+                } else {
+                    None
+                };
                 reject_trailing_control_args(&mut iter, flag)?;
                 return Ok(ParsedCli::Server {
                     name,
                     fresh: flag == "--fresh-server-start",
                     config_path: cli.config_path,
                     startup_nonce: Some(nonce),
+                    cwd,
                     resurrect: !no_resurrect,
                 });
             }
@@ -4541,6 +4553,7 @@ mod tests {
             config_path,
             startup_nonce,
             resurrect,
+            cwd: None,
         } = parsed
         else {
             panic!("expected server");

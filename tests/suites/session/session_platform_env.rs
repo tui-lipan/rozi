@@ -122,3 +122,63 @@ fn detached_start_reports_the_socket_limit_and_the_servers_startup_error() {
             .exists()
     );
 }
+
+#[test]
+fn isolated_rozi_builds_can_start_the_same_name_with_different_first_panes() {
+    let temp = tempfile::tempdir_in(rozi::test_support::socket_safe_temp_dir()).unwrap();
+    let root = temp.path();
+    let left = root.join("left");
+    let right = root.join("right");
+    let project = root.join("project");
+    std::fs::create_dir(&project).unwrap();
+    let run = |isolated: &std::path::Path, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_rozi"))
+            .arg("--runtime-dir")
+            .arg(isolated)
+            .args(args)
+            .current_dir(root)
+            .env("ROZI_CONFIG", root.join("outside.toml"))
+            .env("ROZI_SOCKET", root.join("outside.sock"))
+            .output()
+            .unwrap()
+    };
+    let left_start = run(
+        &left,
+        &[
+            "sessions",
+            "new",
+            "dev",
+            "--detach",
+            "--no-resurrect",
+            "--cwd",
+            "project",
+        ],
+    );
+    let right_start = run(
+        &right,
+        &["sessions", "new", "dev", "--detach", "--no-resurrect"],
+    );
+    let left_panes = run(
+        &left,
+        &["--session", "dev", "list-panes", "--format", "json"],
+    );
+    let right_panes = run(
+        &right,
+        &["--session", "dev", "list-panes", "--format", "json"],
+    );
+    for isolated in [&left, &right] {
+        let _ = run(isolated, &["sessions", "kill", "dev"]);
+    }
+    for output in [&left_start, &right_start, &left_panes, &right_panes] {
+        assert!(output.status.success(), "{output:?}");
+    }
+    let parse = |output: &std::process::Output| {
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let left_panes = parse(&left_panes);
+    let left_panes = left_panes["data"].as_array().unwrap();
+    assert_eq!(left_panes.len(), 1);
+    let cwd = std::path::Path::new(left_panes[0]["cwd"].as_str().unwrap());
+    assert_eq!(cwd.canonicalize().unwrap(), project.canonicalize().unwrap());
+    assert_eq!(parse(&right_panes)["data"], serde_json::json!([]));
+}

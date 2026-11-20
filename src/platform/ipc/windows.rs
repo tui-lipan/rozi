@@ -129,6 +129,20 @@ impl IpcEndpoint {
             .file_stem()
             .and_then(|stem| stem.to_str())
             .unwrap_or("unnamed");
+        if let Some(root) = crate::platform::paths::PlatformEnv::from_process().rozi_runtime_dir
+            && self.path.starts_with(root.join("run"))
+        {
+            use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+            use sha2::{Digest, Sha256};
+            let digest = Sha256::digest(root.as_os_str().as_encoded_bytes());
+            let namespace = URL_SAFE_NO_PAD.encode(&digest[..16]);
+            return format!(
+                r"\\.\pipe\rozi.{}.{}.{}",
+                crate::platform::user::current_user_tag(),
+                namespace,
+                stem,
+            );
+        }
         format!(
             r"\\.\pipe\rozi.{}.{}",
             crate::platform::user::current_user_tag(),

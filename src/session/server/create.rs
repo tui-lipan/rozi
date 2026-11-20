@@ -16,13 +16,22 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(500);
 /// means a server proved it holds that nonce in a completed attach handshake, so a server another
 /// process started under the same name is never claimed, on any platform. Every failure after the
 /// spawn stops the spawned server, so a reported failure never leaves a session behind.
-pub(crate) fn create_detached_session(name: &str, resurrect: bool) -> io::Result<()> {
-    start_detached_session(name, resurrect, true)
+pub(crate) fn create_detached_session(
+    name: &str,
+    resurrect: bool,
+    cwd: Option<&std::path::Path>,
+) -> io::Result<()> {
+    start_detached_session(name, resurrect, true, cwd)
 }
 
 /// Start a detached server for `name`. `fresh` discards any snapshot left under the name;
 /// otherwise the server restores it, as a session reopened from the picker does.
-fn start_detached_session(name: &str, resurrect: bool, fresh: bool) -> io::Result<()> {
+fn start_detached_session(
+    name: &str,
+    resurrect: bool,
+    fresh: bool,
+    cwd: Option<&std::path::Path>,
+) -> io::Result<()> {
     if !crate::session::discovery::valid_session_name(name) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -51,6 +60,7 @@ fn start_detached_session(name: &str, resurrect: bool, fresh: bool) -> io::Resul
             startup_nonce: Some(&nonce),
             no_resurrect: !resurrect,
             startup_report: Some(&startup_report),
+            cwd,
         },
     )
     .map_err(|err| {
@@ -131,7 +141,7 @@ pub(crate) fn restart_named_session(name: &str, resurrect: bool) -> io::Result<(
         ));
     };
     let restore = resurrect && stopped == super::StoppedForRestart::Incompatible;
-    start_detached_session(name, resurrect, !restore)
+    start_detached_session(name, resurrect, !restore, None)
 }
 
 /// Stop a running named session so it saves its snapshot, then start it on this binary and restore
@@ -156,7 +166,7 @@ pub(crate) fn upgrade_named_session(name: &str) -> io::Result<()> {
             ),
         ));
     }
-    start_detached_session(name, true, false)
+    start_detached_session(name, true, false, None)
 }
 
 fn already_running(name: &str) -> io::Error {

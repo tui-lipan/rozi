@@ -460,6 +460,7 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
             row("", "With --session, runs a control command on"),
             row("", "that host instead"),
             row("    --config <PATH>", "Load an alternate config.toml"),
+            row("    --runtime-dir <DIR>", "Isolate rozi before the command"),
             advanced_row(
                 "    --socket <PATH>",
                 "Send the control command to this endpoint",

@@ -14,10 +14,16 @@ pub(crate) fn run_server_cli(
     fresh: bool,
     startup_nonce: Option<String>,
     resurrect: bool,
+    cwd: Option<&str>,
 ) -> Result<()> {
     let detached_start = startup_nonce.is_some();
-    let result =
-        session::server::run_named_session_mode_with_nonce(name, fresh, startup_nonce, resurrect);
+    let result = session::server::run_named_session_mode_with_nonce(
+        name,
+        fresh,
+        startup_nonce,
+        resurrect,
+        cwd,
+    );
     if detached_start && let Err(error) = &result {
         // Only the nonce form may have a report file as stdout.
         let message = error.to_string();
@@ -256,6 +262,7 @@ pub(crate) fn run_new_detached_session_cli(
     name: &str,
     resurrect: bool,
     remote: Option<&str>,
+    cwd: Option<&str>,
 ) -> Result<()> {
     if session::naming::is_shared_target(name) {
         return Err(std::io::Error::new(
@@ -265,13 +272,17 @@ pub(crate) fn run_new_detached_session_cli(
         .into());
     }
     let Some(remote) = remote else {
-        session::server::create_detached_session(name, resurrect)?;
+        let cwd = cwd
+            .map(crate::config::expand_path)
+            .map(|path| std::env::current_dir().map(|caller| caller.join(path)))
+            .transpose()?;
+        session::server::create_detached_session(name, resurrect, cwd.as_deref())?;
         return Ok(());
     };
     let target = session::remote::parse_remote_target(remote)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
     let config = crate::config::load_config().config.remote;
-    session::remote::create_remote_detached_session(&target, name, resurrect, &config)
+    session::remote::create_remote_detached_session(&target, name, resurrect, cwd, &config)
         .map_err(std::io::Error::other)?;
     Ok(())
 }

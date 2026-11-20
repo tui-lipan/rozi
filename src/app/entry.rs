@@ -140,7 +140,20 @@ pub fn run() -> Result<()> {
         helper.run();
     }
 
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let mut args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|arg| arg == "--runtime-dir") {
+        let path = args
+            .get(1)
+            .filter(|path| !path.is_empty() && !path.starts_with("--"))
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "--runtime-dir requires a directory",
+                )
+            })?;
+        crate::platform::paths::select_runtime_dir(std::path::Path::new(path))?;
+        args.drain(..2);
+    }
     let parsed = match cli::parse_cli_args(args.clone()) {
         Ok(parsed) => parsed,
         Err(message) => {
@@ -352,9 +365,10 @@ pub fn run() -> Result<()> {
             config_path,
             startup_nonce,
             resurrect,
+            cwd,
         } => {
             apply_config_path(config_path);
-            return cli::run_server_cli(&name, fresh, startup_nonce, resurrect);
+            return cli::run_server_cli(&name, fresh, startup_nonce, resurrect, cwd.as_deref());
         }
         cli::ParsedCli::RemoteServe { name, autostart } => {
             return cli::run_remote_serve_cli(&name, autostart);
@@ -399,12 +413,18 @@ pub fn run() -> Result<()> {
             }
             cli::SessionsCommand::NewDetached {
                 name,
+                cwd,
                 resurrect,
                 remote,
                 config_path,
             } => {
                 apply_config_path(config_path);
-                return cli::run_new_detached_session_cli(&name, resurrect, remote.as_deref());
+                return cli::run_new_detached_session_cli(
+                    &name,
+                    resurrect,
+                    remote.as_deref(),
+                    cwd.as_deref(),
+                );
             }
             cli::SessionsCommand::Restart {
                 name,

@@ -85,6 +85,8 @@ pub struct ServerStart<'a> {
     /// Never write a resurrection snapshot, whatever `[session] resurrect` says. Requires a
     /// `startup_nonce`: only the nonce form of the server command carries it.
     pub no_resurrect: bool,
+    /// Directory for the first shell in a fresh detached server.
+    pub cwd: Option<&'a Path>,
     /// Optional file for the nonce form to report its startup error on stdout.
     pub startup_report: Option<&'a std::fs::File>,
 }
@@ -252,6 +254,9 @@ fn base_server_command(
         if start.no_resurrect {
             command.arg("--no-resurrect");
         }
+        if let Some(cwd) = start.cwd {
+            command.arg("--cwd").arg(cwd);
+        }
     } else {
         debug_assert!(
             !start.no_resurrect,
@@ -270,6 +275,10 @@ fn base_server_command(
     // pane it spawns; nothing else it starts should inherit it.
     command
         .env_remove(crate::pane::TERMINAL_MARKER_ENV)
+        .envs(
+            std::env::var_os(super::paths::ROZI_RUNTIME_DIR_ENV)
+                .map(|root| (super::paths::ROZI_RUNTIME_DIR_ENV, root)),
+        )
         .stdin(std::process::Stdio::null())
         .stdout(match start.startup_report {
             Some(report) => std::process::Stdio::from(report.try_clone()?),

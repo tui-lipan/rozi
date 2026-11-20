@@ -410,13 +410,15 @@ This does not attach a client, so the session's client count and layout control 
 
 To give a script or a coding agent a session of its own, so its panes stay out of the sessions you
 work in, start one with `rozi sessions new <NAME> --detach`. The command returns once the session
-is running. The session starts with no panes, and its first `split` opens one. It cannot be
-combined with `--profile` or `--cwd`; pass `--cwd` to `split` instead. Add `--remote <HOST>` to start
-it on another machine. Stop the session with `rozi sessions kill <NAME>` when the work is done.
+is running. Pass `--cwd <DIR>` to open a shell there. With just `--detach`, the first `split` opens a
+pane. Add `--remote <HOST>` to start it on another machine. Stop it with `rozi sessions kill <NAME>`.
 
 Like any named session, a detached session is saved for [resurrection](#resurrection) and appears
 in the picker as `Restorable` if its server stops before `sessions kill`. Add `--no-resurrect` for
 throwaway work: the session is never saved.
+
+Put `--runtime-dir <DIR>` first to keep the session's sockets, config, and state under a separate
+private directory. Use the same prefix on commands that reach it from outside its panes.
 
 `rozi sessions restart <NAME>` ends a running session's panes and starts it again without a UI, on
 the build you ran it with. It keeps [deployed extensions](extensions.md#deploy-to-a-session), and

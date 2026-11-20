@@ -38,7 +38,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Create a session whose first pane starts in DIR",
             ),
             row(
-                "new <NAME> --detach [--no-resurrect] [--remote <HOST>]",
+                "new <NAME> --detach [--cwd <DIR>] [--no-resurrect]",
                 "Start without a UI, optionally never saved",
             ),
             row(
@@ -237,8 +237,7 @@ fn parse_new(
     Ok(ParsedCli::Run(cli))
 }
 
-/// `sessions new <NAME> --detach`: start the server and return, with no UI and no first pane, so
-/// the options that shape a UI or its first pane are refused.
+/// `sessions new <NAME> --detach`: start the server, optionally with a shell in `--cwd`.
 fn parse_new_detached(
     name: String,
     new: &NewSession,
@@ -247,8 +246,6 @@ fn parse_new_detached(
 ) -> std::result::Result<ParsedCli, String> {
     let refused = if new.profile.is_some() {
         Some("--profile")
-    } else if new.cwd.is_some() {
-        Some("--cwd")
     } else {
         cli.launch_only_option()
     };
@@ -258,6 +255,7 @@ fn parse_new_detached(
     validate_own_session_target(&name, "create", true)?;
     Ok(ParsedCli::Sessions(SessionsCommand::NewDetached {
         name,
+        cwd: new.cwd.clone(),
         resurrect,
         remote: cli.remote,
         config_path: cli.config_path,
@@ -974,10 +972,6 @@ mod tests {
                 "--pick does not apply to sessions list",
             ),
             (
-                &["sessions", "new", "dev", "--detach", "--cwd", "/a"][..],
-                "--cwd cannot be combined with --detach",
-            ),
-            (
                 &["sessions", "new", "dev", "--profile", "p", "--detach"][..],
                 "--profile cannot be combined with --detach",
             ),
@@ -1001,13 +995,14 @@ mod tests {
     #[test]
     fn detach_creates_without_launching() {
         assert!(matches!(
-            parse(&["--config", "c.toml", "sessions", "new", "dev", "--detach"]),
+            parse(&["--config", "c.toml", "sessions", "new", "dev", "--detach", "--cwd", "/a"]),
             Ok(ParsedCli::Sessions(SessionsCommand::NewDetached {
                 name,
+                cwd: Some(cwd),
                 resurrect: true,
                 remote: None,
                 config_path,
-            })) if name == "dev" && config_path.as_deref() == Some("c.toml")
+            })) if name == "dev" && cwd == "/a" && config_path.as_deref() == Some("c.toml")
         ));
         for args in [
             &["--remote", "box", "sessions", "new", "dev", "--detach"][..],

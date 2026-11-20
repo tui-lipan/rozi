@@ -31,6 +31,18 @@ cargo run -- --session dev --server
 
 Leave the TUI with `prefix d`.
 
+## Try a dev build in isolation
+
+Use the same short, private directory for each command. The prefix sets aside rozi's inherited
+routing variables and keeps config, state, and sockets in that root.
+
+```bash
+lab_dir=$(mktemp -d /tmp/rozi-dev.XXXXXX)
+./target/debug/rozi --runtime-dir "$lab_dir" sessions new lab --detach --no-resurrect --cwd "$PWD"
+./target/debug/rozi --runtime-dir "$lab_dir" sessions attach lab
+./target/debug/rozi --runtime-dir "$lab_dir" sessions kill lab
+```
+
 ## Optional local tools
 
 None of these are required, and CI does not use them. The baseline checks stay `cargo test`.

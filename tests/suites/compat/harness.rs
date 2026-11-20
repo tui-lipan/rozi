@@ -541,6 +541,7 @@ fn reusable_binary(root: &Path, version: &str) -> Option<PathBuf> {
 
 fn cache_env(root: &Path) -> PlatformEnv {
     PlatformEnv {
+        rozi_runtime_dir: None,
         home: Some(root.join("home")),
         xdg_config_home: Some(root.join("config")),
         xdg_state_home: Some(root.join("state")),

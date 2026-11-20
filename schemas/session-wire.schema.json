@@ -186,7 +186,8 @@
           "enum": [
             "answered",
             "failed",
-            "cancelled"
+            "cancelled",
+            "unknown"
           ],
           "type": "string"
         },
@@ -198,6 +199,11 @@
         {
           "const": "active",
           "description": "Typed into the agent and not yet answered.",
+          "type": "string"
+        },
+        {
+          "const": "delivered",
+          "description": "A one-way message was typed into the pane.",
           "type": "string"
         }
       ]
@@ -242,6 +248,9 @@
         },
         "id": {
           "type": "string"
+        },
+        "no_reply": {
+          "type": "boolean"
         },
         "parent": {
           "type": [
@@ -3835,6 +3844,10 @@
                 "string",
                 "null"
               ]
+            },
+            "no_reply": {
+              "description": "Deliver a message without keeping a request open for an answer.",
+              "type": "boolean"
             },
             "now": {
               "description": "Type the request in at once, even while the agent is working or another request is\nbeing answered, for an agent that takes typed input mid-turn as a follow-up. Refused\nwhen the agent shows a dialog or someone has just typed into its pane.",
@@ -9445,6 +9458,7 @@
   "description": "Control frames exchanged between a rozi session server and its clients, CLI callers, and remote proxies. Generated; see dev/wire-compatibility.md for the rules every change to it follows.",
   "title": "Rozi session wire protocol",
   "x-rozi-capabilities": [
+    "agent-ask-no-reply",
     "agent-ask-now",
     "agent-attachments",
     "agent-conversations",

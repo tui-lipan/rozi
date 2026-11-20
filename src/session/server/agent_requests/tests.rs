@@ -86,6 +86,7 @@ impl Rig {
                 follows: None,
                 asker_label: None,
                 now: false,
+                no_reply: false,
             },
         ))
     }
@@ -127,6 +128,7 @@ impl Rig {
                 follows: None,
                 asker_label: None,
                 now: false,
+                no_reply: false,
             },
         )
     }
@@ -669,6 +671,43 @@ fn only_a_pane_showing_the_request_counts_as_having_taken_it() {
 }
 
 #[test]
+fn a_message_exits_the_queue_as_delivered_and_keeps_no_answer() {
+    let mut rig = Rig::new(&[2, 3]);
+    rig.set_state(3, DetectedAgentState::Working);
+    let sender = rig.agent(2);
+    let queued = info(rig.server.ask_agent(
+        Some(sender),
+        AgentTarget::Pane(3),
+        "The base branch moved.".into(),
+        AskOptions {
+            parent: None,
+            follows: None,
+            asker_label: None,
+            now: false,
+            no_reply: true,
+        },
+    ));
+    assert_eq!(queued.state, AgentRequestState::Queued);
+    rig.set_state(3, DetectedAgentState::Idle);
+    let delivered = rig.request(&queued.id);
+    assert_eq!(delivered.state, AgentRequestState::Delivered);
+    assert!(delivered.delivered_at_unix_ms.is_some());
+    assert!(delivered.response.is_none());
+    assert!(!rig.reply(3, &queued.id, "unsolicited answer").ok);
+    rig.run_turn(3);
+    assert_eq!(rig.request(&queued.id).state, AgentRequestState::Delivered);
+    let protocol::ServerMessage::AgentRequestsChanged { requests, .. } =
+        rig.server.agent_requests_message(false)
+    else {
+        panic!("expected requests");
+    };
+    assert!(
+        requests.is_empty(),
+        "old clients cannot decode the new state"
+    );
+}
+
+#[test]
 fn requests_reach_a_target_one_turn_at_a_time() {
     let mut rig = Rig::new(&[2, 3, 4]);
 
@@ -990,6 +1029,7 @@ fn an_agent_owing_several_requests_names_the_one_it_asks_for() {
                 follows: None,
                 asker_label: None,
                 now: false,
+                no_reply: false,
             },
         )
     };
@@ -1235,6 +1275,7 @@ fn an_ask_keeps_its_uploads_only_when_the_request_is_created() {
         asker_label: None,
         attachments,
         now: false,
+        no_reply: false,
     };
 
     // One missing upload refuses the whole ask, and the others stay unclaimed.
@@ -1295,6 +1336,7 @@ fn exchanges_between_the_same_two_agents_make_one_conversation() {
             follows: Some(&delegated.id),
             asker_label: None,
             now: false,
+            no_reply: false,
         },
     );
     assert_eq!(
@@ -1321,6 +1363,7 @@ fn exchanges_between_the_same_two_agents_make_one_conversation() {
                 follows: Some(&outside.id),
                 asker_label: Some("Claude \"Code\"\u{1b}[31m on\nfar-host\u{202e}\u{e0041}".into()),
                 now: false,
+                no_reply: false,
             },
         )
     };
@@ -1344,6 +1387,7 @@ fn exchanges_between_the_same_two_agents_make_one_conversation() {
             follows: Some(&first.id),
             asker_label: None,
             now: false,
+            no_reply: false,
         },
     );
     assert_eq!(code(someone_elses), Some(ControlErrorCode::InvalidArgument));
@@ -1363,6 +1407,7 @@ fn a_new_native_conversation_ends_the_conversation_for_good() {
                 follows: Some(id),
                 asker_label: None,
                 now: false,
+                no_reply: false,
             },
         )
     };
@@ -1415,6 +1460,7 @@ fn following_a_delegated_request_respects_a_new_native_conversation() {
             follows: Some(&delegated.id),
             asker_label: None,
             now: false,
+            no_reply: false,
         },
     );
     assert_eq!(code(follows), Some(ControlErrorCode::InvalidArgument));
@@ -1496,6 +1542,7 @@ fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
                 created_at_unix_ms: 0,
                 updated_at_unix_ms: 0,
                 delivered_at_unix_ms: Some(0),
+                no_reply: false,
             },
             depth: 1,
             later: false,

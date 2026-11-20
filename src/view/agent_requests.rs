@@ -319,14 +319,16 @@ pub(crate) fn short_duration(ms: u64) -> String {
 /// The word for a request's state, as every surface spells it.
 pub(crate) fn state_word(request: &AgentRequestSummary) -> &'static str {
     use super::vocabulary::{
-        REQUEST_ACTIVE, REQUEST_ANSWERED, REQUEST_CANCELLED, REQUEST_FAILED, REQUEST_LATER,
-        REQUEST_QUEUED,
+        REQUEST_ACTIVE, REQUEST_ANSWERED, REQUEST_CANCELLED, REQUEST_DELIVERED, REQUEST_FAILED,
+        REQUEST_LATER, REQUEST_QUEUED,
     };
     match request.state {
         AgentRequestState::Queued => REQUEST_QUEUED,
         AgentRequestState::Active if request.answering_later() => REQUEST_LATER,
         AgentRequestState::Active => REQUEST_ACTIVE,
         AgentRequestState::Answered => REQUEST_ANSWERED,
+        AgentRequestState::Delivered => REQUEST_DELIVERED,
+        AgentRequestState::Unknown => "Unknown",
         AgentRequestState::Failed => REQUEST_FAILED,
         AgentRequestState::Cancelled => REQUEST_CANCELLED,
     }
@@ -359,6 +361,7 @@ mod tests {
             created_at_unix_ms: 0,
             updated_at_unix_ms: 0,
             delivered_at_unix_ms: None,
+            no_reply: false,
         }
     }
 

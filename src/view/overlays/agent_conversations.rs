@@ -199,9 +199,13 @@ impl RenderedRow {
         let (glyph, style) = match request.state {
             AgentRequestState::Queued => ("◌", fg_only(&theme.muted)),
             AgentRequestState::Active => ("●", fg_only(&theme.accent)),
-            AgentRequestState::Answered => ("✓", Style::new().fg(theme.status.success)),
+            AgentRequestState::Answered | AgentRequestState::Delivered => {
+                ("✓", Style::new().fg(theme.status.success))
+            }
             AgentRequestState::Failed => ("✗", Style::new().fg(theme.status.error)),
-            AgentRequestState::Cancelled => ("○", fg_only(&theme.muted)),
+            AgentRequestState::Cancelled | AgentRequestState::Unknown => {
+                ("○", fg_only(&theme.muted))
+            }
         };
         let reason = request
             .reason
@@ -324,6 +328,9 @@ fn chain_overlay(ctx: &Context<AppRoot>, root: &str) -> Element {
                     ),
                     AgentRequestState::Answered => {
                         ("answer", Style::new().fg(theme.status.success))
+                    }
+                    AgentRequestState::Delivered => {
+                        ("delivered", Style::new().fg(theme.status.success))
                     }
                     AgentRequestState::Failed => ("failed", Style::new().fg(theme.status.error)),
                     _ => ("cancelled", fg_only(&theme.muted)),

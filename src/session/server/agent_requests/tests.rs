@@ -826,13 +826,21 @@ fn requests_typed_into_one_run_keep_their_own_answers() {
     rig.server.agent_requests.quiet = quiet;
     rig.set_state(3, DetectedAgentState::Working);
     let first = info(rig.ask_now(3, "review the parser"));
-    let second = info(rig.ask_now(3, "and the lexer"));
+    let second = info(rig.ask_now(3, "start the benchmarks"));
+    let third = info(rig.ask_now(3, "and the lexer"));
 
-    // The agent answers each in a turn of its own, through its integration alone.
-    rig.publish(3, "the parser is fine");
-    rig.set_state(3, DetectedAgentState::Idle);
-    rig.set_state(3, DetectedAgentState::Working);
-    rig.server.pump_agent_requests();
+    // The agent answers each in a turn of its own, through its integration alone; the second
+    // promises a later reply, and its turn's answer is still its own.
+    let turn = |rig: &mut Rig, answer: &str| {
+        rig.publish(3, answer);
+        rig.set_state(3, DetectedAgentState::Idle);
+        rig.set_state(3, DetectedAgentState::Working);
+        rig.server.pump_agent_requests();
+    };
+    turn(&mut rig, "the parser is fine");
+    let agent = rig.agent(3);
+    assert!(rig.server.reply_later(Some(agent), &second.id).ok);
+    turn(&mut rig, "started the benchmarks");
     rig.publish(3, "the lexer is fine");
     rig.set_state(3, DetectedAgentState::Idle);
     std::thread::sleep(quiet);
@@ -843,7 +851,10 @@ fn requests_typed_into_one_run_keep_their_own_answers() {
         request.response.unwrap().content.text
     };
     assert_eq!(answer(&rig, &first.id), "the parser is fine");
-    assert_eq!(answer(&rig, &second.id), "the lexer is fine");
+    assert_eq!(answer(&rig, &third.id), "the lexer is fine");
+    let promised = rig.request(&second.id);
+    assert_eq!(promised.state, AgentRequestState::Active);
+    assert!(promised.response.is_none());
 
     // A run takes only so many requests typed in after its first.
     for index in 0..=MAX_RIDERS {

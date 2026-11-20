@@ -1012,20 +1012,12 @@ impl SessionServer {
         let to = request.to.clone();
         // The conversation the turn bound itself to, so the reply comes from the same one.
         let mut turn_session = None;
-        if let Some(slot) = self.agent_requests.slots.get_mut(&to)
-            && slot.riders.iter().any(|rider| rider == id)
+        if let Some(slot) = self.agent_requests.slots.get(&to)
+            && (slot.riders.iter().any(|rider| rider == id)
+                || (slot.request == id && !slot.riders.is_empty()))
         {
-            slot.riders.retain(|rider| rider != id);
-            turn_session = slot
-                .tracker
-                .fence()
-                .and_then(|fence| fence.native_session.clone());
-        } else if let Some(slot) = self.agent_requests.slots.get_mut(&to)
-            && slot.request == id
-            && !slot.riders.is_empty()
-        {
-            // The run goes on for what was typed in after it.
-            slot.request = slot.riders.remove(0);
+            // The run goes on for what was typed in with it. The request keeps its place, so the
+            // answer its turn publishes is not taken for another's; the run's end skips it.
             turn_session = slot
                 .tracker
                 .fence()
@@ -1359,7 +1351,7 @@ impl SessionServer {
         // Neither a turn, a reply, nor the screen has shown that the agent took the request.
         if unconfirmed
             && (undetected || elapsed >= self.agent_requests.delivery_check)
-            && self.awaiting_delivery(&id)
+            && self.settles_in_run(&id)
         {
             match self.delivery(target) {
                 Delivery::Shown => {
@@ -1447,9 +1439,10 @@ impl SessionServer {
         !waiting_after_screen_block
     }
 
-    /// Whether request `id` still needs proof its agent took it: it is unanswered, and its agent
-    /// has not promised a later reply, which it could only do having read it.
-    fn awaiting_delivery(&self, id: &str) -> bool {
+    /// Whether request `id` is owed by the run it was typed in: it is unanswered, and its agent
+    /// has not promised a later reply. Only such a request needs proof its agent took it, since a
+    /// promise could only follow reading it, and only it is settled by the run's end.
+    fn settles_in_run(&self, id: &str) -> bool {
         self.agent_requests
             .get(id)
             .is_some_and(|stored| stored.info.state == AgentRequestState::Active && !stored.later)
@@ -1535,7 +1528,7 @@ impl SessionServer {
         // A request its agent already replied to needs nothing from the screen.
         let open = std::iter::once(&slot.request)
             .chain(&slot.riders)
-            .any(|id| self.request_active(id));
+            .any(|id| self.settles_in_run(id));
         let Some(fence) = slot.tracker.fence().cloned().filter(|_| open) else {
             return self.finish_request_turn(target, TurnOutcome::Unanswered);
         };
@@ -1601,7 +1594,7 @@ impl SessionServer {
         // answer is the last request's, and requests it folded into one turn share that turn's.
         let count = 1 + slot.riders.len();
         for (index, id) in std::iter::once(slot.request).chain(slot.riders).enumerate() {
-            if !self.request_active(&id) {
+            if !self.settles_in_run(&id) {
                 continue;
             }
             let mut response = if published {

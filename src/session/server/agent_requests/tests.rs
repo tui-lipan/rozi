@@ -1421,6 +1421,38 @@ fn following_a_delegated_request_respects_a_new_native_conversation() {
 }
 
 #[test]
+fn an_agent_task_changes_when_the_next_request_is_delivered() {
+    let mut rig = Rig::new(&[2, 3]);
+    let task = |rig: &Rig| {
+        let agent = rig
+            .server
+            .agent_runtimes_for(3, &rig.server.panes[&3])
+            .remove(0);
+        (agent.task, agent.task_updated_at_unix_ms)
+    };
+    let first = rig.ask(Some(2), 3, "Plan the release\nCheck the changelog too.");
+    assert_eq!(
+        task(&rig),
+        (Some("Plan the release".into()), first.delivered_at_unix_ms)
+    );
+    let second = rig.ask(Some(2), 3, "Review the version bump");
+    assert_eq!(second.state, AgentRequestState::Queued);
+    assert_eq!(task(&rig).0.as_deref(), Some("Plan the release"));
+
+    assert!(rig.reply(3, &first.id, "planned").ok);
+    rig.run_turn(3);
+    let second = rig.request(&second.id);
+    assert!(second.delivered_at_unix_ms.is_some());
+    assert_eq!(
+        task(&rig),
+        (
+            Some("Review the version bump".into()),
+            second.delivered_at_unix_ms
+        )
+    );
+}
+
+#[test]
 fn an_await_answers_once_and_never_holds_up_its_request() {
     let mut rig = Rig::new(&[2, 3]);
     let (client, mut stream) = add_client(&mut rig.server);

@@ -308,6 +308,7 @@ mod tests {
             reference: crate::session::protocol::AgentRef::for_test(1, 7, None),
             completions,
             answered: 0,
+            request_task: None,
         }
     }
 

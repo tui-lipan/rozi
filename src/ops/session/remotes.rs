@@ -1774,6 +1774,7 @@ mod tests {
                             reference: reference.clone(),
                             completions: 1,
                             answered: 0,
+                            request_task: None,
                         });
                         state
                             .agent_attention

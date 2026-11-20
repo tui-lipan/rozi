@@ -620,6 +620,7 @@ struct TrackedAgentReference {
     answered: u64,
     /// A request was typed into this agent, so the run it starts next answers it.
     request_run: bool,
+    request_task: Option<std::sync::Arc<protocol::AgentTask>>,
     /// The agent behind this reference was the pane's screen-detected agent, so its incarnation
     /// follows it while it runs; see `AgentScratch::carry_detected`.
     from_detected: bool,

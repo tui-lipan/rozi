@@ -1539,6 +1539,7 @@ impl SessionServer {
                     state: runtime.state,
                     reason: runtime.reason,
                     task: runtime.task,
+                    task_updated_at_unix_ms: runtime.task_updated_at_unix_ms,
                     completions: runtime.completions,
                     cwd: protocol::occupant_cwd(
                         &pane.runtime.rows,

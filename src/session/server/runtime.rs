@@ -119,6 +119,7 @@ impl AgentScratch {
                     run_open: false,
                     answered: 0,
                     request_run: false,
+                    request_task: None,
                     from_detected: false,
                 },
             );
@@ -258,16 +259,17 @@ impl AgentScratch {
         let incarnation = integration.reference.incarnation;
         let identity = integration.identity.id.clone();
         self.next_incarnation = self.next_incarnation.max(incarnation);
-        let (completions, run_open, answered, request_run) = self
+        let (completions, run_open, answered, request_run, request_task) = self
             .references
             .get(&None)
             .filter(|tracked| tracked.incarnation == incarnation && tracked.identity == identity)
-            .map_or((0, false, 0, false), |tracked| {
+            .map_or((0, false, 0, false, None), |tracked| {
                 (
                     tracked.completions,
                     tracked.run_open,
                     tracked.answered,
                     tracked.request_run,
+                    tracked.request_task.clone(),
                 )
             });
         self.references.insert(
@@ -279,6 +281,7 @@ impl AgentScratch {
                 run_open,
                 answered,
                 request_run,
+                request_task,
                 from_detected: false,
             },
         );
@@ -303,6 +306,18 @@ impl AgentScratch {
         if let Some(tracked) = self.tracked_mut(reference) {
             tracked.request_run = true;
         }
+    }
+
+    pub(super) fn record_request_task(
+        &mut self,
+        reference: &protocol::AgentRef,
+        task: protocol::AgentTask,
+    ) -> bool {
+        let Some(tracked) = self.tracked_mut(reference) else {
+            return false;
+        };
+        tracked.request_task = Some(std::sync::Arc::new(task));
+        true
     }
 
     /// The request's turn is over. A run it started has been counted by now; if it started none,
@@ -428,6 +443,7 @@ impl AgentScratch {
                     run_open: false,
                     answered: 0,
                     request_run: false,
+                    request_task: None,
                     from_detected: false,
                 },
             );
@@ -497,6 +513,7 @@ impl AgentScratch {
                 },
                 completions: tracked.completions,
                 answered: tracked.answered,
+                request_task: tracked.request_task.clone(),
             })
             .collect::<Vec<_>>();
         records.sort_by(|left, right| left.reference.slot.cmp(&right.reference.slot));

@@ -128,6 +128,17 @@
         },
         "reference": {
           "$ref": "#/$defs/AgentRef"
+        },
+        "request_task": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentTask"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The most recently delivered request's task label, retained for this agent run."
         }
       },
       "required": [
@@ -462,6 +473,24 @@
           "$ref": "#/$defs/AgentRef"
         }
       ]
+    },
+    "AgentTask": {
+      "description": "A task label and the time rozi delivered the request it came from.",
+      "properties": {
+        "delivered_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "delivered_at_unix_ms"
+      ],
+      "type": "object"
     },
     "AgentWaitCondition": {
       "oneOf": [

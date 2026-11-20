@@ -809,6 +809,7 @@ fn finished_record(
         reference: crate::session::protocol::AgentRef::for_test(pane_id, generation, None),
         completions,
         answered: 0,
+        request_task: None,
     }
 }
 

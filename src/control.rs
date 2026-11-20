@@ -1233,9 +1233,11 @@ pub struct AgentInfo {
     pub state: crate::session::protocol::AgentState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    /// What the agent works on, when its published row names it.
+    /// The agent's last delivered request or the task named by its published row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_updated_at_unix_ms: Option<u64>,
     /// Runs this agent has finished. A new `ref` starts again from zero, so compare two values only
     /// for the same `ref`.
     #[serde(default)]

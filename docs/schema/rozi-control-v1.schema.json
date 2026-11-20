@@ -141,9 +141,17 @@
           "$ref": "#/$defs/AgentState"
         },
         "task": {
-          "description": "What the agent works on, when its published row names it.",
+          "description": "The agent's last delivered request or the task named by its published row.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "task_updated_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
             "null"
           ]
         },
@@ -685,9 +693,17 @@
           "$ref": "#/$defs/AgentState"
         },
         "task": {
-          "description": "What the agent is working on, when it named its work: the title of the published row it\nis. Never a terminal title, which changes with every tool call.",
+          "description": "The last delivered request or the task named in the published row.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "task_updated_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
             "null"
           ]
         }

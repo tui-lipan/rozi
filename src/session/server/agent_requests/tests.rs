@@ -1005,7 +1005,8 @@ fn an_agent_owing_several_requests_names_the_one_it_asks_for() {
     assert_eq!(
         rig.server
             .agent_requests
-            .await_cycle(Some(&asker), &first.id),
+            .await_cycle(Some(&asker), &first.id)
+            .map(|info| info.id.as_str()),
         Some(follow_up.id.as_str())
     );
 }
@@ -1451,6 +1452,13 @@ fn an_await_answers_once_and_never_holds_up_its_request() {
     };
     assert_eq!(response.code, Some(ControlErrorCode::Conflict));
     assert!(response.error.unwrap().contains(&inbound.id));
+    let incoming = &response.data.unwrap()["incoming"];
+    assert_eq!(incoming["id"], inbound.id);
+    assert_eq!(
+        incoming["from"],
+        serde_json::to_value(rig.agent(3)).unwrap()
+    );
+    assert_eq!(incoming["prompt"], "which version?");
 
     // A script's await ends with its connection; the request carries on.
     assert!(

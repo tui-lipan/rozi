@@ -608,7 +608,11 @@ impl AgentRequestStore {
 
     /// A request `caller` has yet to answer, queued for it or already typed into it, that
     /// `awaited` cannot resolve without.
-    fn await_cycle(&self, caller: Option<&protocol::AgentRef>, awaited: &str) -> Option<&str> {
+    fn await_cycle(
+        &self,
+        caller: Option<&protocol::AgentRef>,
+        awaited: &str,
+    ) -> Option<&AgentRequestInfo> {
         let caller = caller?;
         self.requests
             .iter()
@@ -616,7 +620,6 @@ impl AgentRequestStore {
             .find(|info| {
                 !info.state.is_resolved() && info.to == *caller && self.descends_from(info, awaited)
             })
-            .map(|info| info.id.as_str())
     }
 
     /// Note whether `agent` is stopped now, and answer since when it has been.
@@ -1239,10 +1242,20 @@ impl SessionServer {
             .agent_requests
             .await_cycle(pending.caller.as_ref(), &pending.id)
         {
-            return Some(conflict(format!(
-                "request `{inbound}` is yours to answer and `{}` waits on it; answer it with `rozi agents reply {inbound} --format text --stdin` instead of waiting",
+            let id = &inbound.id;
+            let mut response = conflict(format!(
+                "request `{id}` is yours to answer and `{}` waits on it; answer it with `rozi agents reply {id} --format text --stdin` instead of waiting",
                 pending.id
-            )));
+            ));
+            response.data = Some(serde_json::json!({
+                "incoming": {
+                    "id": id,
+                    "from": inbound.from,
+                    "from_label": inbound.from_label,
+                    "prompt": inbound.prompt,
+                },
+            }));
+            return Some(response);
         }
         pending
             .deadline

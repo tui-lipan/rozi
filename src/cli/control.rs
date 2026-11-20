@@ -1148,6 +1148,18 @@ pub(crate) struct AnswerOptions {
 
 /// `--require-reply` saw an answer read off the agent's terminal rather than its reply.
 const NOT_A_REPLY_EXIT: i32 = 3;
+/// A request from the agent being awaited needs an answer first.
+const INCOMING_REQUEST_EXIT: i32 = 4;
+
+fn incoming_request(response: &serde_json::Value) -> Option<&serde_json::Value> {
+    if response["ok"].as_bool() != Some(false) || response["code"].as_str() != Some("conflict") {
+        return None;
+    }
+    let incoming = response.get("data")?.get("incoming")?;
+    incoming["id"].as_str()?;
+    incoming["prompt"].as_str()?;
+    Some(incoming)
+}
 
 pub(crate) fn run_agent_answer(mut command: ControlCli, options: AnswerOptions) -> Result<()> {
     let uploads = match attach_files(&mut command, &options.attachments) {
@@ -1404,7 +1416,10 @@ fn keep_asked_request(
         None => hint,
     };
     value["error"] = error.into();
-    if value.get("data").is_none_or(serde_json::Value::is_null) {
+    if let Some(incoming) = incoming_request(&value).cloned() {
+        value["data"] = request;
+        value["data"]["incoming"] = incoming;
+    } else if value.get("data").is_none_or(serde_json::Value::is_null) {
         value["data"] = request;
     }
     value
@@ -1497,6 +1512,20 @@ fn report_control(
             crate::cli::output::format_capture_text(value.get("data"))
         );
     }
+    if matches!(
+        command.request.command,
+        control::ControlCommand::AgentAwait { .. }
+    ) && let Some(incoming) = incoming_request(&value)
+    {
+        if human_output {
+            let id = incoming["id"].as_str().unwrap_or_default();
+            let from = incoming["from_label"].as_str().unwrap_or("Agent");
+            let prompt = incoming["prompt"].as_str().unwrap_or_default();
+            println!("Incoming request {id} from {from}\n\n{prompt}");
+        }
+        eprintln!("{}", value["error"].as_str().unwrap_or_default());
+        std::process::exit(INCOMING_REQUEST_EXIT);
+    }
     exit_on_failure(&value);
     if human_output {
         let text = crate::cli::output::format_share_control_text(
@@ -1582,6 +1611,23 @@ mod tests {
         let answered =
             serde_json::json!({ "ok": true, "data": { "id": "r7", "state": "answered" } });
         assert_eq!(keep_asked_request(request, Ok(answered.clone())), answered);
+    }
+
+    #[test]
+    fn an_incoming_request_preserves_the_awaited_request_id() {
+        let request = serde_json::json!({ "id": "r7", "state": "queued" });
+        let incoming = serde_json::json!({ "id": "r8", "from_label": "Claude Code", "prompt": "Which version?" });
+        let response = keep_asked_request(
+            request,
+            Ok(serde_json::json!({
+                "ok": false,
+                "code": "conflict",
+                "error": "answer r8 first",
+                "data": { "incoming": incoming },
+            })),
+        );
+        assert_eq!(response["data"]["id"], "r7");
+        assert_eq!(incoming_request(&response), Some(&incoming));
     }
 
     #[cfg(unix)]

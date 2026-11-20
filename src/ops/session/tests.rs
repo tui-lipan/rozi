@@ -680,7 +680,7 @@ fn cached_recent_and_attached_hosts_are_available_without_a_probe() {
 }
 
 fn ephemeral_state(client_id: u64, controller: u64, clients: Vec<ClientInfo>) -> State {
-    let mut state = State::new(Config::default(), ThemePreset::Lipan.theme());
+    let mut state = State::new(Config::default(), ThemePreset::LIPAN.theme());
     state.current_mut().session_name = Some("eph-test".to_string());
     state.current_mut().session_attached = true;
     let mut shared = SharedSessionState::new(client_id);
@@ -2297,7 +2297,7 @@ fn a_scoped_launcher_starts_its_shell_on_the_host_it_names() {
 /// a host browsed earlier decide where a later kill lands.
 #[test]
 fn a_launcher_scope_is_only_read_while_the_foreground_is_empty() {
-    let mut state = State::new(Config::default(), ThemePreset::Lipan.theme());
+    let mut state = State::new(Config::default(), ThemePreset::LIPAN.theme());
     // A launch seeds an initial pane; the launcher is what is left once nothing is in front.
     *state.current_mut() = crate::state::Attachment::new();
     state.launcher_scope = Some(crate::session::remote::RemoteTarget::Alias(
@@ -2550,7 +2550,7 @@ fn a_host_held_only_by_the_launcher_scope_can_still_be_disconnected() {
 #[test]
 fn a_recorded_scope_behind_a_live_session_is_not_a_host_connection() {
     let workbox = crate::session::remote::RemoteTarget::Alias("workbox".into());
-    let mut state = State::new(Config::default(), ThemePreset::Lipan.theme());
+    let mut state = State::new(Config::default(), ThemePreset::LIPAN.theme());
     *state.current_mut() = crate::state::Attachment::new();
     state.launcher_scope = Some(workbox.clone());
     assert!(crate::ops::session::host_can_disconnect(&state, &workbox));

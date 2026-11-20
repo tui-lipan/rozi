@@ -935,7 +935,7 @@ mod tests {
     use crate::state::ThemePreset;
 
     fn theme() -> Theme {
-        ThemePreset::Lipan.theme()
+        ThemePreset::LIPAN.theme()
     }
 
     /// Each span as its text and the foreground it was given.

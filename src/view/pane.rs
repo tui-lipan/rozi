@@ -2707,7 +2707,9 @@ mod tests {
 
     #[test]
     fn alert_borders_pulse_only_in_pulse_mode_with_motion_on() {
-        let theme = crate::state::ThemePreset::OneDark.theme();
+        let theme = crate::state::ThemePreset::parse("one-dark")
+            .unwrap()
+            .theme();
         let mut config = PaneConfig {
             alert_border: AlertMode::Static,
             ..PaneConfig::default()
@@ -2740,7 +2742,9 @@ mod tests {
 
     #[test]
     fn pane_frame_precedence_is_alert_then_remote_then_focus() {
-        let theme = crate::state::ThemePreset::OneDark.theme();
+        let theme = crate::state::ThemePreset::parse("one-dark")
+            .unwrap()
+            .theme();
         let alert = Some((PaneAlert::Blocked, BadgeColor::Error));
         assert_eq!(
             pane_frame_foreground_target(&theme, alert, true, true, true),

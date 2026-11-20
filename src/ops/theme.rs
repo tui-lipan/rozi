@@ -678,7 +678,7 @@ mod tests {
     /// resting one — the mismatch that would otherwise appear only outside `pulse` mode.
     #[test]
     fn a_static_tab_takes_the_peak_pair() {
-        let theme = crate::config::resolve_theme(ThemePreset::TokyoNight.id(), None).theme;
+        let theme = crate::config::resolve_theme("tokyo-night", None).theme;
         for paint in AlertPaint::all().iter().copied() {
             let peak = tab_alert_colors(&theme, BadgeColor::Error, paint, true, false);
             assert_eq!(
@@ -696,7 +696,7 @@ mod tests {
     /// background variant.
     #[test]
     fn the_two_paints_move_different_channels() {
-        let theme = crate::config::resolve_theme(ThemePreset::TokyoNight.id(), None).theme;
+        let theme = crate::config::resolve_theme("tokyo-night", None).theme;
         let role = BadgeColor::Error;
         let (bg_fg, bg_bg) = tab_alert_colors(&theme, role, AlertPaint::Background, true, false);
         let (text_fg, text_bg) = tab_alert_colors(&theme, role, AlertPaint::Text, true, false);
@@ -715,7 +715,7 @@ mod tests {
     /// on a background that never changes.
     #[test]
     fn each_paint_can_pulse_on_its_own_channel() {
-        let theme = crate::config::resolve_theme(ThemePreset::TokyoNight.id(), None).theme;
+        let theme = crate::config::resolve_theme("tokyo-night", None).theme;
         for paint in AlertPaint::all().iter().copied() {
             assert!(
                 tab_alert_can_pulse(&theme, BadgeColor::Error, paint),
@@ -773,7 +773,7 @@ mod tests {
 
     #[test]
     fn terminal_palette_background_respects_focused_background_config() {
-        let theme = ThemePreset::OneDark.theme();
+        let theme = ThemePreset::parse("one-dark").unwrap().theme();
         let mut state = State::new(Config::default(), theme.clone());
         let scrollback = state.config.scrollback;
         state.current_mut().workspaces[0].panes.push(Pane::new(
@@ -885,7 +885,7 @@ mod tests {
 
     #[test]
     fn ansi_inactive_chrome_is_visible_on_black_surfaces() {
-        let theme = ThemePreset::Ansi.theme();
+        let theme = ThemePreset::ANSI.theme();
         assert_ne!(pane_frame_foreground(&theme, false, false), Color::Black);
         assert_ne!(
             pane_title_foreground(&theme, false, theme.surface.element),
@@ -895,7 +895,7 @@ mod tests {
 
     #[test]
     fn focused_border_highlight_is_opt_in() {
-        let theme = ThemePreset::OneDark.theme();
+        let theme = ThemePreset::parse("one-dark").unwrap().theme();
 
         assert_eq!(
             pane_frame_foreground(&theme, true, false),
@@ -943,7 +943,7 @@ mod tests {
         // spawn animations, freshly created) pane backgrounds to pitch black. After concretizing to
         // the host bg, an unfocused pane must render on that concrete surface, never black.
         let host_bg = Color::rgb(10, 11, 12);
-        let mut theme = ThemePreset::Nord.theme();
+        let mut theme = ThemePreset::parse("nord").unwrap().theme();
         theme.surface.backdrop = Color::Backdrop;
         theme.surface.backdrop = theme.concretize_backdrop(Some(host_bg));
 
@@ -961,7 +961,7 @@ mod tests {
         // A custom theme that extends a preset with `backdrop = "backdrop"` lands a sentinel with
         // no RGB; it must resolve to the real host terminal bg so terminal palettes, OSC 11 bg
         // queries, and the workbar stop collapsing to pitch black.
-        let mut theme = ThemePreset::Nord.theme();
+        let mut theme = ThemePreset::parse("nord").unwrap().theme();
         theme.surface.backdrop = Color::Backdrop;
         let host_bg = Color::rgb(10, 11, 12);
 
@@ -973,7 +973,7 @@ mod tests {
 
     #[test]
     fn concretize_backdrop_falls_back_to_panel_without_host_colors() {
-        let mut theme = ThemePreset::Nord.theme();
+        let mut theme = ThemePreset::parse("nord").unwrap().theme();
         theme.surface.backdrop = Color::Transparent;
         let panel = theme.surface.panel;
 
@@ -984,7 +984,7 @@ mod tests {
 
     #[test]
     fn concretize_backdrop_leaves_concrete_backdrops_untouched() {
-        let theme = ThemePreset::Nord.theme();
+        let theme = ThemePreset::parse("nord").unwrap().theme();
         let original = theme.surface.backdrop;
 
         let resolved = theme.concretize_backdrop(Some(Color::rgb(1, 2, 3)));
@@ -996,7 +996,7 @@ mod tests {
     fn backdrop_policy_follow_terminal_overrides_a_concrete_preset_backdrop() {
         // `pane.background_follows_terminal` must win even over a preset's own concrete
         // backdrop, not just an unresolved sentinel from a custom theme file.
-        let theme = ThemePreset::Nord.theme();
+        let theme = ThemePreset::parse("nord").unwrap().theme();
         let preset_backdrop = theme.surface.backdrop;
         let host_bg = Color::rgb(10, 11, 12);
 
@@ -1008,7 +1008,7 @@ mod tests {
 
     #[test]
     fn backdrop_policy_leaves_theme_backdrop_alone_when_not_following() {
-        let theme = ThemePreset::Nord.theme();
+        let theme = ThemePreset::parse("nord").unwrap().theme();
         let preset_backdrop = theme.surface.backdrop;
 
         let resolved = apply_backdrop_policy(theme, Some(Color::rgb(10, 11, 12)), false);
@@ -1018,7 +1018,7 @@ mod tests {
 
     #[test]
     fn backdrop_policy_falls_back_to_panel_when_following_without_host_colors() {
-        let theme = ThemePreset::Nord.theme();
+        let theme = ThemePreset::parse("nord").unwrap().theme();
         let panel = theme.surface.panel;
 
         let resolved = apply_backdrop_policy(theme, None, true);
@@ -1028,7 +1028,7 @@ mod tests {
 
     #[test]
     fn unreadable_chrome_falls_back_to_primary_text() {
-        let mut theme = ThemePreset::Ansi.theme();
+        let mut theme = ThemePreset::ANSI.theme();
         theme.border = Style::new().fg(Color::Black);
         theme.muted = Style::new().fg(Color::Black);
         theme.primary = Style::new().fg(Color::Gray).bg(Color::Black);
@@ -1042,7 +1042,7 @@ mod tests {
 
     #[test]
     fn unfocused_title_prefers_primary_text_over_muted() {
-        let mut theme = ThemePreset::Ansi.theme();
+        let mut theme = ThemePreset::ANSI.theme();
         theme.primary = Style::new().fg(Color::LightBlue);
         theme.muted = Style::new().fg(Color::Yellow);
 
@@ -1054,7 +1054,7 @@ mod tests {
 
     #[test]
     fn focused_border_title_prefers_active_border_color() {
-        let mut theme = ThemePreset::Ansi.theme();
+        let mut theme = ThemePreset::ANSI.theme();
         theme.border_active = Color::rgb(220, 170, 45);
 
         assert_eq!(
@@ -1065,7 +1065,7 @@ mod tests {
 
     #[test]
     fn disabled_focused_titlebar_keeps_border_title_unfocused() {
-        let theme = ThemePreset::Ansi.theme();
+        let theme = ThemePreset::ANSI.theme();
 
         assert_eq!(
             pane_border_title_foreground(&theme, false, Color::Black),

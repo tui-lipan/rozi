@@ -48,7 +48,7 @@ fn build_theme_choices(custom: Vec<(String, PathBuf)>) -> Vec<ThemeChoice> {
         let mut presets = ThemePreset::all()
             .into_iter()
             .filter(|preset| {
-                *preset != ThemePreset::Ansi
+                *preset != ThemePreset::ANSI
                     && preset.is_light() == light
                     && !custom.iter().any(|(name, _)| name == preset.id())
             })
@@ -90,7 +90,7 @@ pub struct ResolvedTheme {
 
 /// Lipan with no chrome extension.
 ///
-/// Custom theme files and the hot-reload watcher overlay TOML onto this. [`ThemePreset::Lipan`]'s
+/// Custom theme files and the hot-reload watcher overlay TOML onto this. [`ThemePreset::LIPAN`]'s
 /// theme already carries a chrome color copied from Lipan's accent, and a later `[accent]` overlay
 /// leaves that extension in place.
 pub(crate) fn custom_theme_base() -> Theme {
@@ -115,7 +115,7 @@ pub fn resolve_theme(name: &str, system_theme: Option<&Theme>) -> ResolvedTheme 
         Some(choice) => choice,
         None => {
             warnings.push(format!("Unknown theme `{name}`; using rozi"));
-            ThemeChoice::Builtin(ThemePreset::Rozi)
+            ThemeChoice::Builtin(ThemePreset::ROZI)
         }
     };
     match choice {
@@ -125,7 +125,7 @@ pub fn resolve_theme(name: &str, system_theme: Option<&Theme>) -> ResolvedTheme 
                     "System theme unavailable because terminal colors could not be queried; using ANSI"
                         .to_string(),
                 );
-                ThemePreset::Ansi.theme()
+                ThemePreset::ANSI.theme()
             }));
             ResolvedTheme {
                 theme,
@@ -162,11 +162,12 @@ mod tests {
 
     #[test]
     fn theme_choices_lead_with_system_then_builtins() {
+        let dracula = ThemePreset::parse("dracula").unwrap();
         let choices = build_theme_choices(Vec::new());
         assert_eq!(choices.first(), Some(&ThemeChoice::System));
         assert_eq!(choices.len(), ThemePreset::all().len());
-        assert!(choices.contains(&ThemeChoice::Builtin(ThemePreset::Dracula)));
-        assert!(!choices.contains(&ThemeChoice::Builtin(ThemePreset::Ansi)));
+        assert!(choices.contains(&ThemeChoice::Builtin(dracula)));
+        assert!(!choices.contains(&ThemeChoice::Builtin(ThemePreset::ANSI)));
         let first_light = choices
             .iter()
             .position(|choice| matches!(choice, ThemeChoice::Builtin(preset) if preset.is_light()))
@@ -203,7 +204,9 @@ mod tests {
         let custom = vec![("dracula".to_string(), PathBuf::from("/themes/dracula.toml"))];
         let choices = build_theme_choices(custom);
         // The built-in dracula is dropped in favour of the custom file of the same name.
-        assert!(!choices.contains(&ThemeChoice::Builtin(ThemePreset::Dracula)));
+        assert!(!choices.contains(&ThemeChoice::Builtin(
+            ThemePreset::parse("dracula").unwrap()
+        )));
         assert_eq!(
             choices.last(),
             Some(&ThemeChoice::Custom {
@@ -217,7 +220,7 @@ mod tests {
     #[test]
     fn resolve_theme_falls_back_to_the_default_theme_for_unknown_name() {
         let resolved = resolve_theme("definitely-not-a-real-theme-xyz", None);
-        assert_eq!(resolved.theme, ThemePreset::Rozi.theme());
+        assert_eq!(resolved.theme, ThemePreset::ROZI.theme());
         assert!(!resolved.warnings.is_empty());
         assert!(resolved.watch_path.is_none());
     }
@@ -237,7 +240,7 @@ mod tests {
         assert_eq!(crate::state::rozi_style(&theme).fg, green);
         assert_ne!(
             crate::state::rozi_style(&theme).fg,
-            crate::state::rozi_style(&ThemePreset::Lipan.theme()).fg
+            crate::state::rozi_style(&ThemePreset::LIPAN.theme()).fg
         );
     }
 
@@ -245,7 +248,7 @@ mod tests {
     fn system_theme_falls_back_to_ansi_when_host_colors_are_unavailable() {
         let resolved = resolve_theme("system", None);
 
-        assert_eq!(resolved.theme, ThemePreset::Ansi.theme());
+        assert_eq!(resolved.theme, ThemePreset::ANSI.theme());
         assert_eq!(resolved.warnings.len(), 1);
         assert!(resolved.warnings[0].contains("using ANSI"));
     }

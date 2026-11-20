@@ -179,3 +179,20 @@ screen = '''
 ─────────────────────────────────────────────────────────────────────────────────────────
   ⏸ manual mode on · ? for shortcuts · ← for agents
 '''
+
+# Captured from Claude Code 2.1.329 on 2026-11-20. The live footer keeps automated
+# input out while Claude waits for quota, even when the integration reports an error.
+[[case]]
+name = "usage-limit-pause"
+state = "blocked"
+screen = '''
+● Usage limit reached again · continuing automatically at 2pm · esc to cancel
+  ⎿  You've hit your 5-hour limit · resets 2pm (Europe/Warsaw)
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ Usage limit reached · limit resets 2pm
+    Continuing automatically at 2pm · Esc to cancel · /usage-credits to continue now
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+'''

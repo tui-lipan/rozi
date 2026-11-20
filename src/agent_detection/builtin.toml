@@ -189,6 +189,14 @@ state = "blocked"
 scope = "footer"
 screen = { any_of = ["Enter to confirm · Esc to cancel"] }
 
+# Claude can report an error while its current turn waits for the quota to reset. The warning
+# directly under the composer divider is live status. Earlier quota errors stay in the transcript.
+[[agents.states]]
+state = "blocked"
+scope = "footer"
+outranks_reports = true
+screen = { regex = true, any_of = ["(?m)^─{8,}[ \\t]*\\n[ \\t]*⚠[ \\t]+usage limit reached\\b"] }
+
 # Claude keeps accepting a queued or steering prompt while a turn streams. As soon as the user
 # types, the composer grows and its compact status row drops `esc to interrupt`; even a one-line
 # draft pushes the live activity row outside the eight-row footer window. The animated activity

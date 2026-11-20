@@ -1120,7 +1120,17 @@ impl SessionServer {
             let response = response.clone();
             return self.finish_request_turn(target, TurnOutcome::Answered(response));
         }
+        // Reports can say the run stopped while the live screen is still waiting, for example
+        // while Claude is paused at its usage limit. Keep the request open until the pause clears.
         let stopped = runtime.state.is_stopped();
+        if stopped
+            && self.validate_agent_input_reference(target).is_ok()
+            && self
+                .refuse_blocked_agent_screen(target.pane.pane_id)
+                .is_err()
+        {
+            return;
+        }
         self.agent_requests.observe(target, stopped);
         let undetected_turn = self.agent_requests.undetected_turn;
         let slot = self
@@ -1201,7 +1211,9 @@ impl SessionServer {
             .is_some_and(|since| self.agent_requests.quiet_since(target.pane.pane_id, *since));
         let blocked = !quiet
             || self.typing_blocker(target).is_some()
-            || self.refuse_unannounced_dialog(target.pane.pane_id).is_err();
+            || self
+                .refuse_blocked_agent_screen(target.pane.pane_id)
+                .is_err();
         if blocked {
             // Typed nowhere yet; the next pump looks again, until the turn is given up on.
             return true;
@@ -1404,7 +1416,7 @@ impl SessionServer {
         {
             return Readiness::Wait("waiting for the agent's pane to settle".into());
         }
-        if let Err(response) = self.refuse_unannounced_dialog(to.pane.pane_id) {
+        if let Err(response) = self.refuse_blocked_agent_screen(to.pane.pane_id) {
             return Readiness::Wait(error_text(response));
         }
         if recorded_session.is_none() {

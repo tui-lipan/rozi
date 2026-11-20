@@ -391,8 +391,8 @@ pub fn evaluate(
     Some(DetectedAgentState::Idle)
 }
 
-/// Whether this observation matches a rule that says a dialog is up whatever a report says.
-pub fn dialog_outranks_reports(
+/// Whether the live screen shows a blocker that takes precedence over a report.
+pub fn blocked_screen_outranks_reports(
     definition: &AgentDefinition,
     input: AgentDetectionInput<'_>,
 ) -> bool {

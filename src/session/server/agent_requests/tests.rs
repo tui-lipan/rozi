@@ -438,6 +438,48 @@ fn a_run_that_answers_a_request_counts_apart() {
 }
 
 #[test]
+fn a_claude_usage_limit_pause_holds_queued_and_active_requests() {
+    let mut rig = Rig::new(&[3]);
+    rig.move_to(3, "conversation");
+    let pane = rig.server.panes.get_mut(&3).unwrap();
+    pane.agent.identity = Some("claude".into());
+    pane.screen_mut().resize(10, 100);
+    let show = |rig: &mut Rig, state, footer: &str| {
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        pane.runtime.integration.as_mut().unwrap().state = state;
+        pane.screen_mut().process_bytes(b"\x1b[2J\x1b[H");
+        pane.screen_mut().process_bytes(footer.as_bytes());
+        rig.server.pump_agent_requests();
+    };
+    let quota = "────────────────\r\n  ⚠ Usage limit reached · limit resets 2pm";
+    show(&mut rig, protocol::AgentState::Error, quota);
+    let request = rig.ask(None, 3, "Review the fix");
+    assert_eq!(request.state, AgentRequestState::Queued);
+    assert_eq!(
+        request.reason.as_deref(),
+        Some("the agent's screen is blocked")
+    );
+
+    show(
+        &mut rig,
+        protocol::AgentState::Idle,
+        "● Usage limit reached · continuing automatically at 2pm · esc to cancel\r\n❯",
+    );
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
+    assert!(rig.typed_into(3, &format!("Request {}", request.id)));
+
+    show(&mut rig, protocol::AgentState::Working, "");
+    show(&mut rig, protocol::AgentState::Error, quota);
+    let waiting = rig.request(&request.id);
+    assert_eq!(waiting.state, AgentRequestState::Active);
+    assert!(waiting.response.is_none());
+
+    show(&mut rig, protocol::AgentState::Working, "");
+    assert!(rig.reply(3, &request.id, "Reviewed").ok);
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Answered);
+}
+
+#[test]
 fn a_request_that_leaves_no_trace_is_typed_once_more_then_fails() {
     let mut rig = Rig::new(&[3]);
     rig.server.agent_requests.delivery_check = Duration::ZERO;

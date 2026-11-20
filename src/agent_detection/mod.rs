@@ -148,13 +148,13 @@ pub(crate) fn observe(
     }
 }
 
-/// Whether the pane shows a dialog that a report saying the agent is ready cannot speak for.
-pub(crate) fn dialog_outranks_reports(
+/// Whether the visible screen blocks automated input regardless of the agent report.
+pub(crate) fn blocked_screen_outranks_reports(
     definition: &AgentDefinition,
     screen: &str,
     title: &str,
 ) -> bool {
-    definition::dialog_outranks_reports(
+    definition::blocked_screen_outranks_reports(
         definition,
         AgentDetectionInput {
             screen: &screen.to_lowercase(),

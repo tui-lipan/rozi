@@ -66,6 +66,22 @@ impl AgentResponseStore {
         }
     }
 
+    /// The responses after `fence` that come after `seen` too: those not yet read.
+    pub fn after_seen(
+        &self,
+        reference: &AgentRef,
+        fence: &AgentResponseFence,
+        seen: Option<&AgentResponse>,
+    ) -> Option<&AgentResponse> {
+        let fence = AgentResponseFence {
+            generation: seen.map_or(fence.generation, |seen| {
+                seen.response_id.max(fence.generation)
+            }),
+            native_session: fence.native_session.clone(),
+        };
+        self.after(reference, &fence)
+    }
+
     pub fn latest(
         &self,
         reference: &AgentRef,

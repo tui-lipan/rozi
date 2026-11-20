@@ -458,15 +458,16 @@ host gets a copy of each file first, kept until that session stops, as for [past
 if the ask fails, the copies are removed.
 
 rozi types the request into the other agent once it is idle, done, or in error, shows no blocker
-such as an approval dialog or Claude Code's usage-limit pause, and
-nobody has typed into its pane for two seconds. The typed text names the request and how to answer
+such as an approval dialog or Claude Code's usage-limit pause, and nobody has typed into its pane
+and its screen has not changed for two seconds. The typed text names the request and how to answer
 it: `rozi agents reply <ID> --format text --stdin`, with the answer on stdin. If the agent neither
 starts a turn nor shows the request within ten seconds, rozi types it once more when nothing on its
-screen changed, and otherwise fails it: a program still starting can drop what is typed into it. An
-agent receives one request at a time. An approval dialog or usage-limit pause keeps an active
+screen changed, and otherwise fails it: a program still starting can drop what is typed into it.
+Without `--now`, an agent receives one request at a time. An approval dialog or usage-limit pause keeps an active
 request open. Without a reply, the answer is the agent's
 [integration response](#read-the-agents-response), or else its terminal
-when the turn ends, read the same way, including an alternate-screen transcript. An agent that will
+once the turn has ended and the screen has settled, read the same way, including an
+alternate-screen transcript. An agent that will
 answer after its turn, such as when a background command finishes, runs `rozi agents reply <ID>
 --format text --later` first: the request then stays `active` past the turn, and the agent can take
 the next request meanwhile. What the agent asks while it owes a request belongs to that request; an
@@ -476,13 +477,24 @@ agents:*)` in its permissions. Codex's `workspace-write` sandbox blocks the conn
 a reply needs, so its requests are answered from its terminal; allow it with
 `sandbox_workspace_write.network_access = true`.
 
+`--now` types the request in at once, even while the agent works or answers another request, for
+agents that take typed input mid-turn as a follow-up, such as Claude Code, Codex, and Antigravity.
+It is refused with `agent-blocked` while the agent shows a dialog, and with `conflict` while someone
+is typing into its pane or once four requests were typed in while it answers another. A request
+typed in while the agent was busy is answered once the agent has stayed stopped for two seconds, so a
+follow-up turn it starts at once still counts. Without replies, the agent's last integration
+responses answer those requests in order, the last response the last request.
+
 | State | Meaning |
 | --- | --- |
 | `queued` | Not typed yet; `reason` says what it waits for. A reply answers it without typing it. |
-| `active` | Typed into the agent, or promised a later reply. |
+| `active` | Typed into the agent, or promised a later reply; `reason` says which. |
 | `answered` | `response` holds the answer. The first answer stands; a different reply is refused with `conflict`. |
 | `failed` | The agent exited, was replaced, or moved to another conversation before answering. |
 | `cancelled` | Cancelled by whoever asked, or the asking agent left or changed conversation before delivery. |
+
+JSON gives each request that was typed in its `delivered_at_unix_ms`; a request cancelled after
+that says so in its `reason`, since the agent may still act on it.
 
 `agents await` prints the answer, or the request's state when it failed or was cancelled, and
 takes `--require-reply` too. A request asked while answering another belongs to its chain (`parent`

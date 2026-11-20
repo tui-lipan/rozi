@@ -42,6 +42,29 @@ const RECENT_LINES: usize = 500;
 /// Why a request fails when its agent never took it.
 const NOT_TAKEN: &str =
     "the agent did not take the request: it never appeared on the agent's screen";
+/// How long a stopped agent whose screen keeps changing is waited on before it counts as still.
+/// Some agents animate even at rest, and those must not hold their requests forever.
+const SCREEN_SETTLE_LIMIT: Duration = Duration::from_secs(10);
+/// What an active request says once it has been typed into its agent.
+const DELIVERED: &str = "typed into the agent; waiting for its answer";
+/// What an active request says once typed into an agent that was busy at the time.
+const DELIVERED_MID_TURN: &str =
+    "typed into the agent while it was busy; it takes it as a follow-up";
+/// How many requests may be typed into an agent with `now` during a run it is answering another.
+const MAX_RIDERS: usize = 4;
+
+/// What an ask asks for besides its target and text.
+#[derive(Default)]
+pub(super) struct AskOptions<'a> {
+    /// The request the asking agent asks on behalf of.
+    pub parent: Option<&'a str>,
+    /// An earlier request whose conversation this one continues.
+    pub follows: Option<&'a str>,
+    /// How an asker that is not an agent of this session names itself.
+    pub asker_label: Option<String>,
+    /// Type the request in at once, or refuse it.
+    pub now: bool,
+}
 
 pub(super) struct AgentRequestStore {
     /// Oldest first.
@@ -52,6 +75,10 @@ pub(super) struct AgentRequestStore {
     /// When input was last written to a pane, by a client or a headless command, kept for one
     /// quiet window.
     pane_input: HashMap<PaneId, Instant>,
+    /// When a request was last typed into a pane, to tell that input from someone typing.
+    request_input: HashMap<PaneId, Instant>,
+    /// Each watched pane's content generation, and since when it has had it.
+    screens: HashMap<PaneId, (u64, Instant)>,
     /// Since when each target has been seen stopped.
     stopped_since: HashMap<protocol::AgentRef, Instant>,
     pub(super) quiet: Duration,
@@ -71,6 +98,8 @@ impl Default for AgentRequestStore {
             slots: HashMap::new(),
             awaits: HashMap::new(),
             pane_input: HashMap::new(),
+            request_input: HashMap::new(),
+            screens: HashMap::new(),
             stopped_since: HashMap::new(),
             quiet: QUIET_WINDOW,
             undetected_turn: UNDETECTED_TURN,
@@ -149,6 +178,16 @@ fn shown_in_asker_label(c: char) -> bool {
 
 struct DeliverySlot {
     request: String,
+    /// Requests typed in with `now` while this one was being answered. The agent takes them in
+    /// the same run, so they settle with it unless answered first.
+    riders: Vec<String>,
+    /// Something was typed in while the agent was busy, which it may take as a follow-up turn
+    /// straight after this one: the run ends only once the agent has stayed stopped for a quiet
+    /// window, and its requests are matched to the integration's answers.
+    mid_turn: bool,
+    /// What the agent's integration published during the run, oldest first: the last answers
+    /// one request each, as many as the run holds.
+    answers: Vec<AgentResponse>,
     tracker: AgentTurnTracker,
     /// When the request was last typed.
     delivered: Instant,
@@ -193,6 +232,8 @@ enum Readiness {
 enum TurnOutcome {
     Failed(String),
     Answered(AgentResponse),
+    /// Answered by the run's [`DeliverySlot::answers`].
+    Published,
     /// Ended with nothing to answer with.
     Unanswered,
 }
@@ -235,6 +276,44 @@ impl AgentRequestStore {
     /// The request `agent` is answering, if any.
     pub(super) fn answering(&self, agent: &protocol::AgentRef) -> Option<&str> {
         self.slots.get(agent).map(|slot| slot.request.as_str())
+    }
+
+    /// Whether request `id` was typed into `agent` in the run it is in now.
+    fn in_run(&self, agent: &protocol::AgentRef, id: &str) -> bool {
+        self.slots
+            .get(agent)
+            .is_some_and(|slot| slot.request == id || slot.riders.iter().any(|rider| rider == id))
+    }
+
+    /// Whether someone other than a request typed into `pane` within the quiet window.
+    fn someone_typed(&self, pane: PaneId) -> bool {
+        self.pane_input.get(&pane).is_some_and(|input| {
+            input.elapsed() < self.quiet
+                && self
+                    .request_input
+                    .get(&pane)
+                    .is_none_or(|typed| typed < input)
+        })
+    }
+
+    /// Note what `pane` shows now.
+    fn watch_screen(&mut self, pane: PaneId, generation: u64) {
+        let seen = self
+            .screens
+            .entry(pane)
+            .or_insert((generation, Instant::now()));
+        if seen.0 != generation {
+            *seen = (generation, Instant::now());
+        }
+    }
+
+    /// Whether `pane` has shown the same thing for a quiet window, or its agent has been stopped
+    /// too long to keep waiting for a screen that will not settle.
+    fn screen_still(&self, pane: PaneId, stopped_since: Instant) -> bool {
+        self.screens
+            .get(&pane)
+            .is_some_and(|(_, since)| since.elapsed() >= self.quiet)
+            || stopped_since.elapsed() >= SCREEN_SETTLE_LIMIT
     }
 
     pub(super) fn remove_awaits(&mut self, client: ClientId) {
@@ -392,7 +471,9 @@ impl AgentRequestStore {
             .requests
             .iter()
             .filter(|stored| {
-                self.answering(from) == Some(stored.info.id.as_str())
+                (self.in_run(from, &stored.info.id)
+                    && stored.info.state == AgentRequestState::Active)
+                    || self.answering(from) == Some(stored.info.id.as_str())
                     || (stored.later
                         && stored.info.state == AgentRequestState::Active
                         && stored.info.to == *from)
@@ -442,8 +523,7 @@ impl AgentRequestStore {
             .requests
             .iter()
             .filter(|stored| {
-                !stored.info.state.is_resolved()
-                    || self.answering(&stored.info.to) == Some(stored.info.id.as_str())
+                !stored.info.state.is_resolved() || self.in_run(&stored.info.to, &stored.info.id)
             })
             .count();
         if live >= MAX_LIVE {
@@ -488,15 +568,14 @@ impl AgentRequestStore {
         request: &AgentRequestInfo,
         text: &str,
     ) -> std::result::Result<(), ControlResponse> {
-        if self.answering(&request.to) != Some(request.id.as_str()) {
+        if !self.in_run(&request.to, &request.id) {
             return Ok(());
         }
         let protected_bytes: usize = self
             .requests
             .iter()
             .filter(|stored| {
-                stored.info.state.is_resolved()
-                    && self.answering(&stored.info.to) == Some(stored.info.id.as_str())
+                stored.info.state.is_resolved() && self.in_run(&stored.info.to, &stored.info.id)
             })
             .map(|stored| request_bytes(&stored.info))
             .sum();
@@ -566,6 +645,8 @@ impl AgentRequestStore {
     fn prune(&mut self) {
         let quiet = self.quiet;
         self.pane_input.retain(|_, input| input.elapsed() < quiet);
+        self.request_input
+            .retain(|_, typed| typed.elapsed() < quiet);
         let targets: HashSet<protocol::AgentRef> = self
             .requests
             .iter()
@@ -575,6 +656,8 @@ impl AgentRequestStore {
             .collect();
         self.stopped_since
             .retain(|agent, _| targets.contains(agent));
+        let panes: HashSet<PaneId> = targets.iter().map(|agent| agent.pane.pane_id).collect();
+        self.screens.retain(|pane, _| panes.contains(pane));
         let resolved = || {
             self.requests
                 .iter()
@@ -584,8 +667,7 @@ impl AgentRequestStore {
         let mut resolved_bytes: usize = resolved().map(|stored| request_bytes(&stored.info)).sum();
         while resolved_bytes > MAX_RESOLVED_BYTES || resolved_count > MAX_RESOLVED {
             let Some(index) = self.requests.iter().position(|stored| {
-                stored.info.state.is_resolved()
-                    && self.answering(&stored.info.to) != Some(&stored.info.id)
+                stored.info.state.is_resolved() && !self.in_run(&stored.info.to, &stored.info.id)
             }) else {
                 break;
             };
@@ -666,10 +748,14 @@ impl SessionServer {
         from: Option<protocol::AgentRef>,
         target: AgentTarget,
         prompt: String,
-        parent: Option<&str>,
-        follows: Option<&str>,
-        asker_label: Option<String>,
+        options: AskOptions<'_>,
     ) -> ControlResponse {
+        let AskOptions {
+            parent,
+            follows,
+            asker_label,
+            now,
+        } = options;
         if prompt.trim().is_empty() {
             return invalid("a request needs prompt text");
         }
@@ -698,6 +784,14 @@ impl SessionServer {
         if let Err(response) = self.agent_requests.admit(&to, lineage.as_ref()) {
             return response;
         }
+        let now_state = if now {
+            match self.now_readiness(&to) {
+                Ok(state) => Some(state),
+                Err(response) => return response,
+            }
+        } else {
+            None
+        };
         let from_native_session = from
             .as_ref()
             .and_then(|from| self.response_native_session(from));
@@ -713,7 +807,7 @@ impl SessionServer {
             Err(response) => return response,
         };
         let id = new_request_id();
-        let now = crate::runtime_metrics::unix_time_millis();
+        let created = crate::runtime_metrics::unix_time_millis();
         let (parent, root, depth) = match lineage {
             Some((parent, root, depth)) => (Some(parent), root, depth),
             None => (None, id.clone(), 1),
@@ -737,14 +831,15 @@ impl SessionServer {
             to_label,
             from_native_session,
             from,
-            to_native_session,
-            to,
+            to_native_session: to_native_session.clone(),
+            to: to.clone(),
             prompt,
             state: AgentRequestState::Queued,
             reason: Some("waiting for the agent to be ready".into()),
             response: None,
-            created_at_unix_ms: now,
-            updated_at_unix_ms: now,
+            created_at_unix_ms: created,
+            updated_at_unix_ms: created,
+            delivered_at_unix_ms: None,
         };
         self.agent_requests.revision += 1;
         self.agent_requests.requests.push(StoredRequest {
@@ -752,8 +847,76 @@ impl SessionServer {
             depth,
             later: false,
         });
+        if let Some(state) = now_state {
+            if to_native_session.is_none() {
+                let native_session = self.response_native_session(&to);
+                let info = self.agent_requests.info_mut(&id).expect("just asked");
+                info.to_native_session = native_session;
+            }
+            if let Err(reason) = self.deliver_request(&id, state) {
+                let info = self.agent_requests.info_mut(&id).expect("just asked");
+                settle(info, AgentRequestState::Failed, Some(reason));
+            }
+        }
         self.pump_agent_requests();
         self.agent_request(&id)
+    }
+
+    /// The state of an agent a request may be typed into now, whatever it is doing, or why not.
+    /// Only what would make the typing land somewhere else refuses it: a dialog, or someone else's
+    /// draft.
+    fn now_readiness(
+        &mut self,
+        to: &protocol::AgentRef,
+    ) -> std::result::Result<protocol::AgentState, ControlResponse> {
+        let runtime = self
+            .request_agent(to)
+            .map_err(|reason| ControlResponse::error_with(ControlErrorCode::AgentGone, reason))?;
+        let blocked = || {
+            ControlResponse::error_with(
+                ControlErrorCode::AgentBlocked,
+                "the agent shows a dialog; refusing to type a request into it",
+            )
+        };
+        if runtime.state == protocol::AgentState::Blocked {
+            return Err(blocked());
+        }
+        if self.refuse_blocked_agent_screen(to.pane.pane_id).is_err() {
+            return Err(blocked());
+        }
+        // A launching agent's work is its loading, which can drop what is typed into it.
+        let loading = runtime.state == protocol::AgentState::Working
+            && to.slot.is_none()
+            && self
+                .panes
+                .get(&to.pane.pane_id)
+                .is_some_and(|pane| pane.agent.launch.is_some());
+        if loading {
+            return Err(conflict(
+                "the agent is still starting; ask without --now to queue the request",
+            ));
+        }
+        if self.agent_requests.someone_typed(to.pane.pane_id) {
+            return Err(conflict(
+                "someone is typing into the agent's pane; ask again once they stop, or without --now to queue it",
+            ));
+        }
+        if let Some(reason) = self.typing_blocker(to) {
+            return Err(conflict(reason));
+        }
+        if self
+            .agent_requests
+            .slots
+            .get(to)
+            .is_some_and(|slot| slot.riders.len() >= MAX_RIDERS)
+        {
+            return Err(conflict(format!(
+                "{} requests were already typed into the agent while it answers request `{}`; ask without --now to queue it",
+                MAX_RIDERS + 1,
+                self.agent_requests.answering(to).unwrap_or_default()
+            )));
+        }
+        Ok(runtime.state)
     }
 
     pub(super) fn reply_to_request(
@@ -849,7 +1012,17 @@ impl SessionServer {
         let to = request.to.clone();
         // The conversation the turn bound itself to, so the reply comes from the same one.
         let mut turn_session = None;
-        if self.agent_requests.answering(&to) == Some(id) {
+        if let Some(slot) = self.agent_requests.slots.get(&to)
+            && (slot.riders.iter().any(|rider| rider == id)
+                || (slot.request == id && !slot.riders.is_empty()))
+        {
+            // The run goes on for what was typed in with it. The request keeps its place, so the
+            // answer its turn publishes is not taken for another's; the run's end skips it.
+            turn_session = slot
+                .tracker
+                .fence()
+                .and_then(|fence| fence.native_session.clone());
+        } else if self.agent_requests.answering(&to) == Some(id) {
             let slot = self
                 .agent_requests
                 .slots
@@ -877,7 +1050,7 @@ impl SessionServer {
         settle(
             &mut stored.info,
             AgentRequestState::Active,
-            Some("the agent will reply later".into()),
+            Some(crate::control::REPLY_LATER_REASON.into()),
         );
         let deferred = stored.info.clone();
         self.pump_agent_requests();
@@ -1015,12 +1188,13 @@ impl SessionServer {
             }
             AgentRequestState::Queued | AgentRequestState::Active => {}
         }
+        let reason = if request.delivered_at_unix_ms.is_some() {
+            "cancelled by the requester after it was typed into the agent, which may still act on it"
+        } else {
+            "cancelled by the requester"
+        };
         let info = self.agent_requests.info_mut(id).expect("looked up above");
-        settle(
-            info,
-            AgentRequestState::Cancelled,
-            Some("cancelled by the requester".into()),
-        );
+        settle(info, AgentRequestState::Cancelled, Some(reason.into()));
         let cancelled = info.clone();
         self.pump_agent_requests();
         ControlResponse::ok(cancelled)
@@ -1089,6 +1263,7 @@ impl SessionServer {
     /// answer the awaits that can be answered.
     pub(super) fn pump_agent_requests(&mut self) {
         if self.agent_requests.has_work() {
+            self.watch_request_screens();
             let targets: Vec<_> = self.agent_requests.slots.keys().cloned().collect();
             for target in targets {
                 self.settle_request_turn(&target);
@@ -1098,6 +1273,28 @@ impl SessionServer {
             self.answer_request_awaits();
         }
         self.agent_requests.prune();
+    }
+
+    /// Note what the pane of every agent with a request to take or answer shows now.
+    fn watch_request_screens(&mut self) {
+        let panes: HashSet<PaneId> = self
+            .agent_requests
+            .requests
+            .iter()
+            .filter(|stored| stored.info.state == AgentRequestState::Queued)
+            .map(|stored| stored.info.to.pane.pane_id)
+            .chain(
+                self.agent_requests
+                    .slots
+                    .keys()
+                    .map(|agent| agent.pane.pane_id),
+            )
+            .collect();
+        for pane in panes {
+            if let Some(generation) = self.panes.get(&pane).map(|pane| pane.content_generation) {
+                self.agent_requests.watch_screen(pane, generation);
+            }
+        }
     }
 
     fn settle_request_turn(&mut self, target: &protocol::AgentRef) {
@@ -1118,7 +1315,11 @@ impl SessionServer {
                 TurnOutcome::Failed("the agent moved to another conversation".into()),
             );
         }
-        if let Some(response) = slot.tracker.fresh_response(&self.agent_responses, target) {
+        self.collect_run_answers(target);
+        let slot = self.agent_requests.slots.get(target).expect("listed slot");
+        if !slot.mid_turn
+            && let Some(response) = slot.answers.first()
+        {
             let response = response.clone();
             return self.finish_request_turn(target, TurnOutcome::Answered(response));
         }
@@ -1126,23 +1327,31 @@ impl SessionServer {
         if !self.request_turn_ready(target, runtime.state) {
             return;
         }
+        let rested = self.agent_rested(target);
         let undetected_turn = self.agent_requests.undetected_turn;
-        let slot = self
-            .agent_requests
-            .slots
-            .get_mut(target)
-            .expect("listed slot");
+        let slot = slot_mut(&mut self.agent_requests, target);
         slot.tracker.adopt_native_session(native_session);
         slot.departed |= !stopped;
         let elapsed = slot.delivered.elapsed();
         let turn_ended = slot.tracker.turn_ended(stopped, Some(runtime.state));
+        if slot.mid_turn {
+            // Typed in while the agent was busy, the request may have been taken in that turn or
+            // in one straight after it: only an agent that has come to rest has had its say.
+            if !rested || !(turn_ended || slot.departed || elapsed >= undetected_turn) {
+                return;
+            }
+            if !slot.answers.is_empty() {
+                return self.finish_request_turn(target, TurnOutcome::Published);
+            }
+            return self.answer_request_from_screen(target);
+        }
         let unconfirmed = stopped && !slot.departed && !slot.shown && !turn_ended;
         let undetected = stopped && !slot.departed && elapsed >= undetected_turn;
         let id = slot.request.clone();
         // Neither a turn, a reply, nor the screen has shown that the agent took the request.
         if unconfirmed
             && (undetected || elapsed >= self.agent_requests.delivery_check)
-            && self.awaiting_delivery(&id)
+            && self.settles_in_run(&id)
         {
             match self.delivery(target) {
                 Delivery::Shown => {
@@ -1159,9 +1368,44 @@ impl SessionServer {
                 }
             }
         }
-        if turn_ended || undetected {
+        // An agent can report the end of its turn while it is still writing what it answers.
+        if (turn_ended || undetected) && rested {
             self.answer_request_from_screen(target);
         }
+    }
+
+    /// Keep what `target`'s integration published since the last look, so a run that takes several
+    /// turns keeps each turn's answer even once the response journal has dropped it.
+    fn collect_run_answers(&mut self, target: &protocol::AgentRef) {
+        let slot = slot_mut(&mut self.agent_requests, target);
+        let Some(fence) = slot.tracker.fence() else {
+            return;
+        };
+        while let Some(response) =
+            self.agent_responses
+                .after_seen(target, fence, slot.answers.last())
+        {
+            slot.answers.push(response.clone());
+        }
+        // Each request takes one answer, counted from the last.
+        let keep = MAX_RIDERS + 1;
+        if slot.answers.len() > keep {
+            slot.answers.drain(..slot.answers.len() - keep);
+        }
+    }
+
+    /// Whether `target` has been stopped for a quiet window with its screen still, so a turn that
+    /// seems to have ended has not merely paused or is still being written out.
+    fn agent_rested(&self, target: &protocol::AgentRef) -> bool {
+        let Some(&since) = self.agent_requests.stopped_since.get(target) else {
+            return false;
+        };
+        let quiet = self.agent_requests.quiet;
+        let screen_still = self.agent_requests.screen_still(target.pane.pane_id, since);
+        let slot = self.agent_requests.slots.get(target);
+        let stopped_long_enough =
+            !slot.is_some_and(|slot| slot.mid_turn) || since.elapsed() >= quiet;
+        screen_still && stopped_long_enough
     }
 
     /// A screen can clear before the agent reports work again. Wait out that gap before
@@ -1195,9 +1439,10 @@ impl SessionServer {
         !waiting_after_screen_block
     }
 
-    /// Whether request `id` still needs proof its agent took it: it is unanswered, and its agent
-    /// has not promised a later reply, which it could only do having read it.
-    fn awaiting_delivery(&self, id: &str) -> bool {
+    /// Whether request `id` is owed by the run it was typed in: it is unanswered, and its agent
+    /// has not promised a later reply. Only such a request needs proof its agent took it, since a
+    /// promise could only follow reading it, and only it is settled by the run's end.
+    fn settles_in_run(&self, id: &str) -> bool {
         self.agent_requests
             .get(id)
             .is_some_and(|stored| stored.info.state == AgentRequestState::Active && !stored.later)
@@ -1254,6 +1499,9 @@ impl SessionServer {
         if typed.is_err() {
             return false;
         }
+        self.agent_requests
+            .request_input
+            .insert(target.pane.pane_id, Instant::now());
         let slot = self
             .agent_requests
             .slots
@@ -1278,12 +1526,10 @@ impl SessionServer {
         let slot = self.agent_requests.slots.get(target).expect("listed slot");
         let id = slot.request.clone();
         // A request its agent already replied to needs nothing from the screen.
-        let Some(fence) = slot
-            .tracker
-            .fence()
-            .cloned()
-            .filter(|_| self.request_active(&id))
-        else {
+        let open = std::iter::once(&slot.request)
+            .chain(&slot.riders)
+            .any(|id| self.settles_in_run(id));
+        let Some(fence) = slot.tracker.fence().cloned().filter(|_| open) else {
             return self.finish_request_turn(target, TurnOutcome::Unanswered);
         };
         let wait = super::agent_history::HistoryWait {
@@ -1332,24 +1578,38 @@ impl SessionServer {
         if let Some(pane) = self.panes.get_mut(&target.pane.pane_id) {
             pane.agent.end_request_run(target);
         }
-        if !self.request_active(&slot.request) {
-            return;
-        }
+        let published = matches!(outcome, TurnOutcome::Published);
         let (state, reason, response) = match outcome {
             TurnOutcome::Failed(reason) => (AgentRequestState::Failed, Some(reason), None),
             TurnOutcome::Answered(response) => (AgentRequestState::Answered, None, Some(response)),
+            TurnOutcome::Published => (AgentRequestState::Answered, None, None),
             TurnOutcome::Unanswered => (
                 AgentRequestState::Failed,
                 Some("the turn ended with nothing on screen".into()),
                 None,
             ),
         };
-        let info = self
-            .agent_requests
-            .info_mut(&slot.request)
-            .expect("checked above");
-        info.response = response;
-        settle(info, state, reason);
+        // What was typed in during the run is answered by its end as much as the first request.
+        // The integration answers each turn: the agent takes what was typed in order, so the last
+        // answer is the last request's, and requests it folded into one turn share that turn's.
+        let count = 1 + slot.riders.len();
+        for (index, id) in std::iter::once(slot.request).chain(slot.riders).enumerate() {
+            if !self.settles_in_run(&id) {
+                continue;
+            }
+            let mut response = if published {
+                let answer = (slot.answers.len() + index).saturating_sub(count);
+                slot.answers.get(answer).cloned()
+            } else {
+                response.clone()
+            };
+            if let Some(response) = response.as_mut() {
+                response.response_id = self.agent_responses.next_id();
+            }
+            let info = self.agent_requests.info_mut(&id).expect("checked above");
+            info.response = response;
+            settle(info, state, reason.clone());
+        }
     }
 
     fn deliver_queued_requests(&mut self) {
@@ -1428,11 +1688,30 @@ impl SessionServer {
         if recorded_session.is_some() && native_session != recorded_session {
             return Readiness::Fail("the agent moved to another conversation".into());
         }
+        if let Some(busy) = self.agent_requests.answering(&to) {
+            let reason = match self
+                .agent_requests
+                .get(busy)
+                .map(|stored| stored.info.state)
+            {
+                Some(AgentRequestState::Answered) => {
+                    format!("the agent answered request `{busy}` and is finishing its turn")
+                }
+                Some(AgentRequestState::Active) => {
+                    format!("waiting for the agent to finish request `{busy}`")
+                }
+                _ => format!("waiting for the agent to end its turn on request `{busy}`"),
+            };
+            if !runtime.state.is_stopped() {
+                self.agent_requests.observe(&to, false);
+            }
+            return Readiness::Wait(reason);
+        }
         if !runtime.state.is_stopped() {
             self.agent_requests.observe(&to, false);
             return Readiness::Wait(format!("the agent is {}", runtime.state.as_str()));
         }
-        if let Some(reason) = self.delivery_blocker(&to) {
+        if let Some(reason) = self.typing_blocker(&to) {
             return Readiness::Wait(reason);
         }
         if let Err(response) = self.refuse_blocked_agent_screen(to.pane.pane_id) {
@@ -1443,25 +1722,24 @@ impl SessionServer {
             .agent_requests
             .observe(&to, true)
             .expect("stopped agent has a timestamp");
+        let screen_still = self
+            .agent_requests
+            .screen_still(to.pane.pane_id, stopped_since);
         if !self
             .agent_requests
             .quiet_since(to.pane.pane_id, stopped_since)
         {
             return Readiness::Wait("waiting for the agent's pane to settle".into());
         }
+        // An agent can say it stopped while it is still writing out its last answer.
+        if !screen_still {
+            return Readiness::Wait("the agent's screen is still changing".into());
+        }
         if recorded_session.is_none() {
             let info = self.agent_requests.info_mut(id).expect("queued request");
             info.to_native_session = native_session;
         }
         Readiness::Ready(runtime.state)
-    }
-
-    /// What keeps a stopped agent from taking a request now, other than time.
-    fn delivery_blocker(&self, to: &protocol::AgentRef) -> Option<String> {
-        if let Some(busy) = self.agent_requests.answering(to) {
-            return Some(format!("the agent is answering request `{busy}`"));
-        }
-        self.typing_blocker(to)
     }
 
     /// What makes typing into `to`'s pane unsafe now, whether a request is first typed or typed
@@ -1479,7 +1757,9 @@ impl SessionServer {
         None
     }
 
-    /// Type request `id` into its target, armed to recognize the end of the turn it starts.
+    /// Type request `id` into its target, armed to recognize the end of the turn it starts. An
+    /// agent already answering another request takes it in that run; one that is busy takes it
+    /// as a follow-up.
     fn deliver_request(
         &mut self,
         id: &str,
@@ -1498,31 +1778,54 @@ impl SessionServer {
             .recent_pane_text(to.pane.pane_id)
             .map(|text| fingerprint(&text))
             .unwrap_or_default();
+        let busy = !state.is_stopped();
+        let rider = self.agent_requests.slots.contains_key(&to);
         // The delivery may end without the agent ever leaving its stopped state, so the next
         // request waits out a fresh quiet window instead of inheriting the one before it.
         self.agent_requests.stopped_since.remove(&to);
-        self.agent_requests.slots.insert(
-            to.clone(),
-            DeliverySlot {
-                request: id.to_owned(),
-                tracker: AgentTurnTracker::new(true, Some(state), false, Some(fence)),
-                delivered: Instant::now(),
-                departed: false,
-                waiting_after_screen_block: false,
-                shown: false,
-                attempts: 1,
-                before,
-            },
-        );
+        if !rider {
+            self.agent_requests.slots.insert(
+                to.clone(),
+                DeliverySlot {
+                    request: id.to_owned(),
+                    riders: Vec::new(),
+                    mid_turn: busy,
+                    answers: Vec::new(),
+                    // A busy agent's turn ends the first time it stops.
+                    tracker: AgentTurnTracker::new(!busy, Some(state), false, Some(fence)),
+                    delivered: Instant::now(),
+                    departed: busy,
+                    waiting_after_screen_block: false,
+                    shown: false,
+                    attempts: 1,
+                    before,
+                },
+            );
+        }
         if let Err(response) = self.session_write_input(to.pane.pane_id, bytes) {
-            self.agent_requests.slots.remove(&to);
+            if !rider {
+                self.agent_requests.slots.remove(&to);
+            }
             return Err(error_text(response));
         }
-        if let Some(pane) = self.panes.get_mut(&to.pane.pane_id) {
+        self.agent_requests
+            .request_input
+            .insert(to.pane.pane_id, Instant::now());
+        if rider {
+            let slot = slot_mut(&mut self.agent_requests, &to);
+            slot.riders.push(id.to_owned());
+            slot.mid_turn = true;
+        } else if let Some(pane) = self.panes.get_mut(&to.pane.pane_id) {
             pane.agent.begin_request_run(&to);
         }
+        let reason = if busy || rider {
+            DELIVERED_MID_TURN
+        } else {
+            DELIVERED
+        };
         let info = self.agent_requests.info_mut(id).expect("queued request");
-        settle(info, AgentRequestState::Active, None);
+        settle(info, AgentRequestState::Active, Some(reason.into()));
+        info.delivered_at_unix_ms = Some(info.updated_at_unix_ms);
         Ok(())
     }
 
@@ -1592,6 +1895,13 @@ fn fingerprint(text: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.hash(&mut hasher);
     hasher.finish()
+}
+
+fn slot_mut<'a>(
+    store: &'a mut AgentRequestStore,
+    target: &protocol::AgentRef,
+) -> &'a mut DeliverySlot {
+    store.slots.get_mut(target).expect("listed slot")
 }
 
 fn state_name(state: AgentRequestState) -> &'static str {

@@ -304,6 +304,15 @@
           "minimum": 0,
           "type": "integer"
         },
+        "delivered_at_unix_ms": {
+          "description": "When the request was typed into its agent; absent while it has not been.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "from": {
           "anyOf": [
             {
@@ -342,7 +351,7 @@
           "type": "string"
         },
         "reason": {
-          "description": "Why the request is still queued, or why it failed or was cancelled.",
+          "description": "Why the request is still queued, what became of it once typed in, or why it failed or\nwas cancelled.",
           "type": [
             "string",
             "null"
@@ -440,6 +449,14 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "delivered_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "from": {
           "anyOf": [
@@ -2686,6 +2703,10 @@
                 "null"
               ]
             },
+            "now": {
+              "description": "Type the request in at once, even while the agent is working or another request is\nbeing answered, for an agent that takes typed input mid-turn as a follow-up. Refused\nwhen the agent shows a dialog or someone has just typed into its pane.",
+              "type": "boolean"
+            },
             "parent": {
               "type": [
                 "string",
@@ -4830,6 +4851,10 @@
                 "string",
                 "null"
               ]
+            },
+            "now": {
+              "description": "Type the request in at once, even while the agent is working or another request is\nbeing answered, for an agent that takes typed input mid-turn as a follow-up. Refused\nwhen the agent shows a dialog or someone has just typed into its pane.",
+              "type": "boolean"
             },
             "parent": {
               "type": [

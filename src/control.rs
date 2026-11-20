@@ -243,6 +243,10 @@ impl ControlCommand {
             | Self::RecordUiMark { .. }
             | Self::Pick { .. }
             | Self::Prompt { .. } => None,
+            // An older server would ignore `now` and queue the request, so it is never sent one.
+            Self::AgentAsk { now: true, .. } => {
+                Some(crate::session::protocol::Capability::AgentAskNow)
+            }
             Self::AgentAsk {
                 follows: Some(_), ..
             } => Some(crate::session::protocol::Capability::AgentConversations),
@@ -911,6 +915,11 @@ pub enum ControlCommand {
         /// refused ask leaves them unclaimed.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<u64>,
+        /// Type the request in at once, even while the agent is working or another request is
+        /// being answered, for an agent that takes typed input mid-turn as a follow-up. Refused
+        /// when the agent shows a dialog or someone has just typed into its pane.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        now: bool,
     },
     /// Answer a request sent to the calling agent.
     AgentReply { id: String, text: String },
@@ -2862,13 +2871,17 @@ pub struct AgentRequestInfo {
     pub to_label: Option<String>,
     pub prompt: String,
     pub state: AgentRequestState,
-    /// Why the request is still queued, or why it failed or was cancelled.
+    /// Why the request is still queued, what became of it once typed in, or why it failed or
+    /// was cancelled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response: Option<AgentResponse>,
     pub created_at_unix_ms: u64,
     pub updated_at_unix_ms: u64,
+    /// When the request was typed into its agent; absent while it has not been.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivered_at_unix_ms: Option<u64>,
 }
 
 /// A request without its prompt and answer, as `agent-requests` lists it.
@@ -2905,6 +2918,8 @@ pub struct AgentRequestSummary {
     pub response_truncated: Option<bool>,
     pub created_at_unix_ms: u64,
     pub updated_at_unix_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivered_at_unix_ms: Option<u64>,
 }
 
 impl AgentRequestInfo {
@@ -2914,10 +2929,19 @@ impl AgentRequestInfo {
     }
 }
 
+/// The reason of a request whose agent promised to reply after the turn it was delivered in.
+pub const REPLY_LATER_REASON: &str = "the agent will reply later";
+
 impl AgentRequestSummary {
     /// The conversation this request belongs to; a request from an older server is its chain's.
     pub fn conversation(&self) -> &str {
         self.conversation.as_deref().unwrap_or(&self.root)
+    }
+
+    /// Whether its agent promised to reply after the turn it was delivered in.
+    pub fn answering_later(&self) -> bool {
+        self.state == AgentRequestState::Active
+            && self.reason.as_deref() == Some(REPLY_LATER_REASON)
     }
 }
 
@@ -2948,6 +2972,7 @@ impl From<&AgentRequestInfo> for AgentRequestSummary {
                 .map(|response| response.content.truncated),
             created_at_unix_ms: request.created_at_unix_ms,
             updated_at_unix_ms: request.updated_at_unix_ms,
+            delivered_at_unix_ms: request.delivered_at_unix_ms,
         }
     }
 }
@@ -3489,10 +3514,20 @@ mod tests {
             follows: None,
             asker_label: None,
             attachments: Vec::new(),
+            now: false,
         };
         assert_eq!(
             ask(None).required_session_capability(),
             Some(crate::session::protocol::Capability::AgentRequests)
+        );
+        // Nor would it type in a request asked `now`; it would queue it.
+        let mut now = ask(Some("r1"));
+        if let ControlCommand::AgentAsk { now, .. } = &mut now {
+            *now = true;
+        }
+        assert_eq!(
+            now.required_session_capability(),
+            Some(crate::session::protocol::Capability::AgentAskNow)
         );
         assert_eq!(
             ask(Some("r1")).required_session_capability(),
@@ -3510,6 +3545,7 @@ mod tests {
                 | crate::session::protocol::Capability::AgentConversations
                 | crate::session::protocol::Capability::AgentAttachments => "0.0.50",
                 crate::session::protocol::Capability::SpawnAgentResume => "0.1.1",
+                crate::session::protocol::Capability::AgentAskNow => "0.1.2",
                 _ => "0.0.44",
             };
             assert_eq!(cap.introduced_in(), expected, "{cap}");

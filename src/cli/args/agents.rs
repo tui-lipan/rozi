@@ -120,6 +120,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "    --allow-working",
                 "Prompt an agent that is still working",
             ),
+            row("    --now", "Type a request in now, even mid-turn"),
             row(
                 "    --follows <ID>",
                 "Continue the conversation of an earlier request",
@@ -510,6 +511,7 @@ fn parse_ask(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
     let mut parent = None;
     let mut follows = None;
     let mut require_reply = false;
+    let mut now = false;
     let mut attachments = Vec::new();
     let mut iter = args.into_iter();
     while let Some(argument) = iter.next() {
@@ -531,6 +533,7 @@ fn parse_ask(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
                 }
             }
             "--require-reply" => require_reply = true,
+            "--now" => now = true,
             "--for" => {
                 let id = super::require_value(&mut iter, "--for requires a request id")?;
                 if parent.replace(id).is_some() {
@@ -584,6 +587,7 @@ fn parse_ask(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
             follows,
             asker_label: None,
             attachments: Vec::new(),
+            now,
         },
         format,
         await_ms,
@@ -1305,7 +1309,10 @@ mod tests {
     #[test]
     fn ask_takes_everything_after_the_separator_as_its_text() {
         let args = |list: &[&str]| list.iter().map(|arg| (*arg).to_string()).collect();
-        let parsed = parse_agents(args(&["ask", "--target", "3", "--", "--why", "not?"])).unwrap();
+        let parsed = parse_agents(args(&[
+            "ask", "--target", "3", "--now", "--", "--why", "not?",
+        ]))
+        .unwrap();
         assert_eq!(
             parsed.command,
             ControlCommand::AgentAsk {
@@ -1315,6 +1322,7 @@ mod tests {
                 follows: None,
                 asker_label: None,
                 attachments: Vec::new(),
+                now: true,
             }
         );
         assert_eq!(parsed.await_ms, None);

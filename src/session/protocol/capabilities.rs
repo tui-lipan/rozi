@@ -78,11 +78,14 @@ pub enum Capability {
     /// The server reopens an agent conversation in a new pane: it takes
     /// [`super::ClientMessage::SpawnPane`] with `agent_resume`.
     SpawnAgentResume,
+    /// The server honors `agent-ask` with `now`: it types the request in at once, or refuses it.
+    AgentAskNow,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 15] = [
+    pub const ALL: [Capability; 16] = [
+        Capability::AgentAskNow,
         Capability::AgentAttachments,
         Capability::AgentConversations,
         Capability::AgentReplyLater,
@@ -118,6 +121,7 @@ impl Capability {
             Capability::AgentConversations => "agent-conversations",
             Capability::AgentAttachments => "agent-attachments",
             Capability::SpawnAgentResume => "spawn-agent-resume",
+            Capability::AgentAskNow => "agent-ask-now",
         }
     }
 
@@ -137,6 +141,7 @@ impl Capability {
             | Self::SessionSharing
             | Self::SessionPublish => "0.0.50",
             Self::SpawnAgentResume => "0.1.1",
+            Self::AgentAskNow => "0.1.2",
         }
     }
 

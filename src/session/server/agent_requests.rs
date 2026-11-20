@@ -1080,30 +1080,52 @@ impl SessionServer {
             .get(&pane_id)
             .filter(|pane| pane.exited.is_none())
             .ok_or_else(|| "the agent's pane has exited".to_string())?;
-        let runtimes = self.agent_runtimes_for(pane_id, pane);
-        let mut matching = runtimes.iter().filter(|runtime| {
-            runtime.identity.id == agent
-                && self.response_native_session(&runtime.reference).as_deref()
-                    == Some(native_session)
-        });
-        if let Some(runtime) = matching.next() {
-            if matching.next().is_some() {
-                return Err("more than one agent reported the original conversation".into());
-            }
-            return Ok(Some(runtime.reference.clone()));
+        if pane.generation != target.pane.generation {
+            return Err(format!("pane {pane_id} has been replaced"));
         }
-        if runtimes.iter().any(|runtime| {
-            runtime.reference.slot == target.slot
-                && (runtime.identity.id != agent
-                    || self.response_native_session(&runtime.reference).is_some())
-        }) {
+
+        let runtimes = self.agent_runtimes_for(pane_id, pane);
+        let candidate = if let Some(slot) = &target.slot {
+            // An explicit published slot can only resume in that slot. Existing row handoffs
+            // update the stored reference when the server has evidence that a slot moved.
+            runtimes
+                .into_iter()
+                .find(|runtime| runtime.reference.slot.as_ref() == Some(slot))
+        } else {
+            // A request to the pane's own agent may follow the conversation on screen.
+            match protocol::pane_agent(runtimes, &pane.runtime.rows) {
+                protocol::PaneAgent::One(runtime) => Some(*runtime),
+                protocol::PaneAgent::Missing => None,
+                protocol::PaneAgent::NoneOnScreen => {
+                    return Err("the pane no longer shows the requested conversation".into());
+                }
+            }
+        };
+        let Some(candidate) = candidate else {
+            return Ok(None);
+        };
+        if candidate.identity.id != agent {
             return Err("the agent moved to another conversation".into());
         }
-        Ok(None)
+        match self
+            .response_native_session(&candidate.reference)
+            .as_deref()
+        {
+            Some(current) if current == native_session => Ok(Some(candidate.reference)),
+            Some(_) => Err("the agent moved to another conversation".into()),
+            None => Ok(None),
+        }
     }
 
     /// Keep delivered requests open for an explicit reply if the pane can still resume them.
     fn suspend_request_slot(&mut self, target: &protocol::AgentRef) -> bool {
+        if self
+            .panes
+            .get(&target.pane.pane_id)
+            .is_none_or(|pane| pane.exited.is_some() || pane.generation != target.pane.generation)
+        {
+            return false;
+        }
         let slot = &self.agent_requests.slots[target];
         let Some(session) = slot
             .tracker

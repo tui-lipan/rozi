@@ -398,6 +398,7 @@ impl Component for AppRoot {
         // Set here, not through `App::title`, so the first frame already carries the configured
         // title rather than a placeholder the first update replaces.
         crate::update::host_title::sync(ctx);
+        ops::theme::sync_host_default_background(ctx);
         // Register for drops before the first drag can arrive, rather than on the first update.
         ops::drag_and_drop::sync(ctx);
         let tasks = StartupTasks {

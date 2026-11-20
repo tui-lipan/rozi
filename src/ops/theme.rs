@@ -41,6 +41,17 @@ pub(crate) fn host_background(state: &State) -> Option<Color> {
         .map(|colors| colors.bg)
 }
 
+/// Let a translucent host terminal show through wherever rozi paints the host's own background.
+///
+/// Explicit colors are drawn opaque even when they equal the terminal's background, so this writes
+/// them as the terminal's default background instead. It applies only while the canvas uses the
+/// host background, as with the `system` theme or `pane.background_follows_terminal`.
+pub(crate) fn sync_host_default_background(ctx: &mut Context<AppRoot>) {
+    let host_bg = host_background(&ctx.state);
+    let passthrough = host_bg.filter(|bg| ctx.state.theme.surface.backdrop == *bg);
+    ctx.set_host_default_background(passthrough);
+}
+
 /// Set rozi's subdued caret default while leaving explicit theme `[caret]` colors intact.
 pub(crate) fn apply_default_caret_palette(theme: Theme) -> Theme {
     let accent_color = theme

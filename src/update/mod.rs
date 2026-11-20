@@ -1387,6 +1387,8 @@ fn post_update_sync(
     sync_modifier_key_reporting(ctx);
     // Repairs: the host terminal's window title, after the focused pane or session changes.
     host_title::sync(ctx);
+    // Repairs: whether a translucent host terminal shows through the canvas, after a theme change.
+    crate::ops::theme::sync_host_default_background(ctx);
     // Repairs: drag-and-drop registration with the host, and drags over panes that have gone.
     crate::ops::drag_and_drop::sync(ctx);
 

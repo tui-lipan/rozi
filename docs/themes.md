@@ -82,6 +82,8 @@ To keep your chosen theme but use the host terminal's background behind panes, t
 background_follows_terminal = true
 ```
 
+With either one, a translucent host terminal shows through the background.
+
 rozi watches the host terminal's colors while it runs. When you change the host terminal's theme,
 the foreground, background, and all 16 ANSI colors update without restarting rozi.
 

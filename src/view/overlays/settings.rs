@@ -208,7 +208,7 @@ fn settings_key_handler(
         .filter(|action| action.enabled && action.intercept)
         .map(|action| (action.key.clone(), action.msg.clone()))
         .collect::<Vec<_>>();
-    let handler = ctx.link().key_handler(move |key| {
+    ctx.link().key_handler(move |key| {
         let direction = key.left_alt_arrow();
         let plain = direction.is_some() || (!key.mods.ctrl && !key.mods.alt && !key.mods.super_key);
         let navigation = match direction.unwrap_or(key.code) {
@@ -245,10 +245,6 @@ fn settings_key_handler(
                 })
                 .map(|(_, msg)| msg.clone())
         })
-    });
-    KeyHandler::new(move |key| {
-        // Give picker actions first refusal, then keep empty-result navigation out of text input.
-        handler.handle(key) || matches!(key.left_alt_arrow(), Some(KeyCode::Up | KeyCode::Down))
     })
 }
 
@@ -727,9 +723,7 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         let mut entry = SearchEntry::item(choice.label(), index);
         let signature = matches!(
             choice,
-            crate::config::ThemeChoice::Builtin(
-                crate::state::ThemePreset::Rozi | crate::state::ThemePreset::Lipan
-            )
+            crate::config::ThemeChoice::Builtin(preset) if preset.is_signature()
         );
         let description = match (Some(index) == current_index, signature) {
             (true, true) => Some("current · signature"),

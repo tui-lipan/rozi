@@ -247,8 +247,8 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
 
         let original_theme = backend.state().theme.clone();
         for preset in [
-            rozi::state::ThemePreset::Dracula,
-            rozi::state::ThemePreset::Nord,
+            rozi::state::ThemePreset::parse("dracula").unwrap(),
+            rozi::state::ThemePreset::parse("nord").unwrap(),
         ] {
             backend.state_mut().theme = preset.theme();
             backend.render();

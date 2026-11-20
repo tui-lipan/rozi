@@ -78,7 +78,7 @@ impl Default for AppRoot {
     fn default() -> Self {
         let config = Config::default();
         Self {
-            initial_theme: ThemePreset::Rozi.theme(),
+            initial_theme: ThemePreset::ROZI.theme(),
             initial_system_theme: None,
             config,
             startup_profile: None,
@@ -172,7 +172,7 @@ impl AppRoot {
     ) -> Self {
         let mut app = Self::new(
             config,
-            ThemePreset::Lipan.theme(),
+            ThemePreset::LIPAN.theme(),
             None,
             None,
             Vec::new(),
@@ -195,7 +195,7 @@ impl AppRoot {
     pub(crate) fn configured_for_test_without_control(config: Config) -> Self {
         let mut app = Self::new(
             config,
-            ThemePreset::Lipan.theme(),
+            ThemePreset::LIPAN.theme(),
             None,
             None,
             Vec::new(),

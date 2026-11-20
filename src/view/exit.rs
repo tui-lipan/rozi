@@ -210,7 +210,9 @@ mod tests {
         );
         assert_eq!(plain.spans[0].style.fg, None);
 
-        for preset in [ThemePreset::TokyoNight, ThemePreset::SolarizedLight] {
+        let tokyo_night = ThemePreset::parse("tokyo-night").unwrap();
+        let solarized_light = ThemePreset::parse("solarized-light").unwrap();
+        for preset in [tokyo_night, solarized_light] {
             let theme = preset.theme();
             let styled = exit_text(exit_summary_parts(&attachment).unwrap(), Some(&theme));
             assert_eq!(
@@ -231,8 +233,8 @@ mod tests {
             assert_eq!(styled.spans[4].style.fg, None);
         }
         assert_ne!(
-            ThemePreset::TokyoNight.theme().accent.fg,
-            ThemePreset::SolarizedLight.theme().accent.fg
+            tokyo_night.theme().accent.fg,
+            solarized_light.theme().accent.fg
         );
     }
 

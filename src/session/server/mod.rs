@@ -70,7 +70,9 @@ mod shutdown;
 mod subscriptions;
 mod waits;
 mod worktree;
-pub(crate) use create::{create_detached_session, restart_named_session, upgrade_named_session};
+pub(crate) use create::{
+    create_detached_session, report_startup_error, restart_named_session, upgrade_named_session,
+};
 pub(crate) use deployments::DEPLOY_CHUNK_BYTES;
 pub(crate) use shutdown::{
     StoppedForRestart, shutdown_named_session, shutdown_named_session_if_present,
@@ -2611,7 +2613,8 @@ pub fn run_named_session_mode_with_nonce(
         eprintln!("rozi: could not install server shutdown handler: {err}");
     }
 
-    let (listener, endpoint) = bind_session_socket(name)?;
+    let (listener, endpoint) = bind_session_socket(name)
+        .map_err(|err| resurrect::not_started(name, "its socket could not be bound", &err))?;
     let loaded = crate::config::load_config();
     crate::config::log_config_warnings(&loaded.warnings);
     crate::pane::engine::install(loaded.config.experimental.terminal_engine);
@@ -2651,19 +2654,27 @@ pub fn run_named_session_mode_with_nonce(
         },
     );
     server.endpoint = Some(endpoint);
-    if fresh {
+    let recovered = if fresh {
         // Only the snapshot: starting again is not deleting the session, so its deployments stay.
-        server.delete_snapshot()?;
-    } else if server.settings.resurrect
-        && let Err(err) = server.restore()
-        // No snapshot is no reason not to start. One this build cannot read is: running empty,
-        // the server's first save would replace it, losing it for the build that can read it.
-        && err.kind() != io::ErrorKind::NotFound
-    {
+        server.delete_snapshot().map_err(|err| {
+            resurrect::not_started(name, "its saved session could not be cleared", &err)
+        })
+    } else if server.settings.resurrect {
+        match server.restore() {
+            // An unreadable snapshot must survive for a build that can restore it.
+            Err(err) if err.kind() != io::ErrorKind::NotFound => {
+                Err(resurrect::restore_refusal(name, &err))
+            }
+            _ => Ok(()),
+        }
+    } else {
+        Ok(())
+    };
+    if let Err(err) = recovered {
         if let Some(endpoint) = &server.endpoint {
             endpoint.remove_stale();
         }
-        return Err(resurrect::restore_refusal(name, &err));
+        return Err(err);
     }
     let result = server.run_listener(listener);
     server.shares.close_listener();

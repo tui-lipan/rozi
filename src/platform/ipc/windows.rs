@@ -110,6 +110,11 @@ impl IpcEndpoint {
         Self { path: path.into() }
     }
 
+    /// The registry path is a file. Its length does not determine the named pipe's length.
+    pub fn validate_bind_path(&self) -> io::Result<()> {
+        Ok(())
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }

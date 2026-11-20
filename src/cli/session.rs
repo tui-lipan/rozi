@@ -15,8 +15,13 @@ pub(crate) fn run_server_cli(
     startup_nonce: Option<String>,
     resurrect: bool,
 ) -> Result<()> {
-    session::server::run_named_session_mode_with_nonce(name, fresh, startup_nonce, resurrect)?;
-    Ok(())
+    let report_nonce = startup_nonce.clone();
+    let result =
+        session::server::run_named_session_mode_with_nonce(name, fresh, startup_nonce, resurrect);
+    if let (Some(nonce), Err(error)) = (&report_nonce, &result) {
+        session::server::report_startup_error(nonce, &error.to_string());
+    }
+    result.map_err(Into::into)
 }
 
 pub(crate) fn run_remote_serve_cli(name: &str, autostart: bool) -> Result<()> {

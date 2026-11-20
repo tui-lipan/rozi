@@ -2098,6 +2098,7 @@ pub(super) fn derive_detected_agent(
             .as_ref()
             .zip(aggregate)
             .map(|(previous, state)| DetectedAgent {
+                blocker: None,
                 agent: previous.agent.clone(),
                 state,
             });
@@ -3310,6 +3311,7 @@ fn resolve_detected_agent(
             Some(DetectedAgent {
                 agent: observed.agent,
                 state,
+                blocker: observed.blocker,
             })
         }
         None => match hold
@@ -3317,12 +3319,14 @@ fn resolve_detected_agent(
             .map(|held| held.state)
         {
             Some(state) => Some(DetectedAgent {
+                blocker: None,
                 agent: observed.agent,
                 state,
             }),
             None => {
                 *hold = None;
                 Some(DetectedAgent {
+                    blocker: None,
                     agent: observed.agent,
                     state: crate::session::protocol::DetectedAgentState::Idle,
                 })
@@ -3729,6 +3733,7 @@ fn settle_state_flicker(
         && now.duration_since(since) < STATE_SETTLE_GRACE
     {
         return Some(DetectedAgent {
+            blocker: None,
             agent: detected.agent,
             state: held,
         });
@@ -3913,6 +3918,7 @@ mod tests {
         let mut scratch = AgentScratch::default();
         let runtime = |id: Option<&str>, state| PaneRuntimeState {
             detected_agent: id.map(|id| DetectedAgent {
+                blocker: None,
                 agent: crate::session::protocol::AgentIdentity::new(id, id).into(),
                 state,
             }),
@@ -3976,6 +3982,7 @@ mod tests {
             }))
         };
         let detected = |id: &str, state| DetectedAgent {
+            blocker: None,
             agent: crate::session::protocol::AgentIdentity::new(id, id).into(),
             state,
         };
@@ -4050,6 +4057,7 @@ mod tests {
         let mut scratch = AgentScratch::default();
         let runtime = |id: &str, state| PaneRuntimeState {
             detected_agent: Some(DetectedAgent {
+                blocker: None,
                 agent: crate::session::protocol::AgentIdentity::new(id, id).into(),
                 state,
             }),
@@ -4112,6 +4120,7 @@ mod tests {
                 set_at: 1,
             }),
             detected_agent: Some(DetectedAgent {
+                blocker: None,
                 agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
                 state: protocol::DetectedAgentState::Idle,
             }),
@@ -4333,6 +4342,7 @@ mod tests {
             &runtime
         ));
         runtime.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Idle,
         });
@@ -4354,6 +4364,7 @@ mod tests {
             &runtime
         ));
         runtime.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("codex", "Codex").into(),
             state: protocol::DetectedAgentState::Working,
         });
@@ -4672,6 +4683,7 @@ mod tests {
         assert!(scratch.references(pane_ref.clone()).is_empty());
 
         runtime.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("codex", "Codex").into(),
             state: protocol::DetectedAgentState::Working,
         });
@@ -4705,6 +4717,7 @@ mod tests {
     fn activity_updates_leave_the_agent_summary_time_alone() {
         let mut pane = make_pane();
         pane.runtime.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("codex", "Codex").into(),
             state: protocol::DetectedAgentState::Idle,
         });
@@ -4767,6 +4780,7 @@ mod tests {
         };
         let detected = |id: &str| {
             Some(DetectedAgent {
+                blocker: None,
                 agent: protocol::AgentIdentity::new(id, id).into(),
                 state: protocol::DetectedAgentState::Idle,
             })
@@ -5636,6 +5650,7 @@ mod tests {
         assert_eq!(
             detected.detected_agent,
             Some(crate::session::protocol::DetectedAgent {
+                blocker: None,
                 agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
                 state: crate::session::protocol::DetectedAgentState::Working,
             })
@@ -5697,6 +5712,7 @@ mod tests {
         assert_eq!(
             detected.detected_agent,
             Some(DetectedAgent {
+                blocker: None,
                 agent:
                     crate::session::protocol::AgentIdentity::new("mycoolagent", "My Cool Agent",)
                         .into(),
@@ -5721,6 +5737,7 @@ mod tests {
     fn inferred_agent_run_start_survives_block_and_resume() {
         let mut pane = make_pane();
         pane.runtime.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            blocker: None,
             agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
             state: crate::session::protocol::DetectedAgentState::Working,
         });
@@ -5769,10 +5786,12 @@ mod tests {
         let start = Instant::now();
         let mut hold = None;
         let working = AgentObservation {
+            blocker: None,
             agent: AgentIdentity::new("opencode", "OpenCode").into(),
             state: Some(DetectedAgentState::Working),
         };
         let silent = AgentObservation {
+            blocker: None,
             agent: AgentIdentity::new("opencode", "OpenCode").into(),
             state: None,
         };
@@ -6656,6 +6675,7 @@ mod tests {
         let agent: std::sync::Arc<AgentIdentity> = AgentIdentity::new("grok", "Grok").into();
         let detected = |state| {
             Some(DetectedAgent {
+                blocker: None,
                 agent: agent.clone(),
                 state,
             })
@@ -6710,6 +6730,7 @@ mod tests {
         let agent: std::sync::Arc<AgentIdentity> = AgentIdentity::new("codex", "Codex").into();
         let detected = |state| {
             Some(DetectedAgent {
+                blocker: None,
                 agent: agent.clone(),
                 state,
             })
@@ -6804,6 +6825,7 @@ mod tests {
         let mut hold = None;
         resolve_detected_agent(
             Some(AgentObservation {
+                blocker: None,
                 agent: AgentIdentity::new("opencode", "OpenCode").into(),
                 state: Some(DetectedAgentState::Working),
             }),
@@ -6814,6 +6836,7 @@ mod tests {
         // finish by anything like `AGENT_HOLD_MAX`.
         let idle = resolve_detected_agent(
             Some(AgentObservation {
+                blocker: None,
                 agent: AgentIdentity::new("opencode", "OpenCode").into(),
                 state: Some(DetectedAgentState::Idle),
             }),
@@ -6832,6 +6855,7 @@ mod tests {
         let mut hold = None;
         resolve_detected_agent(
             Some(AgentObservation {
+                blocker: None,
                 agent: AgentIdentity::new("opencode", "OpenCode").into(),
                 state: Some(DetectedAgentState::Working),
             }),
@@ -6851,6 +6875,7 @@ mod tests {
     fn the_keep_open_shell_swap_forgets_the_previous_program() {
         let mut pane = make_pane();
         pane.runtime.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            blocker: None,
             agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
             state: crate::session::protocol::DetectedAgentState::Working,
         });
@@ -6895,6 +6920,7 @@ mod tests {
             set_at: 2,
         };
         let blocked = DetectedAgent {
+            blocker: None,
             agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
             state: crate::session::protocol::DetectedAgentState::Blocked,
         };

@@ -31,6 +31,7 @@ fn agent_pane(
         },
     );
     pane.terminal.detected_agent = Some(DetectedAgent {
+        blocker: None,
         agent: agent.into(),
         state: DetectedAgentState::Idle,
     });

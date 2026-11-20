@@ -218,6 +218,7 @@ mod tests {
         {
             let pane = &mut state.current_mut().workspaces[0].panes[0];
             pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+                blocker: None,
                 agent: crate::session::protocol::AgentIdentity::new("claude", "Claude Code").into(),
                 state: crate::session::protocol::DetectedAgentState::Idle,
             });

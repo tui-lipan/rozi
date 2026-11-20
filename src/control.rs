@@ -1233,6 +1233,9 @@ pub struct AgentInfo {
     pub state: crate::session::protocol::AgentState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// A blocker recognized in the live screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<std::sync::Arc<crate::session::protocol::AgentBlocker>>,
     /// What the agent works on, when its published row names it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task: Option<String>,

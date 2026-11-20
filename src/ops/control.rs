@@ -1266,6 +1266,7 @@ fn list_agents(ctx: &Context<AppRoot>) -> Vec<crate::control::AgentInfo> {
                     label: runtime.label,
                     state: runtime.state,
                     reason: runtime.reason,
+                    blocker: runtime.blocker,
                     task: runtime.task,
                     completions: runtime.completions,
                     cwd: crate::session::protocol::occupant_cwd(

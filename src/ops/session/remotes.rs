@@ -1760,6 +1760,7 @@ mod tests {
                         let mut pane = Pane::new(41, 100, Default::default());
                         pane.terminal.detected_agent =
                             Some(crate::session::protocol::DetectedAgent {
+                                blocker: None,
                                 agent: crate::session::protocol::AgentIdentity::new(
                                     "codex", "Codex",
                                 )

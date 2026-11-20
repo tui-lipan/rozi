@@ -1538,6 +1538,7 @@ impl SessionServer {
                     label: runtime.label,
                     state: runtime.state,
                     reason: runtime.reason,
+                    blocker: runtime.blocker,
                     task: runtime.task,
                     completions: runtime.completions,
                     cwd: protocol::occupant_cwd(
@@ -2861,6 +2862,7 @@ mod tests {
         let mut pane = super::super::tests::test_pane(1);
         pane.runtime.cwd = Some("/repo".into());
         pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Idle,
         });
@@ -3590,6 +3592,7 @@ mod tests {
             pane_with_agent(&mut server, 7);
             let pane = server.panes.get_mut(&7).unwrap();
             pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+                blocker: None,
                 agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
                 state: protocol::DetectedAgentState::Working,
             });
@@ -4027,6 +4030,7 @@ mod tests {
         ] {
             let before = pane.agent.agent_states(&pane.runtime);
             pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+                blocker: None,
                 agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
                 state,
             });
@@ -4081,6 +4085,7 @@ mod tests {
         pane_with_agent(&mut server, 7);
         let pane = server.panes.get_mut(&7).unwrap();
         pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("codex", "Codex").into(),
             state: protocol::DetectedAgentState::Idle,
         });
@@ -4300,6 +4305,7 @@ mod tests {
             pane_with_agent(&mut server, 7);
             server.panes.get_mut(&7).unwrap().runtime.detected_agent =
                 Some(protocol::DetectedAgent {
+                    blocker: None,
                     agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
                     state,
                 });

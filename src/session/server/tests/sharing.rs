@@ -1034,6 +1034,7 @@ fn an_answer_held_across_a_downgrade_is_authorized_again_before_it_goes() {
     let (mut server, _dir) = shared_test_server("dev");
     let mut pane = test_pane(7);
     pane.runtime.detected_agent = Some(DetectedAgent {
+        blocker: None,
         agent: AgentIdentity::new("claude", "Claude Code").into(),
         state: DetectedAgentState::Working,
     });

@@ -102,6 +102,7 @@ pub struct AgentStateSpec {
     pub screen: Option<PatternGroupSpec>,
     pub title: Option<PatternGroupSpec>,
     pub outranks_reports: bool,
+    pub blocker: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, PartialEq, Eq)]
@@ -436,6 +437,19 @@ fn build_state_rule(
         ));
     }
 
+    let blocker = spec.blocker.filter(|kind| {
+        if state == AgentStateOutcome::Blocked
+            && matches!(
+                kind.as_str(),
+                "approval" | "trust" | "question" | "login" | "usage-limit"
+            )
+        {
+            true
+        } else {
+            warnings.push(format!("Ignored {noun} `{id}` rule blocker `{kind}`"));
+            false
+        }
+    });
     let mut compile = |needles: Vec<String>| -> Option<Vec<Pattern>> {
         needles
             .into_iter()
@@ -444,6 +458,7 @@ fn build_state_rule(
     };
     Some(AgentStateRule {
         state,
+        blocker,
         source,
         scope,
         outranks_reports,

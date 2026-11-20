@@ -60,6 +60,7 @@ fn detect_second_as_blocked(backend: &mut TestBackend<AppRoot>) {
     backend.state_mut().current_mut().workspaces[0].panes[1]
         .terminal
         .detected_agent = Some(rozi::session::protocol::DetectedAgent {
+        blocker: None,
         agent: rozi::session::protocol::AgentIdentity::new("codex", "Codex").into(),
         state: rozi::session::protocol::DetectedAgentState::Blocked,
     });
@@ -216,6 +217,7 @@ fn the_focused_pane_marks_a_finished_run_and_a_blocked_agent() {
             state.current_mut().workspaces[0].panes[0]
                 .terminal
                 .detected_agent = Some(rozi::session::protocol::DetectedAgent {
+                blocker: None,
                 agent: rozi::session::protocol::AgentIdentity::new("codex", "Codex").into(),
                 state: rozi::session::protocol::DetectedAgentState::Blocked,
             });

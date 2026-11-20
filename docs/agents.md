@@ -134,6 +134,7 @@ Each `[[agents.states]]` rule accepts:
 | `screen` | Pattern group matched against visible terminal text |
 | `title` | Pattern group matched against the terminal title |
 | `outranks_reports` | `true` to block automated prompts and requests while this `blocked` rule matches, even if a report says the agent is ready |
+| `blocker` | Optional reason for a matching `blocked` rule. Use `approval`, `trust`, `question`, `login`, or `usage-limit`. |
 
 Set exactly one of `screen` or `title`.
 
@@ -312,6 +313,10 @@ the same `ref`. `rozi context --format json` verifies your own pane and session;
 [caller context](control.md#verify-caller-context).
 
 ### Every agent, everywhere
+
+When rozi recognizes why an agent is blocked, `agents list`, `agents get`, and wait timeouts
+show the reason. JSON includes `blocker.kind` and, if shown on a usage-limit warning, `blocker.reset`
+with the agent's displayed reset time.
 
 `agents list` covers one session. `agents list --all` asks the running rozi for every agent it knows
 about — the session on screen, your other local sessions, and every

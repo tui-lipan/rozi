@@ -333,6 +333,7 @@ mod tests {
             agent_launch: 4,
             sequence: 10,
             detected_agent: Some(DetectedAgent {
+                blocker: None,
                 agent: AgentIdentity::new("pi", "Pi").into(),
                 state: DetectedAgentState::Working,
             }),

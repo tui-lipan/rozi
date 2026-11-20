@@ -595,6 +595,7 @@ mod tests {
             pane.terminal.project_root = Some("/srv/live".into());
             pane.terminal.git_branch = Some("main".into());
             pane.terminal.detected_agent = Some(DetectedAgent {
+                blocker: None,
                 agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
                 state: DetectedAgentState::Blocked,
             });
@@ -708,6 +709,7 @@ mod tests {
         attachment.connection = ConnectionState::Connected;
         let mut pane = Pane::new(3, 100, Default::default());
         pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            blocker: None,
             agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
             state: crate::session::protocol::DetectedAgentState::Idle,
         });
@@ -1020,6 +1022,7 @@ mod tests {
         state.current_mut().session_name = Some("dev".into());
         let mut pane = Pane::new(42, 100, Default::default());
         pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            blocker: None,
             agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
             state: crate::session::protocol::DetectedAgentState::Working,
         });

@@ -1819,6 +1819,7 @@ mod tests {
             set_at: 0,
         });
         pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            blocker: None,
             agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
             state: crate::session::protocol::DetectedAgentState::Blocked,
         });

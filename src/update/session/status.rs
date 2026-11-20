@@ -886,6 +886,7 @@ mod tests {
     fn an_agents_own_blocked_report_alerts_only_while_its_state_says_otherwise() {
         let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
         pane.terminal.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new("claude", "Claude Code").into(),
             state: DetectedAgentState::Working,
         });
@@ -898,6 +899,7 @@ mod tests {
 
         let mut announced = crate::state::Pane::new(1, 100, FloatRect::default());
         announced.terminal.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new("claude", "Claude Code").into(),
             state: DetectedAgentState::Blocked,
         });
@@ -941,6 +943,7 @@ mod tests {
         let runtime = PaneRuntimeState {
             agent_launch: 1,
             detected_agent: Some(DetectedAgent {
+                blocker: None,
                 agent: AgentIdentity::new("pi", "Pi").into(),
                 state: DetectedAgentState::Blocked,
             }),
@@ -965,12 +968,14 @@ mod tests {
             let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
             pane.terminal.agent_launch = 1;
             pane.terminal.detected_agent = Some(DetectedAgent {
+                blocker: None,
                 agent: AgentIdentity::new("pi", "Pi").into(),
                 state: previous,
             });
             let mut runtime = PaneRuntimeState {
                 agent_launch: 2,
                 detected_agent: Some(DetectedAgent {
+                    blocker: None,
                     agent: AgentIdentity::new("pi", "Pi").into(),
                     state: DetectedAgentState::Blocked,
                 }),

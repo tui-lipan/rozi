@@ -217,6 +217,7 @@ mod tests {
                             state: PaneRuntimeState {
                                 sequence,
                                 detected_agent: Some(DetectedAgent {
+                                    blocker: None,
                                     agent: AgentIdentity::new("codex", "Codex").into(),
                                     state: agent_state,
                                 }),

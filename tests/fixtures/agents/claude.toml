@@ -40,6 +40,7 @@ screen = '''
 [[case]]
 name = "startup-trust-dialog-unnumbered"
 state = "blocked"
+blocker = "trust"
 screen = '''
 ──────────────────────────────────────────────────────────────────────────────────
  Accessing workspace:
@@ -102,6 +103,7 @@ Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel
 [[case]]
 name = "blocked-on-approval"
 state = "blocked"
+blocker = "approval"
 title = "✳ AGENTS.md"
 screen = '''
 ❯ try reading ~/Projects/rozi/AGENTS.md
@@ -185,6 +187,8 @@ screen = '''
 [[case]]
 name = "usage-limit-pause"
 state = "blocked"
+blocker = "usage-limit"
+reset = "2pm"
 screen = '''
 ● Usage limit reached again · continuing automatically at 2pm · esc to cancel
   ⎿  You've hit your 5-hour limit · resets 2pm (Europe/Warsaw)

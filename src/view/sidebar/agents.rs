@@ -1403,6 +1403,7 @@ mod tests {
             },
         );
         pane.terminal.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new("claude", "Claude Code").into(),
             state: DetectedAgentState::Idle,
         });
@@ -1795,6 +1796,7 @@ mod tests {
         state.current_mut().session_name = Some("dev".into());
         let mut codex = pane(1, None, false);
         codex.terminal.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new("codex", "Codex").into(),
             state: DetectedAgentState::Working,
         });
@@ -2257,6 +2259,7 @@ mod tests {
         state.current_mut().workspaces[0].panes[0]
             .terminal
             .detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new("opencode", "OpenCode").into(),
             state: DetectedAgentState::Working,
         });
@@ -2978,6 +2981,7 @@ mod tests {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         let pane = &mut state.current_mut().workspaces[0].panes[0];
         pane.terminal.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new("claude", "Claude Code").into(),
             state: DetectedAgentState::Working,
         });

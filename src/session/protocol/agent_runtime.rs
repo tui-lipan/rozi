@@ -200,6 +200,8 @@ pub struct AgentRuntime {
     /// Why the agent is in its state, as the agent said it (`Permission required`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<std::sync::Arc<super::AgentBlocker>>,
     /// What the agent is working on, when it named its work: the title of the published row it
     /// is. Never a terminal title, which changes with every tool call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -415,12 +417,22 @@ pub fn effective_agent_runtimes(
                 .find(|record| record.reference == reference)
                 .map_or((0, 0), |record| (record.completions, record.answered));
             let task = occupant_task(&runtime.rows, occupant.slot.as_ref(), &occupant.label);
+            let blocker = runtime
+                .detected_agent
+                .as_ref()
+                .filter(|detected| occupant.slot.is_none() && detected.agent.id == identity.id)
+                .and_then(|detected| detected.blocker.clone());
+            let reason = blocker
+                .as_ref()
+                .map(|blocker| blocker.reason())
+                .or(occupant.reason);
             Some(AgentRuntime {
                 reference,
                 identity,
                 label: occupant.label,
                 state: AgentState::from_status(occupant.state.as_str()),
-                reason: occupant.reason,
+                reason,
+                blocker,
                 task,
                 completions,
                 answered,
@@ -744,6 +756,7 @@ mod tests {
             identity: AgentIdentity::new("claude", "Claude Code"),
             state: AgentState::Idle,
             reason: None,
+            blocker: None,
             task: None,
             completions: 0,
             answered: 0,
@@ -872,6 +885,7 @@ mod tests {
                 set_at: 42,
             }),
             detected_agent: Some(DetectedAgent {
+                blocker: None,
                 agent: AgentIdentity::new("claude", "Claude Code").into(),
                 state: DetectedAgentState::Blocked,
             }),
@@ -1072,6 +1086,7 @@ mod tests {
 
     fn codex() -> Option<DetectedAgent> {
         Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new("codex", "Codex").into(),
             state: DetectedAgentState::Working,
         })

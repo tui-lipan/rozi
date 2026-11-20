@@ -741,6 +741,7 @@ mod tests {
                             .unwrap()
                             .terminal
                             .detected_agent = Some(DetectedAgent {
+                            blocker: None,
                             agent: AgentIdentity::new("codex", "Codex").into(),
                             state: DetectedAgentState::Blocked,
                         });
@@ -1458,6 +1459,7 @@ mod tests {
             pane.terminal.git_branch = Some("master".into());
             if !agent.is_empty() {
                 pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+                    blocker: None,
                     agent: crate::session::protocol::AgentIdentity::new(
                         agent.to_lowercase(),
                         *agent,

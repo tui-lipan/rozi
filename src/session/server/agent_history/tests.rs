@@ -118,6 +118,7 @@ impl Rig {
         pane.rows = 8;
         pane.terminal.resize(8, 30);
         pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Idle,
         });

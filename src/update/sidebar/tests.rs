@@ -2604,6 +2604,7 @@ fn agents_across_hosts(backend: &mut TestBackend<AppRoot>) -> crate::pane::id::P
     let state = backend.state_mut();
     let pane = &mut state.current_mut().workspaces[0].panes[0];
     pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+        blocker: None,
         agent: crate::session::protocol::AgentIdentity::new("claude", "Claude Code").into(),
         state: crate::session::protocol::DetectedAgentState::Idle,
     });
@@ -3124,6 +3125,7 @@ fn the_next_agent_needing_attention_steps_past_the_one_on_screen() {
             let mut pane = Pane::new(id, 100, rect);
             pane.opening = false;
             pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+                blocker: None,
                 agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
                 state: crate::session::protocol::DetectedAgentState::Blocked,
             });

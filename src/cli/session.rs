@@ -15,8 +15,18 @@ pub(crate) fn run_server_cli(
     startup_nonce: Option<String>,
     resurrect: bool,
 ) -> Result<()> {
-    session::server::run_named_session_mode_with_nonce(name, fresh, startup_nonce, resurrect)?;
-    Ok(())
+    let detached_start = startup_nonce.is_some();
+    let result =
+        session::server::run_named_session_mode_with_nonce(name, fresh, startup_nonce, resurrect);
+    if detached_start && let Err(error) = &result {
+        // Only the nonce form may have a report file as stdout.
+        let message = error.to_string();
+        let limit = crate::platform::server_lifecycle::MAX_STARTUP_REPORT_BYTES;
+        let _ = std::io::stdout()
+            .lock()
+            .write_all(&message.as_bytes()[..message.len().min(limit)]);
+    }
+    result.map_err(Into::into)
 }
 
 pub(crate) fn run_remote_serve_cli(name: &str, autostart: bool) -> Result<()> {

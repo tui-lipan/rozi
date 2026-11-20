@@ -1,4 +1,4 @@
-use std::io::{self, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::time::{Duration, Instant};
 
 use crate::platform::ipc::IpcEndpoint;
@@ -29,6 +29,8 @@ fn start_detached_session(name: &str, resurrect: bool, fresh: bool) -> io::Resul
             "invalid session name",
         ));
     }
+    let endpoint = super::session_endpoint(name)?;
+    endpoint.validate_bind_path()?;
     if crate::session::discovery::discover_session(name)?.is_some() {
         return Err(already_running(name));
     }
@@ -40,6 +42,7 @@ fn start_detached_session(name: &str, resurrect: bool, fresh: bool) -> io::Resul
         ));
     }
     let nonce = crate::session::remote::fresh_server_nonce();
+    let mut startup_report = tempfile::tempfile_in(crate::control::runtime_dir()?)?;
     let child = crate::platform::server_lifecycle::spawn_detached_server(
         &exe,
         name,
@@ -47,6 +50,7 @@ fn start_detached_session(name: &str, resurrect: bool, fresh: bool) -> io::Resul
             fresh,
             startup_nonce: Some(&nonce),
             no_resurrect: !resurrect,
+            startup_report: Some(&startup_report),
         },
     )
     .map_err(|err| {
@@ -56,7 +60,6 @@ fn start_detached_session(name: &str, resurrect: bool, fresh: bool) -> io::Resul
         ))
     })?;
     let mut spawned = SpawnedServer(Some(child));
-    let endpoint = super::session_endpoint(name)?;
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
         match prove_ownership(&endpoint, name, &nonce) {
@@ -74,7 +77,9 @@ fn start_detached_session(name: &str, resurrect: bool, fresh: bool) -> io::Resul
             Err(_) => {}
         }
         if let Some(status) = spawned.try_wait()? {
-            // The server's stderr goes nowhere, so name the one refusal a user can act on.
+            if let Some(reason) = read_startup_error(&mut startup_report) {
+                return Err(io::Error::other(format!("Session `{name}`: {reason}")));
+            }
             if !fresh
                 && resurrect
                 && let Some(reason) = super::unrestorable_snapshot(name)
@@ -201,6 +206,18 @@ fn prove_ownership(endpoint: &IpcEndpoint, name: &str, nonce: &str) -> io::Resul
             "unexpected handshake reply: {other:?}"
         ))),
     }
+}
+
+fn read_startup_error(report: &mut std::fs::File) -> Option<String> {
+    report.seek(SeekFrom::Start(0)).ok()?;
+    let mut bytes = Vec::new();
+    report
+        .take(crate::platform::server_lifecycle::MAX_STARTUP_REPORT_BYTES as u64)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let reason = String::from_utf8_lossy(&bytes);
+    let reason = reason.trim();
+    (!reason.is_empty()).then(|| reason.to_owned())
 }
 
 fn write_startup_notifications(

@@ -382,6 +382,11 @@ works, but panes, hooks, and extensions receive no `ROZI_SOCKET`, and scripts ca
 window. Check that the runtime directory exists, belongs to you, and is private, then restart rozi.
 See [Files and directories](platform-support.md#files-and-directories).
 
+### `socket path is … bytes` when starting a session
+
+On Unix, use a shorter `XDG_RUNTIME_DIR` or session name. rozi reports the byte length and the
+limit for your platform.
+
 ### `rozi dev list-panes` is refused
 
 A bare session name is a launch target, so rozi replies

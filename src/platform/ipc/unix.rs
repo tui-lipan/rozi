@@ -17,11 +17,12 @@ use std::time::Duration;
 /// The longest path a Unix-domain socket can be bound at, terminator excluded.
 ///
 /// `sockaddr_un.sun_path` is a fixed array the kernel copies the path into, NUL included: 104 bytes
-/// on the Apple platforms and 108 on Linux. Nothing reports this as a limit until a bind fails, and
+/// on Apple platforms and NetBSD, and 108 on Linux. Nothing reports this as a limit until a bind fails, and
 /// a bind that fails on a path length reads like a permissions or a "server did not start" problem.
 /// So it is stated once, here, and everything that has to leave room for an endpoint measures
 /// against it - see [`crate::platform::paths::fallback_runtime_dir_path`].
-pub const MAX_ENDPOINT_PATH_LEN: usize = if cfg!(target_vendor = "apple") {
+pub const MAX_ENDPOINT_PATH_LEN: usize = if cfg!(any(target_vendor = "apple", target_os = "netbsd"))
+{
     103
 } else {
     107
@@ -44,6 +45,20 @@ impl IpcEndpoint {
         &self.path
     }
 
+    /// Check the platform's socket path length before spawning a server or binding.
+    pub fn validate_bind_path(&self) -> io::Result<()> {
+        let len = self.path.as_os_str().len();
+        if len > MAX_ENDPOINT_PATH_LEN {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "socket path is {len} bytes. The limit is {MAX_ENDPOINT_PATH_LEN} bytes. Use a shorter runtime directory"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     /// Bind a listener at this endpoint. A stale socket file left behind by a crashed process (no
     /// live listener answers it) is replaced; a live one causes a normal `AddrInUse` bind error.
     pub fn bind(&self) -> io::Result<BoundEndpoint> {
@@ -62,6 +77,7 @@ impl IpcEndpoint {
     fn bind_with_mode(&self, mode: u32) -> io::Result<BoundEndpoint> {
         use std::os::unix::fs::PermissionsExt;
 
+        self.validate_bind_path()?;
         if self.path.exists() && !self.is_live() {
             let _ = std::fs::remove_file(&self.path);
         }

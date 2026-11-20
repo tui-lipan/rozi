@@ -79,3 +79,46 @@ fn a_fresh_server_starts_with_only_the_platforms_own_user_directories() {
     drop(client);
     server.wait_for_exit();
 }
+
+#[cfg(unix)]
+#[test]
+fn detached_start_reports_the_socket_limit_and_the_servers_startup_error() {
+    let root = tempfile::tempdir_in(rozi::test_support::socket_safe_temp_dir()).unwrap();
+    let root = root.path();
+    let long_runtime = root.join("long".repeat(32));
+    std::fs::create_dir(&long_runtime).unwrap();
+    let runtime = root.join("run");
+    std::fs::create_dir(&runtime).unwrap();
+    let state_file = root.join("state");
+    std::fs::write(&state_file, "").unwrap();
+    let run = |runtime: &std::path::Path| {
+        let output = Command::new(env!("CARGO_BIN_EXE_rozi"))
+            .args(["sessions", "new", "test-startup", "--detach"])
+            .env("XDG_RUNTIME_DIR", runtime)
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("XDG_STATE_HOME", &state_file)
+            .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("ROZI_CONFIG", root.join("config.toml"))
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{output:?}");
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+    let message = run(&long_runtime);
+    assert!(
+        message.contains("socket path is") && message.contains("Use a shorter runtime directory"),
+        "{message}"
+    );
+
+    let message = run(&runtime);
+    assert!(
+        message.contains("could not clear the saved session"),
+        "{message}"
+    );
+    assert!(
+        !subprocess_endpoint(&runtime, "test-startup")
+            .path()
+            .exists()
+    );
+}

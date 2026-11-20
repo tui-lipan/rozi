@@ -2651,19 +2651,30 @@ pub fn run_named_session_mode_with_nonce(
         },
     );
     server.endpoint = Some(endpoint);
-    if fresh {
+    let recovered = if fresh {
         // Only the snapshot: starting again is not deleting the session, so its deployments stay.
-        server.delete_snapshot()?;
-    } else if server.settings.resurrect
-        && let Err(err) = server.restore()
-        // No snapshot is no reason not to start. One this build cannot read is: running empty,
-        // the server's first save would replace it, losing it for the build that can read it.
-        && err.kind() != io::ErrorKind::NotFound
-    {
+        server.delete_snapshot().map_err(|err| {
+            io::Error::new(
+                err.kind(),
+                format!("could not clear the saved session: {err}"),
+            )
+        })
+    } else if server.settings.resurrect {
+        match server.restore() {
+            // An unreadable snapshot must survive for a build that can restore it.
+            Err(err) if err.kind() != io::ErrorKind::NotFound => {
+                Err(resurrect::restore_refusal(name, &err))
+            }
+            _ => Ok(()),
+        }
+    } else {
+        Ok(())
+    };
+    if let Err(err) = recovered {
         if let Some(endpoint) = &server.endpoint {
             endpoint.remove_stale();
         }
-        return Err(resurrect::restore_refusal(name, &err));
+        return Err(err);
     }
     let result = server.run_listener(listener);
     server.shares.close_listener();

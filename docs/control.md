@@ -897,8 +897,9 @@ rozi capture-pane --target 3 --settle 500ms --timeout 30s --render png --output 
 | `--settle DURATION` | The visible screen has not changed for `DURATION`. |
 | `--timeout DURATION` | Required with either option, counted from when the request arrives. At most one hour. |
 
-Durations are written `500ms`, `30s`, or `2m`; a bare number is seconds. With both `--wait-for`
-and `--settle`, rozi waits for the text first, then for the screen to stay unchanged.
+Use durations such as `500ms`, `30s`, `2m`, or `1h`. You can combine units, as in `2m30s`. A bare
+number is seconds. With both `--wait-for` and `--settle`, rozi waits for the text first, then for
+the screen to stay unchanged.
 
 The two commands wait differently:
 

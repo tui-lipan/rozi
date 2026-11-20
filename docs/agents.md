@@ -464,7 +464,9 @@ it: `rozi agents reply <ID> --format text --stdin`, with the answer on stdin. If
 starts a turn nor shows the request within ten seconds, rozi types it once more when nothing on its
 screen changed, and otherwise fails it: a program still starting can drop what is typed into it.
 Without `--now`, an agent receives one request at a time. An approval dialog or usage-limit pause keeps an active
-request open. Without a reply, the answer is the agent's
+request open. A delivered request with a known native conversation stays open if its agent
+restarts in the same pane. Once the agent reports the same conversation, it can still reply to the
+original request id. Without a reply, the answer is the agent's
 [integration response](#read-the-agents-response), or else its terminal
 once the turn has ended and the screen has settled, read the same way, including an
 alternate-screen transcript. An agent that will

@@ -934,6 +934,7 @@ impl SessionServer {
                 follows,
                 asker_label,
                 attachments,
+                now,
             } => match self.attached_prompt(prompt, &attachments) {
                 Err(refusal) => refusal,
                 Ok(prompt) => {
@@ -941,9 +942,12 @@ impl SessionServer {
                         self.caller_agent(request.source_session.as_ref(), request.source_pane),
                         target,
                         prompt,
-                        parent.as_deref(),
-                        follows.as_deref(),
-                        asker_label,
+                        super::agent_requests::AskOptions {
+                            parent: parent.as_deref(),
+                            follows: follows.as_deref(),
+                            asker_label,
+                            now,
+                        },
                     );
                     // Only a request that exists keeps its files; a refused ask leaves them
                     // for the asker to cancel or for expiry.

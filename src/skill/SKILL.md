@@ -329,10 +329,15 @@ rozi agents ask --target <PANE_ID> --wait --timeout 30m --format text -- 'Review
   `source: "terminal"` answer: its screen, not its reply. Start Codex with
   `-c sandbox_workspace_write.network_access=true`, or outside the sandbox.
 - Rozi types the request into the target only once it is stopped, shows no dialog, and nobody has
-  typed into its pane for two seconds; until then it is `queued`, with a `reason`. If the agent
+  typed into its pane and its screen has not changed for two seconds; until then it is `queued`,
+  with a `reason`, and `active` once typed in. If the agent
   neither starts nor shows the request within ten seconds, it is typed once more when the agent's
   screen has not changed at all, and fails with `the agent did not take the request` otherwise or
   after that; ask again once the agent is ready.
+- **Now.** `--now` types the request in at once, even while the agent works or answers another
+  request; Claude Code, Codex, and Antigravity take it as a follow-up. Use it for an addendum to
+  work already under way. It is refused while the agent shows a dialog or someone is typing into
+  its pane; ask again later, or without `--now` to queue it.
 - Without `--wait`, `ask` returns the request and its `id` at once; `rozi agents await <ID>
   --timeout <DUR>` waits for it later. A timeout leaves the request in place, so await again.
 - `agents prompt` types exact text, such as a slash command, and its `--result` falls back to the
@@ -361,6 +366,7 @@ EOF
   --wait` leaves your turn free, so requests to you still arrive.
 - `rozi agents requests --incoming` or `--outgoing` lists them, and `rozi agents cancel <ID>`
   withdraws one you asked. A request is `queued`, `active`, `answered`, `failed`, or `cancelled`.
+  Cancelling an `active` request does not take it back from the agent, which may still act on it.
 
 **Failures.** They distinguish a gone agent, a replacement, a stale reference, and a timeout. Do
 not blindly retry them. When `agents prompt` refuses because the pane does not say which

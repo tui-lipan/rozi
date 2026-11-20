@@ -324,7 +324,7 @@ pub(crate) fn state_word(request: &AgentRequestSummary) -> &'static str {
     };
     match request.state {
         AgentRequestState::Queued => REQUEST_QUEUED,
-        AgentRequestState::Active if request.reason.is_some() => REQUEST_LATER,
+        AgentRequestState::Active if request.answering_later() => REQUEST_LATER,
         AgentRequestState::Active => REQUEST_ACTIVE,
         AgentRequestState::Answered => REQUEST_ANSWERED,
         AgentRequestState::Failed => REQUEST_FAILED,
@@ -358,6 +358,7 @@ mod tests {
             reason: None,
             created_at_unix_ms: 0,
             updated_at_unix_ms: 0,
+            delivered_at_unix_ms: None,
         }
     }
 

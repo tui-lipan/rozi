@@ -77,10 +77,17 @@ impl Rig {
 
     fn ask(&mut self, from: Option<PaneId>, to: PaneId, text: &str) -> AgentRequestInfo {
         let from = from.map(|pane| self.agent(pane));
-        info(
-            self.server
-                .ask_agent(from, AgentTarget::Pane(to), text.into(), None, None, None),
-        )
+        info(self.server.ask_agent(
+            from,
+            AgentTarget::Pane(to),
+            text.into(),
+            AskOptions {
+                parent: None,
+                follows: None,
+                asker_label: None,
+                now: false,
+            },
+        ))
     }
 
     fn try_ask(&mut self, from: PaneId, to: PaneId) -> ControlResponse {
@@ -89,9 +96,12 @@ impl Rig {
             Some(from),
             AgentTarget::Pane(to),
             "another".into(),
-            None,
-            None,
-            None,
+            AskOptions {
+                parent: None,
+                follows: None,
+                asker_label: None,
+                now: false,
+            },
         )
     }
 
@@ -464,6 +474,9 @@ fn a_claude_usage_limit_pause_requires_fresh_quiet_after_the_screen_clears() {
             if let Some(input) = rig.server.agent_requests.pane_input.get_mut(&3) {
                 *input = before_quiet;
             }
+            if let Some((_, since)) = rig.server.agent_requests.screens.get_mut(&3) {
+                *since = before_quiet;
+            }
             rig.server.pump_agent_requests();
         };
         let quota = "────────────────\r\n  ⚠ Usage limit reached · limit resets 2pm";
@@ -661,7 +674,15 @@ fn requests_reach_a_target_one_turn_at_a_time() {
 
     rig.set_state(3, DetectedAgentState::Idle);
     assert_eq!(rig.request(&first.id).state, AgentRequestState::Active);
-    assert_eq!(rig.request(&second.id).state, AgentRequestState::Queued);
+    let waiting = rig.request(&second.id);
+    assert_eq!(waiting.state, AgentRequestState::Queued);
+    assert_eq!(
+        waiting.reason,
+        Some(format!(
+            "waiting for the agent to finish request `{}`",
+            first.id
+        ))
+    );
     assert!(rig.typed_into(
         3,
         &format!("rozi agents reply {} --format text --stdin", first.id)
@@ -704,6 +725,114 @@ fn requests_reach_a_target_one_turn_at_a_time() {
     let answered = rig.request(&second.id);
     assert_eq!(answered.state, AgentRequestState::Answered);
     assert_eq!(answered.response.unwrap().content.text, "the lexer is fine");
+}
+
+#[test]
+fn a_request_asked_now_is_typed_in_mid_turn_unless_that_is_unsafe() {
+    let mut rig = Rig::new(&[3]);
+    let ask_now = |rig: &mut Rig, text: &str| {
+        let now = AskOptions {
+            now: true,
+            ..AskOptions::default()
+        };
+        rig.server
+            .ask_agent(None, AgentTarget::Pane(3), text.into(), now)
+    };
+    // A dialog, or a draft someone is typing, refuses it, and nothing is asked.
+    rig.set_state(3, DetectedAgentState::Blocked);
+    assert_eq!(
+        code(ask_now(&mut rig, "review")),
+        Some(ControlErrorCode::AgentBlocked)
+    );
+    rig.set_state(3, DetectedAgentState::Working);
+    let quiet = Duration::from_millis(100);
+    rig.server.agent_requests.quiet = quiet;
+    rig.server
+        .session_write_input(3, b"draft".to_vec())
+        .unwrap();
+    assert_eq!(
+        code(ask_now(&mut rig, "review")),
+        Some(ControlErrorCode::Conflict)
+    );
+    assert!(rig.server.agent_requests.requests.is_empty());
+    std::thread::sleep(quiet);
+
+    // Typed in while the agent works, and a second one joins the run the first is answered in:
+    // a request's own typing is not someone else's draft.
+    let first = info(ask_now(&mut rig, "review the parser"));
+    assert_eq!(first.state, AgentRequestState::Active);
+    assert_eq!(first.reason.as_deref(), Some(DELIVERED_MID_TURN));
+    assert!(first.delivered_at_unix_ms.is_some());
+    assert!(rig.typed_into(3, &format!("Request {}", first.id)));
+    let second = info(ask_now(&mut rig, "and the lexer"));
+    assert_eq!(second.state, AgentRequestState::Active);
+
+    // The turn under way ends and the agent goes straight on to what was typed in, so nothing is
+    // answered from the screen until it rests.
+    rig.set_state(3, DetectedAgentState::Idle);
+    rig.set_state(3, DetectedAgentState::Working);
+    assert!(rig.reply(3, &first.id, "the parser is fine").ok);
+    rig.server
+        .panes
+        .get_mut(&3)
+        .unwrap()
+        .screen_mut()
+        .process_bytes(b"the lexer is fine");
+    rig.set_state(3, DetectedAgentState::Idle);
+    assert_eq!(rig.request(&second.id).state, AgentRequestState::Active);
+    std::thread::sleep(quiet);
+    rig.server.pump_agent_requests();
+    let answered = rig.request(&second.id);
+    assert_eq!(answered.state, AgentRequestState::Answered);
+    assert!(
+        answered
+            .response
+            .unwrap()
+            .content
+            .text
+            .contains("the lexer is fine")
+    );
+
+    // Typed in within the quiet window a queued request waits out; cancelling it then says the
+    // agent already has it.
+    let third = info(ask_now(&mut rig, "and the docs"));
+    assert_eq!(third.reason.as_deref(), Some(DELIVERED));
+    let cancelled = info(rig.server.cancel_request(None, &third.id));
+    assert!(
+        cancelled
+            .reason
+            .unwrap()
+            .contains("after it was typed into the agent")
+    );
+}
+
+#[test]
+fn a_turn_is_answered_from_the_screen_only_once_the_screen_stops_changing() {
+    let mut rig = Rig::new(&[3]);
+    let request = rig.ask(None, 3, "summarize");
+    let quiet = Duration::from_millis(100);
+    rig.server.agent_requests.quiet = quiet;
+    let write = |rig: &mut Rig, text: &[u8]| {
+        rig.server
+            .panes
+            .get_mut(&3)
+            .unwrap()
+            .screen_mut()
+            .process_bytes(text);
+    };
+    rig.set_state(3, DetectedAgentState::Working);
+    write(&mut rig, b"the summary so far");
+    // The agent reports the end of its turn while it is still writing its answer out.
+    rig.set_state(3, DetectedAgentState::Idle);
+    write(&mut rig, b" and the rest");
+    rig.server.pump_agent_requests();
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
+    std::thread::sleep(quiet);
+    rig.server.pump_agent_requests();
+    let answered = rig.request(&request.id);
+    assert_eq!(answered.state, AgentRequestState::Answered);
+    let text = answered.response.unwrap().content.text;
+    assert!(text.ends_with("the rest"), "{text:?}");
 }
 
 #[test]
@@ -795,9 +924,12 @@ fn an_agent_owing_several_requests_names_the_one_it_asks_for() {
             Some(from.clone()),
             AgentTarget::Pane(2),
             "which tests are slow?".into(),
-            parent,
-            None,
-            None,
+            AskOptions {
+                parent,
+                follows: None,
+                asker_label: None,
+                now: false,
+            },
         )
     };
     assert_eq!(code(ask(None)), Some(ControlErrorCode::InvalidArgument));
@@ -1041,6 +1173,7 @@ fn an_ask_keeps_its_uploads_only_when_the_request_is_created() {
         follows: None,
         asker_label: None,
         attachments,
+        now: false,
     };
 
     // One missing upload refuses the whole ask, and the others stay unclaimed.
@@ -1096,9 +1229,12 @@ fn exchanges_between_the_same_two_agents_make_one_conversation() {
         Some(owing),
         AgentTarget::Pane(4),
         "more".into(),
-        None,
-        Some(&delegated.id),
-        None,
+        AskOptions {
+            parent: None,
+            follows: Some(&delegated.id),
+            asker_label: None,
+            now: false,
+        },
     );
     assert_eq!(
         code(follows_while_owing),
@@ -1119,9 +1255,12 @@ fn exchanges_between_the_same_two_agents_make_one_conversation() {
             None,
             AgentTarget::Pane(to),
             "follow-up".into(),
-            None,
-            Some(&outside.id),
-            Some("Claude \"Code\"\u{1b}[31m on\nfar-host\u{202e}\u{e0041}".into()),
+            AskOptions {
+                parent: None,
+                follows: Some(&outside.id),
+                asker_label: Some("Claude \"Code\"\u{1b}[31m on\nfar-host\u{202e}\u{e0041}".into()),
+                now: false,
+            },
         )
     };
     let follow_up = info(follows(&mut rig, 3));
@@ -1139,9 +1278,12 @@ fn exchanges_between_the_same_two_agents_make_one_conversation() {
         None,
         AgentTarget::Pane(3),
         "me too".into(),
-        None,
-        Some(&first.id),
-        None,
+        AskOptions {
+            parent: None,
+            follows: Some(&first.id),
+            asker_label: None,
+            now: false,
+        },
     );
     assert_eq!(code(someone_elses), Some(ControlErrorCode::InvalidArgument));
 }
@@ -1155,9 +1297,12 @@ fn a_new_native_conversation_ends_the_conversation_for_good() {
             None,
             AgentTarget::Pane(3),
             "and then?".into(),
-            None,
-            Some(id),
-            None,
+            AskOptions {
+                parent: None,
+                follows: Some(id),
+                asker_label: None,
+                now: false,
+            },
         )
     };
     // Asked before 3 named its native conversation, then again once it had.
@@ -1204,9 +1349,12 @@ fn following_a_delegated_request_respects_a_new_native_conversation() {
         Some(asker),
         AgentTarget::Pane(4),
         "and the release notes?".into(),
-        None,
-        Some(&delegated.id),
-        None,
+        AskOptions {
+            parent: None,
+            follows: Some(&delegated.id),
+            asker_label: None,
+            now: false,
+        },
     );
     assert_eq!(code(follows), Some(ControlErrorCode::InvalidArgument));
 }
@@ -1286,6 +1434,7 @@ fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
                 response: None,
                 created_at_unix_ms: 0,
                 updated_at_unix_ms: 0,
+                delivered_at_unix_ms: Some(0),
             },
             depth: 1,
             later: false,
@@ -1294,6 +1443,8 @@ fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
             to,
             DeliverySlot {
                 request: id,
+                riders: Vec::new(),
+                mid_turn: false,
                 tracker: AgentTurnTracker::new(true, Some(protocol::AgentState::Idle), false, None),
                 delivered: Instant::now(),
                 departed: true,

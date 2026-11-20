@@ -102,6 +102,24 @@ impl AgentResponseStore {
             .map(|entry| &entry.response)
     }
 
+    /// The last response to the turn `fence` started, or to any turn after it.
+    pub fn last_after(
+        &self,
+        reference: &AgentRef,
+        fence: &AgentResponseFence,
+    ) -> Option<&AgentResponse> {
+        self.entries
+            .get(reference)?
+            .iter()
+            .rev()
+            .find(|entry| {
+                entry.response.response_id > fence.generation
+                    && (fence.native_session.is_none()
+                        || entry.native_session == fence.native_session)
+            })
+            .map(|entry| &entry.response)
+    }
+
     pub fn insert(
         &mut self,
         reference: AgentRef,

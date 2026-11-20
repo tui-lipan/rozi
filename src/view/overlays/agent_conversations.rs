@@ -296,7 +296,7 @@ fn chain_overlay(ctx: &Context<AppRoot>, root: &str) -> Element {
                         short_duration(now.saturating_sub(request.created_at_unix_ms))
                     ),
                     // Promised a later answer: the open bar is the agent still owing it.
-                    AgentRequestState::Active if request.reason.is_some() => {
+                    AgentRequestState::Active if request.answering_later() => {
                         "ask · later".to_string()
                     }
                     _ => "ask".to_string(),

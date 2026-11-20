@@ -894,9 +894,12 @@ fn an_explicit_reply_during_a_requests_history_read_wins_and_restores() {
         None,
         AgentTarget::Pane(3),
         "summarize".into(),
-        None,
-        None,
-        None,
+        crate::session::server::agent_requests::AskOptions {
+            parent: None,
+            follows: None,
+            asker_label: None,
+            now: false,
+        },
     );
     let id = asked.data.unwrap()["id"].as_str().unwrap().to_owned();
     rig.state(protocol::DetectedAgentState::Working);

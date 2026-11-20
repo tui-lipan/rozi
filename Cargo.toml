@@ -98,7 +98,8 @@ exclude = [
 # (`terminal-ghostty`, `TerminalScreen::with_engine`, `compress_idle`).
 # 0.44.1: a history read returns a scroll-up the application answered late.
 # 0.45.5: DevTools rebuilds only its own panel, and shows App rows published outside `view()`.
-tui-lipan = { version = "0.45.6", features = [
+# 0.45.7: `Context::set_host_default_background` lets a translucent host terminal show through.
+tui-lipan = { version = "0.45.7", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

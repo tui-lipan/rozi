@@ -227,18 +227,12 @@ that is the exact recipe `.lp kbd` uses.
 
 ## The counted facts
 
-The numbers the landing page advertises — themes, rebindable commands, hook
-events, recognized coding agents — are not written down anywhere on the site.
-`config.ts` counts them out of `src/` at build time and passes them through
-`themeConfig.roziFacts`; the facts strip, two feature cards, and two catalogue
-rows read that. Adding a theme or an agent updates the site by itself.
+`config.ts` counts rebindable commands, hook events, and recognized coding
+agents from `src/` at build time. The landing page reads these counts from
+`themeConfig.roziFacts`.
 
-Each count anchors on a load-bearing constant — `BUILTIN_COMMANDS`,
-`EventKind::ALL`, `ThemePreset::all`, and the `[[agents]]` tables in
-`agent_detection/builtin.toml` — and **a pattern that stops matching throws**
-rather than falling back to a number. A build that fails naming the file that
-moved is cheaper than a page quietly advertising last year's totals, and this
-is the only place a Rust refactor can break the site.
+The build fails if it cannot find `BUILTIN_COMMANDS`, `EventKind::ALL`, or
+the `[[agents]]` tables in `agent_detection/builtin.toml`.
 
 Two counts stay literals in `Landing.vue`: seven layouts and nine workspaces
 are fixed by the design rather than by a list to count.

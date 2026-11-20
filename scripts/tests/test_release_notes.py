@@ -1,8 +1,10 @@
+import tempfile
 import unittest
 from pathlib import Path
 
 from scripts.release_notes import (
     SUMMARY_MAX_CHARS,
+    Commit,
     ReleaseNotesError,
     check_pull_request,
     commit_summary,
@@ -15,6 +17,7 @@ from scripts.release_notes import (
     select_previous_release,
     validate_coverage,
     validate_notes,
+    write_input,
 )
 
 
@@ -332,6 +335,20 @@ class CoverageTests(unittest.TestCase):
         validate_coverage(notes_with(("Fixed", "Other.")), [range_commit("fix: pushed directly")])
 
 
+class InputTests(unittest.TestCase):
+    def test_input_marks_the_entries_the_validator_requires(self):
+        commits = [
+            Commit("a", "fix(pane): x (#7)", "No behavior change.", ("src/a.rs",), True, None),
+            Commit("b", "refactor: y (#8)", "", ("src/b.rs",), True, None),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "input.md")
+            write_input(path, "o/r", "v1", "1", "v2", "2", commits)
+            text = path.read_text(encoding="utf-8")
+        self.assertEqual(text.count("Must appear: yes"), 1)
+        self.assertLess(text.index("Must appear: yes"), text.index("Candidate 2"))
+
+
 class PullRequestCheckTests(unittest.TestCase):
     def test_accepts_a_summary(self):
         self.assertEqual(check_pull_request("fix(a): b", "## Summary\n\nWhat changed."), [])
@@ -420,8 +437,17 @@ class ValidationTests(unittest.TestCase):
     def test_rejects_ai_tell_punctuation(self):
         with self.assertRaises(ReleaseNotesError):
             validate_notes("## Fixed\n\n- Rozi reconnects — without replacing the session.\n")
-        with self.assertRaises(ReleaseNotesError):
-            validate_notes('## Changed\n\n- Rozi calls this mode “offline”.\n')
+
+    def test_straightens_typographic_quotes(self):
+        self.assertEqual(
+            validate_notes("## Changed\n\n- Rozi calls this mode “offline” and it’s on.\n"),
+            "## Changed\n\n- Rozi calls this mode \"offline\" and it's on.\n",
+        )
+
+    def test_rejects_a_placeholder_pull_request_link(self):
+        for link in ("([none])", "((none))"):
+            with self.assertRaisesRegex(ReleaseNotesError, "none"):
+                validate_notes(f"## Fixed\n\n- A fix. {link}\n")
 
 
 class ReleaseBodyTests(unittest.TestCase):

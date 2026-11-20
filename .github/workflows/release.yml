@@ -158,16 +158,22 @@ jobs:
           test -n "$OPENAI_API_KEY"
           # Empty is a valid answer: a release of packaging or tooling fixes has nothing to tell
           # users, and validation publishes a fixed note for it unless a change needed a note.
-          # The writer is not deterministic, so one dropped change should not fail a tagged release.
-          for attempt in 1 2 3; do
-            opencode run --variant low --command changelog
-            if test -f release-notes.md && python3 scripts/release_notes.py validate \
+          # The writer is not deterministic. Each retry gets the previous validation error, so it
+          # repairs the draft instead of rolling the dice again.
+          feedback=""
+          for attempt in 1 2 3 4; do
+            rm -f release-notes.md
+            opencode run --variant low --command changelog ${feedback:+"$feedback"}
+            if ! test -f release-notes.md; then
+              error="release-notes.md was not written"
+            elif error=$(python3 scripts/release_notes.py validate \
               --input release-notes.md \
               --metadata release-notes-range.json \
-              --output release-notes-checked.md; then
+              --output release-notes-checked.md 2>&1); then
               exit 0
             fi
-            echo "::warning::Release notes attempt $attempt failed validation"
+            echo "::warning::Release notes attempt $attempt failed validation: ${error//$'\n'/ }"
+            feedback="Previous draft rejected by the validator: $error"
           done
           exit 1
 

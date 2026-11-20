@@ -2246,8 +2246,8 @@ mod tests {
             )
         };
 
-        let dark = ThemePreset::TokyoNight.theme();
-        let light = ThemePreset::SolarizedLight.theme();
+        let dark = ThemePreset::parse("tokyo-night").unwrap().theme();
+        let light = ThemePreset::parse("solarized-light").unwrap().theme();
         let (dark_header, dark_key, dark_status) = render(&mut screen, &dark);
         let (light_header, light_key, light_status) = render(&mut screen, &light);
 

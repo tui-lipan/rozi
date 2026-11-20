@@ -431,241 +431,102 @@ pub(crate) fn next_badge_cap_style(style: CapStyle) -> CapStyle {
     step_ring(BADGE_CAP_STYLES, style, false)
 }
 
+/// A built-in theme: Rozi's own palette or any preset shipped by `tui-lipan`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ThemePreset {
-    Rozi,
-    Lipan,
-    OneDark,
-    Dracula,
-    Nord,
-    GruvboxDark,
-    CatppuccinMocha,
-    TokyoNight,
-    SolarizedDark,
-    Monokai,
-    Ansi,
-    SolarizedLight,
-    GruvboxLight,
-    TokyoNightDay,
-    CatppuccinLatte,
-    CatppuccinFrappe,
-    CatppuccinMacchiato,
-    RosePine,
-    RosePineMoon,
-    RosePineDawn,
-    Kanagawa,
-    Everforest,
-    AyuDark,
-    AyuMirage,
-    AyuLight,
-    Nightfox,
-    Nordfox,
-    NightOwl,
-    MaterialPalenight,
-    Oxocarbon,
-    Zenburn,
-}
+pub struct ThemePreset(&'static str);
 
 impl ThemePreset {
-    pub fn all() -> [Self; 31] {
-        [
-            Self::Rozi,
-            Self::Lipan,
-            Self::OneDark,
-            Self::Dracula,
-            Self::Nord,
-            Self::GruvboxDark,
-            Self::CatppuccinMocha,
-            Self::TokyoNight,
-            Self::SolarizedDark,
-            Self::Monokai,
-            Self::Ansi,
-            Self::SolarizedLight,
-            Self::GruvboxLight,
-            Self::TokyoNightDay,
-            Self::CatppuccinLatte,
-            Self::CatppuccinFrappe,
-            Self::CatppuccinMacchiato,
-            Self::RosePine,
-            Self::RosePineMoon,
-            Self::RosePineDawn,
-            Self::Kanagawa,
-            Self::Everforest,
-            Self::AyuDark,
-            Self::AyuMirage,
-            Self::AyuLight,
-            Self::Nightfox,
-            Self::Nordfox,
-            Self::NightOwl,
-            Self::MaterialPalenight,
-            Self::Oxocarbon,
-            Self::Zenburn,
-        ]
+    pub const ROZI: Self = Self("rozi");
+    pub const LIPAN: Self = Self("lipan");
+    pub const ANSI: Self = Self("ansi");
+
+    /// Every built-in theme: Rozi first, then every preset `tui-lipan` ships.
+    pub fn all() -> Vec<Self> {
+        std::iter::once(Self::ROZI)
+            .chain(
+                tui_lipan::style::presets::PRESET_NAMES
+                    .iter()
+                    .copied()
+                    .map(Self),
+            )
+            .collect()
     }
 
-    pub fn id(self) -> &'static str {
-        match self {
-            Self::Rozi => "rozi",
-            Self::Lipan => "lipan",
-            Self::OneDark => "one-dark",
-            Self::Dracula => "dracula",
-            Self::Nord => "nord",
-            Self::GruvboxDark => "gruvbox-dark",
-            Self::CatppuccinMocha => "catppuccin-mocha",
-            Self::TokyoNight => "tokyo-night",
-            Self::SolarizedDark => "solarized-dark",
-            Self::Monokai => "monokai",
-            Self::Ansi => "ansi",
-            Self::SolarizedLight => "solarized-light",
-            Self::GruvboxLight => "gruvbox-light",
-            Self::TokyoNightDay => "tokyo-night-day",
-            Self::CatppuccinLatte => "catppuccin-latte",
-            Self::CatppuccinFrappe => "catppuccin-frappe",
-            Self::CatppuccinMacchiato => "catppuccin-macchiato",
-            Self::RosePine => "rose-pine",
-            Self::RosePineMoon => "rose-pine-moon",
-            Self::RosePineDawn => "rose-pine-dawn",
-            Self::Kanagawa => "kanagawa",
-            Self::Everforest => "everforest",
-            Self::AyuDark => "ayu-dark",
-            Self::AyuMirage => "ayu-mirage",
-            Self::AyuLight => "ayu-light",
-            Self::Nightfox => "nightfox",
-            Self::Nordfox => "nordfox",
-            Self::NightOwl => "night-owl",
-            Self::MaterialPalenight => "material-palenight",
-            Self::Oxocarbon => "oxocarbon",
-            Self::Zenburn => "zenburn",
-        }
+    pub const fn id(self) -> &'static str {
+        self.0
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Rozi => "Rozi",
-            Self::Lipan => "Lipan",
-            Self::OneDark => "One Dark",
-            Self::Dracula => "Dracula",
-            Self::Nord => "Nord",
-            Self::GruvboxDark => "Gruvbox Dark",
-            Self::CatppuccinMocha => "Catppuccin Mocha",
-            Self::TokyoNight => "Tokyo Night",
-            Self::SolarizedDark => "Solarized Dark",
-            Self::Monokai => "Monokai",
-            Self::Ansi => "ANSI",
-            Self::SolarizedLight => "Solarized Light",
-            Self::GruvboxLight => "Gruvbox Light",
-            Self::TokyoNightDay => "Tokyo Night Day",
-            Self::CatppuccinLatte => "Catppuccin Latte",
-            Self::CatppuccinFrappe => "Catppuccin Frappe",
-            Self::CatppuccinMacchiato => "Catppuccin Macchiato",
-            Self::RosePine => "Rose Pine",
-            Self::RosePineMoon => "Rose Pine Moon",
-            Self::RosePineDawn => "Rose Pine Dawn",
-            Self::Kanagawa => "Kanagawa",
-            Self::Everforest => "Everforest",
-            Self::AyuDark => "Ayu Dark",
-            Self::AyuMirage => "Ayu Mirage",
-            Self::AyuLight => "Ayu Light",
-            Self::Nightfox => "Nightfox",
-            Self::Nordfox => "Nordfox",
-            Self::NightOwl => "Night Owl",
-            Self::MaterialPalenight => "Material Palenight",
-            Self::Oxocarbon => "Oxocarbon",
-            Self::Zenburn => "Zenburn",
+    pub fn label(self) -> String {
+        if self == Self::ANSI {
+            return "ANSI".to_string();
         }
+        self.0
+            .split('-')
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    Some(first) => {
+                        let mut titled = first.to_uppercase().to_string();
+                        titled.push_str(chars.as_str());
+                        titled
+                    }
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     pub fn is_light(self) -> bool {
-        matches!(
-            self,
-            Self::SolarizedLight
-                | Self::GruvboxLight
-                | Self::TokyoNightDay
-                | Self::CatppuccinLatte
-                | Self::RosePineDawn
-                | Self::AyuLight
-        )
+        self != Self::ANSI && !self.theme().surface.backdrop.is_dark()
+    }
+
+    pub const fn is_signature(self) -> bool {
+        matches!(self.0.as_bytes(), b"rozi" | b"lipan")
     }
 
     pub fn parse(value: &str) -> Option<Self> {
-        match value
-            .trim()
-            .to_ascii_lowercase()
-            .replace(['_', ' '], "-")
-            .as_str()
-        {
+        let normalized = normalize_preset_name(value);
+        match normalized.as_str() {
             // `default` follows the default rather than naming a palette, so it moved with it.
-            "rozi" | "default" => Some(Self::Rozi),
-            "lipan" | "tui-lipan" | "tuilipan" => Some(Self::Lipan),
-            "one-dark" | "onedark" => Some(Self::OneDark),
-            "dracula" => Some(Self::Dracula),
-            "nord" => Some(Self::Nord),
-            "gruvbox-dark" | "gruvbox" => Some(Self::GruvboxDark),
-            "catppuccin-mocha" | "catppuccin" => Some(Self::CatppuccinMocha),
-            "tokyo-night" | "tokyonight" => Some(Self::TokyoNight),
-            "solarized-dark" | "solarized" => Some(Self::SolarizedDark),
-            "monokai" => Some(Self::Monokai),
-            "ansi" => Some(Self::Ansi),
-            "solarized-light" => Some(Self::SolarizedLight),
-            "gruvbox-light" => Some(Self::GruvboxLight),
-            "tokyo-night-day" => Some(Self::TokyoNightDay),
-            "catppuccin-latte" => Some(Self::CatppuccinLatte),
-            "catppuccin-frappe" => Some(Self::CatppuccinFrappe),
-            "catppuccin-macchiato" => Some(Self::CatppuccinMacchiato),
-            "rose-pine" => Some(Self::RosePine),
-            "rose-pine-moon" => Some(Self::RosePineMoon),
-            "rose-pine-dawn" => Some(Self::RosePineDawn),
-            "kanagawa" => Some(Self::Kanagawa),
-            "everforest" => Some(Self::Everforest),
-            "ayu-dark" => Some(Self::AyuDark),
-            "ayu-mirage" => Some(Self::AyuMirage),
-            "ayu-light" => Some(Self::AyuLight),
-            "nightfox" => Some(Self::Nightfox),
-            "nordfox" => Some(Self::Nordfox),
-            "night-owl" => Some(Self::NightOwl),
-            "material-palenight" => Some(Self::MaterialPalenight),
-            "oxocarbon" => Some(Self::Oxocarbon),
-            "zenburn" => Some(Self::Zenburn),
-            _ => None,
+            "rozi" | "default" => Some(Self::ROZI),
+            "tuilipan" => Some(Self::LIPAN),
+            "gruvbox" => Self::from_framework_name("gruvbox-dark"),
+            "catppuccin" => Self::from_framework_name("catppuccin-mocha"),
+            "solarized" => Self::from_framework_name("solarized-dark"),
+            _ => tui_lipan::style::presets::PRESET_NAMES
+                .iter()
+                .copied()
+                .find(|name| normalize_preset_name(name) == normalized)
+                .map(Self),
         }
     }
 
+    fn from_framework_name(canonical: &str) -> Option<Self> {
+        tui_lipan::style::presets::PRESET_NAMES
+            .iter()
+            .copied()
+            .find(|&name| name == canonical)
+            .map(Self)
+    }
+
     pub fn theme(self) -> Theme {
-        let theme = match self {
-            Self::Rozi => rozi_theme(),
-            Self::Lipan => Theme::lipan(),
-            Self::OneDark => Theme::one_dark(),
-            Self::Dracula => Theme::dracula(),
-            Self::Nord => Theme::nord(),
-            Self::GruvboxDark => Theme::gruvbox_dark(),
-            Self::CatppuccinMocha => Theme::catppuccin_mocha(),
-            Self::TokyoNight => Theme::tokyo_night(),
-            Self::SolarizedDark => Theme::solarized_dark(),
-            Self::Monokai => Theme::monokai(),
-            Self::Ansi => Theme::ansi(),
-            Self::SolarizedLight => Theme::solarized_light(),
-            Self::GruvboxLight => Theme::gruvbox_light(),
-            Self::TokyoNightDay => Theme::tokyo_night_day(),
-            Self::CatppuccinLatte => Theme::catppuccin_latte(),
-            Self::CatppuccinFrappe => Theme::catppuccin_frappe(),
-            Self::CatppuccinMacchiato => Theme::catppuccin_macchiato(),
-            Self::RosePine => Theme::rose_pine(),
-            Self::RosePineMoon => Theme::rose_pine_moon(),
-            Self::RosePineDawn => Theme::rose_pine_dawn(),
-            Self::Kanagawa => Theme::kanagawa(),
-            Self::Everforest => Theme::everforest(),
-            Self::AyuDark => Theme::ayu_dark(),
-            Self::AyuMirage => Theme::ayu_mirage(),
-            Self::AyuLight => Theme::ayu_light(),
-            Self::Nightfox => Theme::nightfox(),
-            Self::Nordfox => Theme::nordfox(),
-            Self::NightOwl => Theme::night_owl(),
-            Self::MaterialPalenight => Theme::material_palenight(),
-            Self::Oxocarbon => Theme::oxocarbon(),
-            Self::Zenburn => Theme::zenburn(),
+        let theme = if self == Self::ROZI {
+            rozi_theme()
+        } else {
+            tui_lipan::style::presets::preset_by_name(self.0)
+                .expect("ThemePreset only wraps tui_lipan::style::presets::PRESET_NAMES")
         };
         ensure_rozi_color(theme)
     }
+}
+
+fn normalize_preset_name(name: &str) -> String {
+    name.trim()
+        .chars()
+        .filter(|ch| !matches!(ch, '-' | '_' | ' '))
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 fn rozi_theme() -> Theme {
@@ -822,11 +683,35 @@ mod tests {
             assert_eq!(ThemePreset::parse(preset.id()), Some(preset));
             let _ = preset.theme();
         }
+        assert_eq!(ThemePreset::parse("default"), Some(ThemePreset::ROZI));
+        assert_eq!(ThemePreset::parse("tui-lipan"), Some(ThemePreset::LIPAN));
+        assert_eq!(ThemePreset::parse("tuilipan"), Some(ThemePreset::LIPAN));
+        assert_eq!(
+            ThemePreset::parse("onedark"),
+            ThemePreset::parse("one-dark")
+        );
+        assert_eq!(
+            ThemePreset::parse("tokyonight"),
+            ThemePreset::parse("tokyo-night")
+        );
+        assert_eq!(
+            ThemePreset::parse("gruvbox"),
+            ThemePreset::parse("gruvbox-dark")
+        );
+        assert_eq!(
+            ThemePreset::parse("catppuccin"),
+            ThemePreset::parse("catppuccin-mocha")
+        );
+        assert_eq!(
+            ThemePreset::parse("solarized"),
+            ThemePreset::parse("solarized-dark")
+        );
+        assert_eq!(ThemePreset::ANSI.label(), "ANSI");
     }
 
     #[test]
     fn rozi_theme_tracks_the_documentation_palette() {
-        let theme = ThemePreset::Rozi.theme();
+        let theme = ThemePreset::ROZI.theme();
 
         assert_eq!(theme.surface.backdrop, Color::hex_u24(0x06070F));
         assert_eq!(theme.surface.panel, Color::hex_u24(0x0B0D1C));

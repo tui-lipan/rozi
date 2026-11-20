@@ -189,7 +189,7 @@ pub struct ThemeConfig {
 impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
-            name: ThemePreset::Rozi.id().to_string(),
+            name: ThemePreset::ROZI.id().to_string(),
         }
     }
 }
@@ -209,7 +209,7 @@ impl ThemeChoice {
     pub fn label(&self) -> String {
         match self {
             Self::System => "System".to_string(),
-            Self::Builtin(preset) => preset.label().to_string(),
+            Self::Builtin(preset) => preset.label(),
             Self::Custom { name, .. } => name.clone(),
         }
     }

@@ -727,9 +727,7 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         let mut entry = SearchEntry::item(choice.label(), index);
         let signature = matches!(
             choice,
-            crate::config::ThemeChoice::Builtin(
-                crate::state::ThemePreset::Rozi | crate::state::ThemePreset::Lipan
-            )
+            crate::config::ThemeChoice::Builtin(preset) if preset.is_signature()
         );
         let description = match (Some(index) == current_index, signature) {
             (true, true) => Some("current · signature"),

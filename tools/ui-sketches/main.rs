@@ -2094,8 +2094,8 @@ fn sidebar_files() {
     backend.state_mut().config.nerd_icons = true;
     backend.set_viewport(viewport(100, 30));
     for preset in [
-        rozi::state::ThemePreset::Dracula,
-        rozi::state::ThemePreset::Nord,
+        rozi::state::ThemePreset::parse("dracula").unwrap(),
+        rozi::state::ThemePreset::parse("nord").unwrap(),
     ] {
         backend.state_mut().theme = preset.theme();
         backend.render();

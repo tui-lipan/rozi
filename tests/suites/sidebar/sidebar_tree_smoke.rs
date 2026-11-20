@@ -247,8 +247,8 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
 
         let original_theme = backend.state().theme.clone();
         for preset in [
-            rozi::state::ThemePreset::Dracula,
-            rozi::state::ThemePreset::Nord,
+            rozi::state::ThemePreset::parse("dracula").unwrap(),
+            rozi::state::ThemePreset::parse("nord").unwrap(),
         ] {
             backend.state_mut().theme = preset.theme();
             backend.render();
@@ -509,7 +509,7 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
                 "global Nerd icons switch updates Git marks and preserves colors: {seen:?}"
             );
         }
-        backend.state_mut().theme = rozi::state::ThemePreset::Dracula.theme();
+        backend.state_mut().theme = rozi::state::ThemePreset::parse("dracula").unwrap().theme();
         backend.render();
         let changed = backend.state().theme.git_status.modified;
         assert_ne!(changed, git.modified, "the palette must actually change");

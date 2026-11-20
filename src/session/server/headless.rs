@@ -1634,9 +1634,8 @@ impl SessionServer {
         Ok(reference)
     }
 
-    /// Read now rather than from the last poll: a dialog can open just after the report that said
-    /// the agent was ready, and the Enter of a prompt typed into it would answer it.
-    pub(super) fn refuse_unannounced_dialog(
+    /// Read the live screen for blockers that an agent report may miss.
+    pub(super) fn refuse_blocked_agent_screen(
         &mut self,
         pane_id: PaneId,
     ) -> std::result::Result<(), ControlResponse> {
@@ -1654,10 +1653,14 @@ impl SessionServer {
         };
         let title = pane.effective_title().unwrap_or_default();
         let screen = pane.screen_without_change().snapshot();
-        if crate::agent_detection::dialog_outranks_reports(definition, screen.as_ref(), &title) {
+        if crate::agent_detection::blocked_screen_outranks_reports(
+            definition,
+            screen.as_ref(),
+            &title,
+        ) {
             return Err(ControlResponse::error_with(
                 ControlErrorCode::AgentBlocked,
-                "agent is showing a dialog; refusing to type into it",
+                "the agent's screen is blocked",
             ));
         }
         Ok(())
@@ -1722,7 +1725,7 @@ impl SessionServer {
             Ok(reference) => reference,
             Err(response) => return Some(response),
         };
-        if let Err(response) = self.refuse_unannounced_dialog(reference.pane.pane_id) {
+        if let Err(response) = self.refuse_blocked_agent_screen(reference.pane.pane_id) {
             return Some(response);
         }
         let bytes = match self.session_prompt_bytes(reference.pane.pane_id, request.prompt) {

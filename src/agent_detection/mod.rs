@@ -148,13 +148,13 @@ pub(crate) fn observe(
     }
 }
 
-/// Whether the pane shows a dialog that a report saying the agent is ready cannot speak for.
-pub(crate) fn dialog_outranks_reports(
+/// Whether the visible screen blocks automated input regardless of the agent report.
+pub(crate) fn blocked_screen_outranks_reports(
     definition: &AgentDefinition,
     screen: &str,
     title: &str,
 ) -> bool {
-    definition::dialog_outranks_reports(
+    definition::blocked_screen_outranks_reports(
         definition,
         AgentDetectionInput {
             screen: &screen.to_lowercase(),
@@ -516,6 +516,25 @@ mod tests {
             detect_state("claude", transcript, "⠋ Fix agent state detection"),
             Some(DetectedAgentState::Working)
         );
+    }
+
+    #[test]
+    fn claude_usage_limit_text_above_an_idle_composer_does_not_block() {
+        // Combine the captured quota transcript with idle chrome. The old error is still
+        // within the footer search window, so matching the words alone would block input.
+        let screen = "● Usage limit reached again · continuing automatically at 2pm · esc to cancel
+  ⎿  You've hit your 5-hour limit · resets 2pm (Europe/Warsaw)
+─────────────────────────────────────────────────────────────────
+❯
+─────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← for agents";
+        assert_eq!(
+            detect_state("claude", screen, ""),
+            Some(DetectedAgentState::Idle)
+        );
+        let catalog = AgentCatalog::builtin();
+        let claude = catalog.by_id("claude").unwrap();
+        assert!(!blocked_screen_outranks_reports(claude, screen, ""));
     }
 
     /// Reduced from two live panes: an idle Claude Code pane that read as a run in flight because

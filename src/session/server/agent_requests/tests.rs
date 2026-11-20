@@ -438,6 +438,110 @@ fn a_run_that_answers_a_request_counts_apart() {
 }
 
 #[test]
+fn a_claude_usage_limit_pause_requires_fresh_quiet_after_the_screen_clears() {
+    for (observed_work, auto_resumes) in [(true, true), (false, true), (true, false)] {
+        let mut rig = Rig::new(&[3]);
+        rig.server.agent_requests.quiet = QUIET_WINDOW;
+        rig.move_to(3, "conversation");
+        let target = rig.agent(3);
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        pane.agent.identity = Some("claude".into());
+        pane.screen_mut().resize(10, 100);
+        let show = |rig: &mut Rig, state, footer: &str| {
+            let pane = rig.server.panes.get_mut(&3).unwrap();
+            pane.runtime.integration.as_mut().unwrap().state = state;
+            pane.screen_mut().process_bytes(b"\x1b[2J\x1b[H");
+            pane.screen_mut().process_bytes(footer.as_bytes());
+            rig.server.pump_agent_requests();
+        };
+        let expire_quiet = |rig: &mut Rig| {
+            let before_quiet = Instant::now() - QUIET_WINDOW;
+            *rig.server
+                .agent_requests
+                .stopped_since
+                .get_mut(&target)
+                .unwrap() = before_quiet;
+            if let Some(input) = rig.server.agent_requests.pane_input.get_mut(&3) {
+                *input = before_quiet;
+            }
+            rig.server.pump_agent_requests();
+        };
+        let quota = "────────────────\r\n  ⚠ Usage limit reached · limit resets 2pm";
+        let cleared =
+            "● Usage limit reached · continuing automatically at 2pm · esc to cancel\r\n❯";
+        show(&mut rig, protocol::AgentState::Error, quota);
+        let request = rig.ask(None, 3, "Review the fix");
+        assert_eq!(request.state, AgentRequestState::Queued);
+        assert_eq!(
+            request.reason.as_deref(),
+            Some("the agent's screen is blocked")
+        );
+        assert!(
+            !rig.server
+                .agent_requests
+                .stopped_since
+                .contains_key(&target)
+        );
+
+        // A redraw can clear the warning while the integration still reports the old error.
+        show(&mut rig, protocol::AgentState::Error, cleared);
+        let queued = rig.request(&request.id);
+        assert_eq!(queued.state, AgentRequestState::Queued);
+        assert_eq!(
+            queued.reason.as_deref(),
+            Some("waiting for the agent's pane to settle")
+        );
+        show(&mut rig, protocol::AgentState::Working, "");
+        assert_eq!(rig.request(&request.id).state, AgentRequestState::Queued);
+        show(&mut rig, protocol::AgentState::Idle, cleared);
+        expire_quiet(&mut rig);
+        assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
+        assert!(rig.typed_into(3, &format!("Request {}", request.id)));
+
+        if observed_work {
+            show(&mut rig, protocol::AgentState::Working, "");
+        }
+        show(&mut rig, protocol::AgentState::Error, quota);
+        let followup = rig.ask(None, 3, "One more check");
+        assert_eq!(followup.state, AgentRequestState::Queued);
+        assert!(
+            !rig.server
+                .agent_requests
+                .stopped_since
+                .contains_key(&target)
+        );
+        // Even a pause that outlasts the delivery timeout has to wait for the agent to resume.
+        rig.server
+            .agent_requests
+            .slots
+            .get_mut(&target)
+            .unwrap()
+            .delivered = Instant::now() - UNDETECTED_TURN;
+        show(&mut rig, protocol::AgentState::Error, cleared);
+        let waiting = rig.request(&request.id);
+        assert_eq!(waiting.state, AgentRequestState::Active);
+        assert!(waiting.response.is_none());
+
+        if auto_resumes {
+            show(&mut rig, protocol::AgentState::Working, "");
+            assert!(rig.reply(3, &request.id, "Reviewed").ok);
+            assert_eq!(
+                rig.request(&request.id).response.unwrap().content.source,
+                AgentResponseSource::AgentCli
+            );
+        } else {
+            // Cancelling the pause leaves the agent stopped. The terminal is available as a
+            // fallback once the quiet window elapses.
+            expire_quiet(&mut rig);
+            assert_eq!(
+                rig.request(&request.id).response.unwrap().content.source,
+                AgentResponseSource::Terminal
+            );
+        }
+    }
+}
+
+#[test]
 fn a_request_that_leaves_no_trace_is_typed_once_more_then_fails() {
     let mut rig = Rig::new(&[3]);
     rig.server.agent_requests.delivery_check = Duration::ZERO;
@@ -1193,6 +1297,7 @@ fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
                 tracker: AgentTurnTracker::new(true, Some(protocol::AgentState::Idle), false, None),
                 delivered: Instant::now(),
                 departed: true,
+                waiting_after_screen_block: false,
                 shown: true,
                 attempts: 1,
                 before: 0,

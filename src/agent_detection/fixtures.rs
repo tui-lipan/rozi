@@ -159,10 +159,10 @@ fn screens_read_the_states_their_fixtures_claim() {
     assert!(checked > 0, "the corpus must not be empty");
 }
 
-/// A rule that outranks reports refuses prompts on a pane whose hooks say it is ready, so a wrong
-/// match stops a healthy agent. Nothing that is not a dialog may match one.
+/// A rule that outranks reports refuses prompts on a pane whose hooks say it is ready. Only
+/// captured screens with a live blocker should match one.
 #[test]
-fn only_a_dialog_outranks_a_report() {
+fn only_a_live_blocker_outranks_a_report() {
     let catalog = AgentCatalog::builtin();
     let mut matched = Vec::new();
     for (id, fixture) in fixtures() {
@@ -170,7 +170,7 @@ fn only_a_dialog_outranks_a_report() {
             continue;
         };
         for case in &fixture.cases {
-            let outranks = super::definition::dialog_outranks_reports(
+            let outranks = super::definition::blocked_screen_outranks_reports(
                 definition,
                 AgentDetectionInput {
                     screen: &case.screen.to_lowercase(),
@@ -192,6 +192,7 @@ fn only_a_dialog_outranks_a_report() {
     assert_eq!(
         matched,
         [
+            "claude/usage-limit-pause",
             "codex/hooks-need-review-dialog",
             "codex/offer-to-switch-models",
             "codex/resume-working-directory-dialog",

@@ -1190,7 +1190,7 @@ mod tests {
             "--until".into(),
             "quiescent".into(),
             "--timeout".into(),
-            "30s".into(),
+            "6h".into(),
             "--format".into(),
             "json".into(),
         ])
@@ -1201,7 +1201,7 @@ mod tests {
             ControlCommand::AgentWait {
                 target: AgentTarget::Pane(3),
                 until: AgentWaitCondition::Quiescent,
-                timeout_ms: Some(30_000),
+                timeout_ms: Some(21_600_000),
             }
         );
     }
@@ -1332,12 +1332,12 @@ mod tests {
             "3",
             "--wait",
             "--timeout",
-            "30m",
+            "1h30m",
             "--",
             "review",
         ]))
         .unwrap();
-        assert_eq!(waiting.await_ms, Some(30 * 60 * 1000));
+        assert_eq!(waiting.await_ms, Some(5_400_000));
         for incomplete in [&["--wait"][..], &["--timeout", "1m"][..]] {
             let mut list = vec!["ask", "--target", "3"];
             list.extend_from_slice(incomplete);

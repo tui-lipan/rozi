@@ -278,8 +278,8 @@ impl BranchOutcome {
 /// Why a branch has no remote copy to delete, with the remote's name when it is known.
 type NoUpstream = (Option<String>, String);
 
-/// Remove a linked checkout. `force` only relaxes Git's dirty-checkout guard; it never removes a
-/// Rozi session or overrides a lock. `unlock_stale` first lifts a lock whose owner is gone, judged
+/// Remove a linked checkout. `force` allows removal of dirty checkouts and ignored files.
+/// `unlock_stale` first lifts a lock whose owner is gone, judged
 /// here rather than trusting the caller, and restores it if Git still refuses. Session-origin
 /// protection belongs at the RPC boundary.
 ///
@@ -303,10 +303,15 @@ pub fn remove(
         .next()
         .map_or_else(|| cwd.to_path_buf(), |tree| PathBuf::from(tree.path));
     let cwd = home.as_path();
-    if let Some(lock) = &worktree.lock {
-        if !(unlock_stale && lock.stale) {
-            return Err(locked_error(lock));
-        }
+    if let Some(lock) = &worktree.lock
+        && !(unlock_stale && lock.stale)
+    {
+        return Err(locked_error(lock));
+    }
+    if !force {
+        check_ignored_files(Path::new(&worktree.path))?;
+    }
+    if worktree.lock.is_some() {
         unlock_path(cwd, &worktree.path)?;
     }
     let mut args = argv(&["worktree", "remove"]);
@@ -327,6 +332,46 @@ pub fn remove(
         Some(branch) if delete_branch.any() => delete_branches(cwd, branch, delete_branch),
         _ => Vec::new(),
     })
+}
+
+fn check_ignored_files(path: &Path) -> Result<(), String> {
+    // Git can unregister an already missing checkout.
+    if !path.try_exists().map_err(|err| err.to_string())? {
+        return Ok(());
+    }
+    let output = command::checked(
+        path,
+        &argv(&[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+            "--",
+            ":(top,exclude)target/",
+            ":(top,exclude)node_modules/",
+        ]),
+        WORKTREE_LIST_TIMEOUT,
+    )
+    .map_err(|err| format!("cannot check for ignored files: {err}"))?;
+    if output.is_empty() {
+        return Ok(());
+    }
+    let mut files = output
+        .split(|&byte| byte == 0)
+        .filter(|file| !file.is_empty());
+    let mut examples = files
+        .by_ref()
+        .take(5)
+        .map(|file| format!("{:?}", String::from_utf8_lossy(file)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if files.next().is_some() {
+        examples.push_str(", …");
+    }
+    Err(format!(
+        "worktree contains ignored files that would be deleted: {examples}. Move them out or use --force"
+    ))
 }
 
 /// Delete the selected copies of a branch whose checkout is gone, unless another checkout (the
@@ -1001,6 +1046,47 @@ mod tests {
                 message,
             ],
         );
+    }
+
+    #[test]
+    fn removal_requires_force_for_ignored_artifacts_but_allows_build_output() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        std::fs::write(repo.join(".gitignore"), "/target/\n/node_modules/\n").unwrap();
+        git(&repo, &["add", ".gitignore"]);
+        commit(&repo, "initial");
+        std::fs::write(repo.join(".git/info/exclude"), "/captures/\n").unwrap();
+
+        let checkout = temp.path().join("checkout");
+        create(&repo, "artifacts", "HEAD", &checkout).unwrap();
+        for dir in ["target", "node_modules", "captures"] {
+            std::fs::create_dir(checkout.join(dir)).unwrap();
+            std::fs::write(checkout.join(dir).join("saved file"), b"data").unwrap();
+        }
+        let error = remove(&repo, &checkout, false, false, LOCAL).unwrap_err();
+        assert!(error.contains("\"captures/saved file\""), "{error}");
+        assert!(
+            !error.contains("target/") && !error.contains("node_modules/"),
+            "{error}"
+        );
+        assert!(error.contains("--force"), "{error}");
+        assert!(checkout.join("captures/saved file").is_file());
+        assert!(has_branch(&repo, "artifacts"));
+        remove(&repo, &checkout, true, false, BranchDeletion::NONE).unwrap();
+        assert!(!checkout.exists());
+
+        create(&repo, "build", "HEAD", &checkout).unwrap();
+        for dir in ["target", "node_modules"] {
+            std::fs::create_dir(checkout.join(dir)).unwrap();
+            std::fs::write(checkout.join(dir).join("built"), b"data").unwrap();
+        }
+        remove(&repo, &checkout, false, false, BranchDeletion::NONE).unwrap();
+        assert!(!checkout.exists());
     }
 
     fn deleted(branch: &str, remote: Option<&str>) -> BranchOutcome {

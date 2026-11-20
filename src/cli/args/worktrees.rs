@@ -75,7 +75,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
         advanced_only: false,
         note: "",
         rows: &[
-            row("--force", "Let Git remove a dirty checkout"),
+            row("--force", "Remove dirty checkouts and ignored files"),
             row(
                 "--delete-branch <WHAT>",
                 "Delete merged branches: local, remote,",

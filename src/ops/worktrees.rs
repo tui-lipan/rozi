@@ -964,7 +964,7 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
         ctx,
         cwd,
         tree,
-        armed == Some(PendingWorktreeRemoveKind::Dirty),
+        armed == Some(PendingWorktreeRemoveKind::Force),
     )
 }
 
@@ -1261,20 +1261,19 @@ pub(crate) fn apply_result(
                 WorktreeOperationKind::Remove { path, force: false },
                 WorktreeResult::Failed { message },
             ) => {
-                let dirty = message.contains("--force");
+                let can_force = message.contains("--force");
                 if picker_here
-                    && dirty
+                    && can_force
                     && let Some(picker) = ctx.state.worktree_picker.as_mut()
                 {
                     picker.pending_remove = Some(PendingWorktreeRemove {
                         path: path.clone(),
-                        kind: PendingWorktreeRemoveKind::Dirty,
+                        kind: PendingWorktreeRemoveKind::Force,
                     });
                 }
                 crate::pane::pty_events::notify_error(ctx, "Remove failed", message);
-                if sidebar_here && dirty {
-                    // Git refused a dirty checkout: the row re-arms as a forced removal, so the
-                    // next ✕ says what it will do and then does it.
+                if sidebar_here && can_force {
+                    // The next ✕ confirms the forced removal.
                     ctx.state.sidebar.worktrees.force_remove = Some(path.clone());
                     ctx.state.sidebar.pending_row_close =
                         Some(crate::state::SidebarClose::Worktree { path, force: true });

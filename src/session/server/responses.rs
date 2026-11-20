@@ -66,6 +66,22 @@ impl AgentResponseStore {
         }
     }
 
+    /// The responses after `fence` that come after `seen` too: those not yet read.
+    pub fn after_seen(
+        &self,
+        reference: &AgentRef,
+        fence: &AgentResponseFence,
+        seen: Option<&AgentResponse>,
+    ) -> Option<&AgentResponse> {
+        let fence = AgentResponseFence {
+            generation: seen.map_or(fence.generation, |seen| {
+                seen.response_id.max(fence.generation)
+            }),
+            native_session: fence.native_session.clone(),
+        };
+        self.after(reference, &fence)
+    }
+
     pub fn latest(
         &self,
         reference: &AgentRef,
@@ -94,24 +110,6 @@ impl AgentResponseStore {
         self.entries
             .get(reference)?
             .iter()
-            .find(|entry| {
-                entry.response.response_id > fence.generation
-                    && (fence.native_session.is_none()
-                        || entry.native_session == fence.native_session)
-            })
-            .map(|entry| &entry.response)
-    }
-
-    /// The last response to the turn `fence` started, or to any turn after it.
-    pub fn last_after(
-        &self,
-        reference: &AgentRef,
-        fence: &AgentResponseFence,
-    ) -> Option<&AgentResponse> {
-        self.entries
-            .get(reference)?
-            .iter()
-            .rev()
             .find(|entry| {
                 entry.response.response_id > fence.generation
                     && (fence.native_session.is_none()

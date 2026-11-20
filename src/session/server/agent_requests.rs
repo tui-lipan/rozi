@@ -50,6 +50,8 @@ const DELIVERED: &str = "typed into the agent; waiting for its answer";
 /// What an active request says once typed into an agent that was busy at the time.
 const DELIVERED_MID_TURN: &str =
     "typed into the agent while it was busy; it takes it as a follow-up";
+/// How many requests may be typed into an agent with `now` during a run it is answering another.
+const MAX_RIDERS: usize = 4;
 
 /// What an ask asks for besides its target and text.
 #[derive(Default)]
@@ -181,8 +183,11 @@ struct DeliverySlot {
     riders: Vec<String>,
     /// Something was typed in while the agent was busy, which it may take as a follow-up turn
     /// straight after this one: the run ends only once the agent has stayed stopped for a quiet
-    /// window, and an integration's answer is its last one.
+    /// window, and its requests are matched to the integration's answers.
     mid_turn: bool,
+    /// What the agent's integration published during the run, oldest first: the last answers
+    /// one request each, as many as the run holds.
+    answers: Vec<AgentResponse>,
     tracker: AgentTurnTracker,
     /// When the request was last typed.
     delivered: Instant,
@@ -227,6 +232,8 @@ enum Readiness {
 enum TurnOutcome {
     Failed(String),
     Answered(AgentResponse),
+    /// Answered by the run's [`DeliverySlot::answers`].
+    Published,
     /// Ended with nothing to answer with.
     Unanswered,
 }
@@ -897,6 +904,18 @@ impl SessionServer {
         if let Some(reason) = self.typing_blocker(to) {
             return Err(conflict(reason));
         }
+        if self
+            .agent_requests
+            .slots
+            .get(to)
+            .is_some_and(|slot| slot.riders.len() >= MAX_RIDERS)
+        {
+            return Err(conflict(format!(
+                "{} requests were already typed into the agent while it answers request `{}`; ask without --now to queue it",
+                MAX_RIDERS + 1,
+                self.agent_requests.answering(to).unwrap_or_default()
+            )));
+        }
         Ok(runtime.state)
     }
 
@@ -1304,8 +1323,10 @@ impl SessionServer {
                 TurnOutcome::Failed("the agent moved to another conversation".into()),
             );
         }
+        self.collect_run_answers(target);
+        let slot = self.agent_requests.slots.get(target).expect("listed slot");
         if !slot.mid_turn
-            && let Some(response) = slot.tracker.fresh_response(&self.agent_responses, target)
+            && let Some(response) = slot.answers.first()
         {
             let response = response.clone();
             return self.finish_request_turn(target, TurnOutcome::Answered(response));
@@ -1327,9 +1348,8 @@ impl SessionServer {
             if !rested || !(turn_ended || slot.departed || elapsed >= undetected_turn) {
                 return;
             }
-            if let Some(response) = slot.tracker.last_response(&self.agent_responses, target) {
-                let response = response.clone();
-                return self.finish_request_turn(target, TurnOutcome::Answered(response));
+            if !slot.answers.is_empty() {
+                return self.finish_request_turn(target, TurnOutcome::Published);
             }
             return self.answer_request_from_screen(target);
         }
@@ -1359,6 +1379,26 @@ impl SessionServer {
         // An agent can report the end of its turn while it is still writing what it answers.
         if (turn_ended || undetected) && rested {
             self.answer_request_from_screen(target);
+        }
+    }
+
+    /// Keep what `target`'s integration published since the last look, so a run that takes several
+    /// turns keeps each turn's answer even once the response journal has dropped it.
+    fn collect_run_answers(&mut self, target: &protocol::AgentRef) {
+        let slot = slot_mut(&mut self.agent_requests, target);
+        let Some(fence) = slot.tracker.fence() else {
+            return;
+        };
+        while let Some(response) =
+            self.agent_responses
+                .after_seen(target, fence, slot.answers.last())
+        {
+            slot.answers.push(response.clone());
+        }
+        // Each request takes one answer, counted from the last.
+        let keep = MAX_RIDERS + 1;
+        if slot.answers.len() > keep {
+            slot.answers.drain(..slot.answers.len() - keep);
         }
     }
 
@@ -1466,6 +1506,9 @@ impl SessionServer {
         if typed.is_err() {
             return false;
         }
+        self.agent_requests
+            .request_input
+            .insert(target.pane.pane_id, Instant::now());
         let slot = self
             .agent_requests
             .slots
@@ -1542,9 +1585,11 @@ impl SessionServer {
         if let Some(pane) = self.panes.get_mut(&target.pane.pane_id) {
             pane.agent.end_request_run(target);
         }
+        let published = matches!(outcome, TurnOutcome::Published);
         let (state, reason, response) = match outcome {
             TurnOutcome::Failed(reason) => (AgentRequestState::Failed, Some(reason), None),
             TurnOutcome::Answered(response) => (AgentRequestState::Answered, None, Some(response)),
+            TurnOutcome::Published => (AgentRequestState::Answered, None, None),
             TurnOutcome::Unanswered => (
                 AgentRequestState::Failed,
                 Some("the turn ended with nothing on screen".into()),
@@ -1552,11 +1597,19 @@ impl SessionServer {
             ),
         };
         // What was typed in during the run is answered by its end as much as the first request.
-        for id in std::iter::once(slot.request).chain(slot.riders) {
+        // The integration answers each turn: the agent takes what was typed in order, so the last
+        // answer is the last request's, and requests it folded into one turn share that turn's.
+        let count = 1 + slot.riders.len();
+        for (index, id) in std::iter::once(slot.request).chain(slot.riders).enumerate() {
             if !self.request_active(&id) {
                 continue;
             }
-            let mut response = response.clone();
+            let mut response = if published {
+                let answer = (slot.answers.len() + index).saturating_sub(count);
+                slot.answers.get(answer).cloned()
+            } else {
+                response.clone()
+            };
             if let Some(response) = response.as_mut() {
                 response.response_id = self.agent_responses.next_id();
             }
@@ -1744,6 +1797,7 @@ impl SessionServer {
                     request: id.to_owned(),
                     riders: Vec::new(),
                     mid_turn: busy,
+                    answers: Vec::new(),
                     // A busy agent's turn ends the first time it stops.
                     tracker: AgentTurnTracker::new(!busy, Some(state), false, Some(fence)),
                     delivered: Instant::now(),

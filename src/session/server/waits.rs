@@ -99,15 +99,6 @@ impl AgentTurnTracker {
         })
     }
 
-    /// The last response `reference` published after the fence, if any.
-    pub(super) fn last_response<'a>(
-        &self,
-        responses: &'a super::responses::AgentResponseStore,
-        reference: &protocol::AgentRef,
-    ) -> Option<&'a crate::control::AgentResponse> {
-        responses.last_after(reference, self.fence.as_ref()?)
-    }
-
     /// The first response `reference` published after the fence, if any.
     pub(super) fn fresh_response<'a>(
         &self,

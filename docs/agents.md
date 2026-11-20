@@ -480,8 +480,10 @@ a reply needs, so its requests are answered from its terminal; allow it with
 `--now` types the request in at once, even while the agent works or answers another request, for
 agents that take typed input mid-turn as a follow-up, such as Claude Code, Codex, and Antigravity.
 It is refused with `agent-blocked` while the agent shows a dialog, and with `conflict` while someone
-is typing into its pane. A request typed in while the agent was busy is answered once the agent has
-stayed stopped for two seconds, so a follow-up turn it starts at once still counts.
+is typing into its pane or once four requests were typed in while it answers another. A request
+typed in while the agent was busy is answered once the agent has stayed stopped for two seconds, so a
+follow-up turn it starts at once still counts. Without replies, the agent's last integration
+responses answer those requests in order, the last response the last request.
 
 | State | Meaning |
 | --- | --- |

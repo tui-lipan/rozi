@@ -90,6 +90,32 @@ impl Rig {
         ))
     }
 
+    fn ask_now(&mut self, to: PaneId, text: &str) -> ControlResponse {
+        let now = AskOptions {
+            now: true,
+            ..AskOptions::default()
+        };
+        self.server
+            .ask_agent(None, AgentTarget::Pane(to), text.into(), now)
+    }
+
+    /// Pane `pane`'s integration publishes `text` as the answer to a turn.
+    fn publish(&mut self, pane: PaneId, text: &str) {
+        let agent = self.agent(pane);
+        self.server.agent_responses.insert(
+            agent,
+            None,
+            AgentResponsePayload {
+                text: text.into(),
+                turn_id: None,
+                source: AgentResponseSource::NativeHook,
+                fidelity: AgentResponseFidelity::Semantic,
+                complete: true,
+                truncated: false,
+            },
+        );
+    }
+
     fn try_ask(&mut self, from: PaneId, to: PaneId) -> ControlResponse {
         let from = self.agent(from);
         self.server.ask_agent(
@@ -602,6 +628,11 @@ fn a_dropped_request_is_never_typed_over_fresh_input() {
         rig.typed_into(3, &typed),
         "typed again once the pane was quiet"
     );
+    // Typing it again was the request's own input, not someone's draft.
+    assert_eq!(
+        info(rig.ask_now(3, "and the lexer")).state,
+        AgentRequestState::Active
+    );
 }
 
 #[test]
@@ -709,18 +740,7 @@ fn requests_reach_a_target_one_turn_at_a_time() {
     assert_eq!(rig.request(&second.id).state, AgentRequestState::Active);
 
     // An integration's answer published after delivery beats the screen, without the turn ending.
-    rig.server.agent_responses.insert(
-        rig.agent(3),
-        None,
-        AgentResponsePayload {
-            text: "the lexer is fine".into(),
-            turn_id: None,
-            source: AgentResponseSource::NativeHook,
-            fidelity: AgentResponseFidelity::Semantic,
-            complete: true,
-            truncated: false,
-        },
-    );
+    rig.publish(3, "the lexer is fine");
     rig.server.pump_agent_requests();
     let answered = rig.request(&second.id);
     assert_eq!(answered.state, AgentRequestState::Answered);
@@ -730,14 +750,7 @@ fn requests_reach_a_target_one_turn_at_a_time() {
 #[test]
 fn a_request_asked_now_is_typed_in_mid_turn_unless_that_is_unsafe() {
     let mut rig = Rig::new(&[3]);
-    let ask_now = |rig: &mut Rig, text: &str| {
-        let now = AskOptions {
-            now: true,
-            ..AskOptions::default()
-        };
-        rig.server
-            .ask_agent(None, AgentTarget::Pane(3), text.into(), now)
-    };
+    let ask_now = |rig: &mut Rig, text: &str| rig.ask_now(3, text);
     // A dialog, or a draft someone is typing, refuses it, and nothing is asked.
     rig.set_state(3, DetectedAgentState::Blocked);
     assert_eq!(
@@ -803,6 +816,43 @@ fn a_request_asked_now_is_typed_in_mid_turn_unless_that_is_unsafe() {
             .reason
             .unwrap()
             .contains("after it was typed into the agent")
+    );
+}
+
+#[test]
+fn requests_typed_into_one_run_keep_their_own_answers() {
+    let mut rig = Rig::new(&[3]);
+    let quiet = Duration::from_millis(100);
+    rig.server.agent_requests.quiet = quiet;
+    rig.set_state(3, DetectedAgentState::Working);
+    let first = info(rig.ask_now(3, "review the parser"));
+    let second = info(rig.ask_now(3, "and the lexer"));
+
+    // The agent answers each in a turn of its own, through its integration alone.
+    rig.publish(3, "the parser is fine");
+    rig.set_state(3, DetectedAgentState::Idle);
+    rig.set_state(3, DetectedAgentState::Working);
+    rig.server.pump_agent_requests();
+    rig.publish(3, "the lexer is fine");
+    rig.set_state(3, DetectedAgentState::Idle);
+    std::thread::sleep(quiet);
+    rig.server.pump_agent_requests();
+    let answer = |rig: &Rig, id: &str| {
+        let request = rig.request(id);
+        assert_eq!(request.state, AgentRequestState::Answered);
+        request.response.unwrap().content.text
+    };
+    assert_eq!(answer(&rig, &first.id), "the parser is fine");
+    assert_eq!(answer(&rig, &second.id), "the lexer is fine");
+
+    // A run takes only so many requests typed in after its first.
+    for index in 0..=MAX_RIDERS {
+        let asked = info(rig.ask_now(3, &format!("question {index}")));
+        assert_eq!(asked.state, AgentRequestState::Active);
+    }
+    assert_eq!(
+        code(rig.ask_now(3, "one too many")),
+        Some(ControlErrorCode::Conflict)
     );
 }
 
@@ -1445,6 +1495,7 @@ fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
                 request: id,
                 riders: Vec::new(),
                 mid_turn: false,
+                answers: Vec::new(),
                 tracker: AgentTurnTracker::new(true, Some(protocol::AgentState::Idle), false, None),
                 delivered: Instant::now(),
                 departed: true,

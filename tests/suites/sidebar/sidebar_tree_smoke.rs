@@ -509,7 +509,14 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
                 "global Nerd icons switch updates Git marks and preserves colors: {seen:?}"
             );
         }
-        backend.state_mut().theme = rozi::state::ThemePreset::parse("dracula").unwrap().theme();
+        let _config_lock = rozi::test_support::lock_config_file();
+        let dracula_index = rozi::config::theme_choices()
+            .iter()
+            .position(|choice| choice.id() == "dracula")
+            .expect("dracula choice");
+        backend
+            .dispatch(rozi::Msg::SelectTheme(dracula_index))
+            .expect("select dracula theme");
         backend.render();
         let changed = backend.state().theme.git_status.modified;
         assert_ne!(changed, git.modified, "the palette must actually change");

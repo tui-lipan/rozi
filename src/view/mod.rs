@@ -662,15 +662,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     let content: Element = root.into();
     // Grows and shrinks with the slide, so the pane column resizes to make room rather than being
     // pushed off the far edge of the screen.
-    let shell = sidebar::docking_shell(ctx, viewport, content, dialog_dim, ui_flash);
-
-    ThemeProvider::new(crate::ops::theme::cursor_theme(
-        ctx.state.theme.clone(),
-        ctx.state.config.cursor.blink,
-        ctx.host_cursor_style(),
-    ))
-    .child(shell)
-    .into()
+    sidebar::docking_shell(ctx, viewport, content, dialog_dim, ui_flash)
 }
 
 /// The canvas bounds to render the active workspace into. A follower returns the controller's

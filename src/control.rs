@@ -280,6 +280,8 @@ impl ControlCommand {
         }
     }
 
+    /// Whether `--here` sends this to the UI showing the caller's session, when there is one,
+    /// rather than to the session server.
     pub(crate) fn uses_ui_authority(&self) -> bool {
         matches!(
             self,
@@ -292,6 +294,10 @@ impl ControlCommand {
                 | Self::SendText { .. }
                 | Self::SendKeys { .. }
                 | Self::AgentPrompt { .. }
+                // Only a UI has a view to scroll or focus to move. A pane in a background session
+                // must not reach the one on screen, whose pane with the same id is another pane.
+                | Self::PaneReveal { .. }
+                | Self::Focus { .. }
         )
     }
 }

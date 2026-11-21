@@ -46,7 +46,9 @@ fn validate_targets(
         }
         ControlCommand::PaneSet { target, .. }
         | ControlCommand::PaneMove { target, .. }
-        | ControlCommand::PaneClose { target, .. } => vec![*target],
+        | ControlCommand::PaneClose { target, .. }
+        | ControlCommand::PaneReveal { target }
+        | ControlCommand::Focus { target } => vec![*target],
         ControlCommand::PaneSwap { target, with, .. } => vec![*target, *with],
         ControlCommand::SendText { target, .. } | ControlCommand::SendKeys { target, .. } => {
             vec![target.unwrap_or(caller.pane_id)]
@@ -276,6 +278,46 @@ mod tests {
             );
             assert!(outbound.try_iter().any(|message| matches!(message,
                 ClientOutbound::Control(ClientMessage::AttachedControl { request, .. }) if request.caller_context.as_deref() == Some(&caller))));
+        });
+    }
+
+    #[test]
+    fn caller_ui_fences_pane_reveal_and_focus_targets() {
+        on_stack(|| {
+            let (mut backend, _outbound, caller) = attached();
+            // A client-local scratch pane sharing a target id must never be focused or revealed by
+            // a `--here` request targeting the verified session.
+            backend
+                .state_mut()
+                .scratch
+                .panes
+                .push(crate::state::Pane::new(
+                    99,
+                    100,
+                    tui_lipan::prelude::FloatRect::default(),
+                ));
+            for command in [
+                ControlCommand::PaneReveal { target: 99 },
+                ControlCommand::Focus { target: 99 },
+            ] {
+                let response = ask(&mut backend, &caller, command).try_recv().unwrap();
+                assert_eq!(
+                    response.code,
+                    Some(ControlErrorCode::OutOfScope),
+                    "{response:?}"
+                );
+            }
+            for command in [
+                ControlCommand::PaneReveal {
+                    target: caller.pane_id,
+                },
+                ControlCommand::Focus {
+                    target: caller.pane_id,
+                },
+            ] {
+                let response = ask(&mut backend, &caller, command).try_recv().unwrap();
+                assert!(response.ok, "{response:?}");
+            }
         });
     }
 }

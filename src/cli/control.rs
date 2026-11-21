@@ -1455,6 +1455,16 @@ fn send_control(command: &ControlCli) -> std::result::Result<serde_json::Value, 
             request.caller_context = Some(Box::new(caller.clone()));
             if let Some(socket) = super::context::authority_ui(&request, &caller) {
                 ask_ui_endpoint(Some(socket), &request)?
+            } else if let Some(reason) =
+                crate::session::server::session_control_unsupported(&request.command)
+            {
+                serde_json::to_value(control::ControlResponse::error_with(
+                    control::ControlErrorCode::Unsupported,
+                    format!(
+                        "{reason}; --here found no unique rozi window on this host showing this pane's session"
+                    ),
+                ))
+                .expect("a control response serializes")
             } else {
                 ask_own_session_endpoint(&caller.session_instance, request)?
             }

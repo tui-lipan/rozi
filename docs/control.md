@@ -119,13 +119,14 @@ rozi --here capture-pane
 rozi --here split --argv cargo test
 ```
 
-For splits, layout changes, pane close, and input, `--here` uses the caller's UI when that UI
-displays the verified session. It first tries `ROZI_SOCKET`. If that UI is unavailable or displays
-another session, it searches for exactly one live UI displaying the caller's session. This works
-after a UI replacement, for panes created while detached, and with UIs displaying other sessions.
-It preserves controller, input-lock, and read-only rules. A session switch before execution
-refuses the command. If no unique matching UI is found, it uses direct session control; layout
-control must then be free and input locks still apply. Other commands use direct session control.
+For splits, layout changes, pane close, input, `pane reveal`, and `focus`, `--here` uses the
+caller's UI when that UI displays the verified session. It first tries `ROZI_SOCKET`. If that UI is
+unavailable or displays another session, it searches for exactly one live UI displaying the
+caller's session. This works after a UI replacement, for panes created while detached, and with UIs
+displaying other sessions. It preserves controller, input-lock, and read-only rules. A session
+switch before execution refuses the command. If no unique matching UI is found, `pane reveal` and
+`focus` return `unsupported`; other UI-authority commands use direct session control, where layout
+control must be free and input locks still apply. Other commands use direct session control.
 
 UI authority is available only through a UI on the same host as the command. Inside a remotely
 attached pane, `--here` verifies and targets the remote session, but cannot borrow the local UI's
@@ -135,10 +136,11 @@ socket on the UI host, detach the controller for layout changes, or unlock input
 prompts. Read operations and mutations allowed by direct session control still work.
 
 `--here` refuses absent or stale caller identity. It cannot be combined with `--session`,
-`--socket`, or `--remote`. It supports the same commands as `--session`. For commands with an
-optional pane target, including `agents report` and `agents release`, an omitted `--target`
-means the calling pane. Explicit targets name panes
-in the caller's session. Commands without `--here` keep the usual UI selection rules.
+`--socket`, or `--remote`. It supports the same commands as `--session`, plus `pane reveal` and
+`focus`, which need a UI showing the caller's session. For commands with an optional pane target,
+including `agents report` and `agents release`, an omitted `--target` means the calling pane.
+Explicit targets name panes in the caller's session. Commands without `--here` keep the usual UI
+selection rules.
 
 ## Endpoint discovery
 

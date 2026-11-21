@@ -1019,9 +1019,20 @@ impl DiscoveryUi {
                         request.source_session.as_ref(),
                         Some(&caller.session_instance)
                     );
-                    assert!(matches!(request.command, ControlCommand::NewPane { .. }));
+                    assert!(matches!(
+                        request.command,
+                        ControlCommand::NewPane { .. }
+                            | ControlCommand::PaneReveal { .. }
+                            | ControlCommand::Focus { .. }
+                    ));
                     worker_mutations.fetch_add(1, Ordering::SeqCst);
-                    serde_json::json!({"ok":true,"data":{"id":999}})
+                    match request.command {
+                        ControlCommand::PaneReveal { .. } => {
+                            serde_json::json!({"ok":true,"data":{"changed":false,"workspace":1}})
+                        }
+                        ControlCommand::Focus { .. } => serde_json::json!({"ok":true}),
+                        _ => serde_json::json!({"ok":true,"data":{"id":999}}),
+                    }
                 };
                 writeln!(stream, "{response}").unwrap();
             }
@@ -1089,6 +1100,22 @@ fn here_discovers_a_unique_displayed_session_among_multiple_uis() {
     }
     assert_eq!(matching.mutations(), 3);
     assert_eq!(unrelated.mutations(), 0);
+    // `pane reveal` and `focus` also reach the unique matching UI when no ROZI_SOCKET is set.
+    let target = caller.pane_id.to_string();
+    for args in [
+        vec!["--here", "pane", "reveal", "--target", target.as_str()],
+        vec!["--here", "focus", target.as_str()],
+    ] {
+        let output = cli()
+            .env("ROZI_PANE", caller.pane_id.to_string())
+            .env("ROZI_SESSION_INSTANCE", caller.session_instance.as_str())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+    assert_eq!(matching.mutations(), 5);
+    assert_eq!(unrelated.mutations(), 0);
     // No inherited preference and two matching UIs is ambiguous. Neither may get a mutation.
     let duplicate = DiscoveryUi::new(&caller, true, 1000000003);
     let ambiguous = ask().output().unwrap();
@@ -1096,7 +1123,21 @@ fn here_discovers_a_unique_displayed_session_among_multiple_uis() {
     let reply: serde_json::Value = serde_json::from_slice(&ambiguous.stdout).unwrap();
     assert_eq!(reply["code"], "unsupported");
     assert!(reply["error"].as_str().unwrap().contains("no usable UI"));
-    assert_eq!(matching.mutations(), 3);
+    for args in [
+        vec!["--here", "pane", "reveal", "--target", target.as_str()],
+        vec!["--here", "focus", target.as_str()],
+    ] {
+        let output = cli()
+            .env("ROZI_PANE", caller.pane_id.to_string())
+            .env("ROZI_SESSION_INSTANCE", caller.session_instance.as_str())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let reply: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["code"], "unsupported", "{reply}");
+    }
+    assert_eq!(matching.mutations(), 5);
     assert_eq!(duplicate.mutations(), 0);
     // An inherited UI that still matches remains the preferred attachment.
     assert_eq!(
@@ -1108,7 +1149,7 @@ fn here_discovers_a_unique_displayed_session_among_multiple_uis() {
         )["id"],
         999
     );
-    assert_eq!(matching.mutations(), 4);
+    assert_eq!(matching.mutations(), 6);
     assert_eq!(duplicate.mutations(), 0);
 }
 
@@ -1245,6 +1286,23 @@ fn here_explains_authority_held_by_an_attachment_without_a_local_ui() {
             .unwrap(),
         "unlock input",
     );
+    let target = caller.pane_id.to_string();
+    for args in [
+        vec!["--here", "pane", "reveal", "--target", target.as_str()],
+        vec!["--here", "focus", target.as_str()],
+    ] {
+        let output = ask().args(args).output().unwrap();
+        assert!(!output.status.success());
+        let reply: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["code"], "unsupported", "{reply}");
+        assert!(
+            reply["error"]
+                .as_str()
+                .unwrap()
+                .contains("no unique rozi window on this host"),
+            "{reply}"
+        );
+    }
     let capture = data(ask().args(["--here", "capture-pane"]).output().unwrap());
     assert_eq!(capture["id"], caller.pane_id);
     assert_eq!(

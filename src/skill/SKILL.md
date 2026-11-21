@@ -88,9 +88,10 @@ session you created or one the user explicitly names.
 If `data.ui.displays_session` is not `true`, the UI a plain command reaches shows another session.
 Put `--here` before each command to target your own verified session:
 
-- `--here` uses the authority of the one live UI displaying your session for splits, layout
-  changes, pane close, and input. With no such UI, or several, it controls the session directly,
-  where layout control must be free and input locks apply.
+- `--here` uses the one live UI displaying your session for splits, layout changes, pane close,
+  input, `pane reveal`, and `focus`. With no such UI, or several, `pane reveal` and `focus` return
+  `unsupported` (they have no session-only fallback); other UI-authority commands control the
+  session directly, where layout control must be free and input locks apply.
 - If the UI switches session before the command runs, the command is refused.
 - Inside a remotely attached pane, `--here` controls the session directly, because UI authority
   cannot cross hosts. If the remote attachment holds the authority the command needs, it returns

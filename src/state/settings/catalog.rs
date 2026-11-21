@@ -568,7 +568,7 @@ pub static SETTINGS: &[SettingSpec] = {
         row(
             TogglePickerTabBackground,
             G::Pickers,
-            "Tab fill",
+            "Tab bar fill",
             &["palette", "tab strip", "tab bar", "background"],
             ActionToggle {
                 value: |config| config.pane.picker_tab_background,
@@ -732,7 +732,7 @@ pub static SETTINGS: &[SettingSpec] = {
         row(
             ToggleSidebarBackground,
             G::Sidebar,
-            "Tab fill",
+            "Tab bar fill",
             &["tab strip", "background", "tab bar"],
             ActionToggle {
                 value: |config| config.sidebar.background,

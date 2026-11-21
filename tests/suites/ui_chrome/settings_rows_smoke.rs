@@ -425,8 +425,8 @@ fn settings_reports_sidebar_values() {
             "sidebar gap row is misbound:\n{frame}"
         );
         assert!(
-            setting_row(sidebar, "Tab fill").contains("Disabled"),
-            "sidebar tab fill row is misbound:\n{frame}"
+            setting_row(sidebar, "Tab bar fill").contains("Disabled"),
+            "sidebar tab bar fill row is misbound:\n{frame}"
         );
         assert!(
             setting_row(sidebar, "Tab shape").contains("Round"),

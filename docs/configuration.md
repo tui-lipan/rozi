@@ -265,14 +265,14 @@ See [Layouts and panes](layouts-and-panes.md).
 | `fullscreen_border_style` | string | `border_style` | Same tokens as `border_style`. Fullscreen panes. |
 | `picker_border_style` | string | `"rounded"` | Same tokens as `border_style`. The command palette, Settings, Help, Search, and other pickers. |
 | `picker_tab_background` | bool | `true` | Paints picker category tabs as a distinct strip. Off, the tabs share the picker body. |
-| `picker_tab_style` | string | `workbar_tab_style` | `"padded"`, `"round"`, or `"arrow"`. |
-| `picker_selection_style` | string | `"padded"` | `"padded"`, `"round"`, or `"arrow"`. Caps at the start and end of the selected picker row. |
+| `picker_tab_style` | string | `workbar_tab_style` | `"padded"`, `"round"`, `"arrow"`, `"slant"`, or `"trapezoid"`. |
+| `picker_selection_style` | string | `"padded"` | `"padded"`, `"round"`, `"arrow"`, `"slant"`, or `"trapezoid"`. Caps at the start and end of the selected picker row. |
 | `keep_special_borders` | bool | `true` | Keeps frames on floating panes, popups, and scratchpads in borderless modes. |
 | `padding` | integer or integer array | `0` | One value, `[vertical, horizontal]`, or `[top, right, bottom, left]`. Each side is clamped to `0..=8`. |
-| `title_style` | string | `"padded"` | `"padded"`, `"half"`, `"round"`, or `"arrow"`. |
-| `workbar_badge_style` | string | `"padded"` | `"padded"`, `"round"`, or `"arrow"`. Also sets the tab style when `workbar_tab_style` is absent. |
-| `workbar_tab_style` | string | `workbar_badge_style` | `"padded"`, `"round"`, or `"arrow"`. |
-| `workbar_style` | string | `"padded"` | `"padded"`, `"half"`, `"round"`, or `"arrow"`. |
+| `title_style` | string | `"padded"` | `"padded"`, `"half"`, `"round"`, `"arrow"`, `"slant"`, or `"trapezoid"`. |
+| `workbar_badge_style` | string | `"padded"` | `"padded"`, `"round"`, `"arrow"`, `"slant"`, or `"trapezoid"`. Also sets the tab style when `workbar_tab_style` is absent. |
+| `workbar_tab_style` | string | `workbar_badge_style` | `"padded"`, `"round"`, `"arrow"`, `"slant"`, or `"trapezoid"`. |
+| `workbar_style` | string | `"padded"` | `"padded"`, `"half"`, `"round"`, `"arrow"`, `"slant"`, or `"trapezoid"`. |
 | `workbar_powerline` | bool | `true` | Joins adjacent badges in the workbar's `center` and `right` sections. |
 | `toast_opacity` | float | `0.8` | Finite value in `0.0..=1.0`. Invalid values are ignored. |
 | `unfocused_dim` | float | `0.0` | How far an unfocused pane's content fades toward the canvas, `0.0..=1.0`; `0.0` is off. [Described in Dim unfocused panes.](layouts-and-panes.md#dim-unfocused-panes) |
@@ -282,6 +282,11 @@ The border style tokens are `"rounded"`, `"plain"`, `"double"`, `"thick"`, `"lig
 `"heavy-double-dashed"`, `"light-triple-dashed"`, `"heavy-triple-dashed"`,
 `"light-quadruple-dashed"`, and `"heavy-quadruple-dashed"`. A default written as another key's name
 means the setting follows that key when omitted.
+
+Every `*_style` key that takes cap names, and `sidebar.tab_style`, also takes two single-width
+characters as a custom left and right cap, such as `title_style = "◥◣"`. Each cap is drawn in the
+segment's color, so it should fill the side of its cell that faces the segment. Settings offers only
+the named styles.
 
 See [Layouts and panes](layouts-and-panes.md), [Sidebar](sidebar.md), and [Themes](themes.md).
 
@@ -727,7 +732,7 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 | `background_follows_canvas` | bool | `false` | Paints the sidebar with the canvas background instead of the raised panel fill. |
 | `gap` | bool | `true` | Keeps one row between each panel's tab bar and its list. |
 | `background` | bool | `true` | Paints the tab strip as a distinct bar. Off, the strip matches the body. |
-| `tab_style` | string | `"padded"` | `"padded"`, `"round"`, or `"arrow"`. Round and arrow need `nerd_icons`. |
+| `tab_style` | string | `"padded"` | `"padded"`, `"round"`, `"arrow"`, `"slant"`, or `"trapezoid"`. Round and arrow need `nerd_icons`. |
 | `settings.<tab>` | table | none | A built-in tab's settings. See [Built-in tab settings](#built-in-tab-settings). |
 
 Unplaced tabs join the first panel of the left dock, or of the right dock when only it holds tabs;

@@ -772,8 +772,7 @@ pub(super) fn picker_tabs(
         .state
         .config
         .effective_cap_style(ctx.state.config.pane.picker_tab_style)
-        .glyphs()
-        .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
+        .chars();
     crate::view::scrolling_tab_bar(theme, strip)
         .tabs(labels.iter().map(|label| DraggableTab::new(*label)))
         .active(active)

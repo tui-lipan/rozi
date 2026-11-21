@@ -397,7 +397,7 @@ pub(crate) fn render_workspace_panes(
                 .state
                 .config
                 .effective_cap_style(ctx.state.config.pane.title_style)
-                .glyphs()
+                .chars()
                 .is_some()
         {
             seam_neighbor_title_bgs(ctx, &placements, pane.id, base_rect, focused_pane)

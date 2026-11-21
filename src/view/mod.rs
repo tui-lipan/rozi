@@ -700,13 +700,12 @@ pub(crate) fn modal_scrollbar_config(theme: &Theme) -> ScrollbarConfig {
         .thumb_focus_style(Style::new().fg(theme.border_active))
 }
 
-pub(crate) fn picker_selection_cap_glyphs(
-    config: &crate::config::Config,
-) -> (&'static str, &'static str) {
+pub(crate) fn picker_selection_cap_glyphs(config: &crate::config::Config) -> (String, String) {
     config
         .effective_cap_style(config.pane.picker_selection_style)
-        .glyphs()
-        .unwrap_or(("", ""))
+        .chars()
+        .map(|(left, right)| (left.into(), right.into()))
+        .unwrap_or_default()
 }
 
 pub(crate) fn picker_selection_cap_style(theme: &Theme, fill: Color) -> Style {

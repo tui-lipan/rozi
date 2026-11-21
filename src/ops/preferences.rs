@@ -140,7 +140,7 @@ pub(crate) fn toggle_sidebar_background_follows_canvas(ctx: &mut Context<AppRoot
 pub(crate) fn cycle_sidebar_tab_style(ctx: &mut Context<AppRoot>) -> Update {
     let next = next_badge_cap_style(ctx.state.config.sidebar.tab_style);
     ctx.state.config.sidebar.tab_style = next;
-    persist_sidebar_string_or_toast(ctx, "tab_style", cap_style_id(next));
+    persist_sidebar_string_or_toast(ctx, "tab_style", &cap_style_id(next));
     Update::full()
 }
 
@@ -260,14 +260,14 @@ pub(crate) fn toggle_picker_tab_background(ctx: &mut Context<AppRoot>) -> Update
 pub(crate) fn cycle_picker_tab_style(ctx: &mut Context<AppRoot>) -> Update {
     let next = next_badge_cap_style(ctx.state.config.pane.picker_tab_style);
     ctx.state.config.pane.picker_tab_style = next;
-    persist_pane_string_or_toast(ctx, "picker_tab_style", cap_style_id(next));
+    persist_pane_string_or_toast(ctx, "picker_tab_style", &cap_style_id(next));
     Update::full()
 }
 
 pub(crate) fn cycle_picker_selection_style(ctx: &mut Context<AppRoot>) -> Update {
     let next = next_badge_cap_style(ctx.state.config.pane.picker_selection_style);
     ctx.state.config.pane.picker_selection_style = next;
-    persist_pane_string_or_toast(ctx, "picker_selection_style", cap_style_id(next));
+    persist_pane_string_or_toast(ctx, "picker_selection_style", &cap_style_id(next));
     Update::full()
 }
 
@@ -285,27 +285,27 @@ fn step_pane_border_style(
 pub(crate) fn cycle_title_style(ctx: &mut Context<AppRoot>) -> Update {
     let next = next_cap_style(ctx.state.config.pane.title_style);
     ctx.state.config.pane.title_style = next;
-    persist_pane_string_or_toast(ctx, "title_style", cap_style_id(next));
+    persist_pane_string_or_toast(ctx, "title_style", &cap_style_id(next));
     Update::full()
 }
 
 pub(crate) fn cycle_workbar_badge_style(ctx: &mut Context<AppRoot>) -> Update {
     let next = next_badge_cap_style(ctx.state.config.pane.workbar_badge_style);
     ctx.state.config.pane.workbar_badge_style = next;
-    persist_pane_string_or_toast(ctx, "workbar_badge_style", cap_style_id(next));
+    persist_pane_string_or_toast(ctx, "workbar_badge_style", &cap_style_id(next));
     Update::full()
 }
 
 pub(crate) fn cycle_workbar_tab_style(ctx: &mut Context<AppRoot>) -> Update {
     let next = next_badge_cap_style(ctx.state.config.pane.workbar_tab_style);
     ctx.state.config.pane.workbar_tab_style = next;
-    persist_pane_string_or_toast(ctx, "workbar_tab_style", cap_style_id(next));
+    persist_pane_string_or_toast(ctx, "workbar_tab_style", &cap_style_id(next));
     Update::full()
 }
 
 pub(crate) fn cycle_workbar_style(ctx: &mut Context<AppRoot>) -> Update {
     let next = next_cap_style(ctx.state.config.pane.workbar_style);
     ctx.state.config.pane.workbar_style = next;
-    persist_pane_string_or_toast(ctx, "workbar_style", cap_style_id(next));
+    persist_pane_string_or_toast(ctx, "workbar_style", &cap_style_id(next));
     Update::full()
 }

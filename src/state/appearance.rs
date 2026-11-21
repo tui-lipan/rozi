@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::pane::chrome::step_ring;
 use tui_lipan::prelude::{BorderStyle, CapStyle};
 use tui_lipan::style::SplitterPalette;
@@ -379,35 +381,59 @@ impl PaneBorderStyle {
     }
 }
 
-const BADGE_CAP_STYLES: &[CapStyle] = &[CapStyle::Padded, CapStyle::Round, CapStyle::Arrow];
+const BADGE_CAP_STYLES: &[CapStyle] = &[
+    CapStyle::Padded,
+    CapStyle::Round,
+    CapStyle::Arrow,
+    CapStyle::Slant,
+    CapStyle::Trapezoid,
+];
 
 pub(crate) fn badge_cap_styles() -> &'static [CapStyle] {
     BADGE_CAP_STYLES
 }
 
-/// Parse rozi's historical cap-style aliases into tui-lipan's shared cap primitive.
+/// Parse a cap style: one of rozi's named styles and their aliases, or two single-width characters
+/// for a custom left and right cap.
 pub(crate) fn parse_cap_style(value: &str) -> Option<CapStyle> {
-    match value
-        .trim()
-        .to_ascii_lowercase()
-        .replace(['_', ' '], "-")
-        .as_str()
-    {
+    let value = value.trim();
+    let named = match value.to_ascii_lowercase().replace(['_', ' '], "-").as_str() {
         "padded" | "pad" | "plain" | "none" => Some(CapStyle::Padded),
         "half" | "half-block" | "block" => Some(CapStyle::Half),
         "round" | "rounded" | "pill" => Some(CapStyle::Round),
-        "arrow" | "pointed" | "slant" | "powerline" => Some(CapStyle::Arrow),
+        "arrow" | "pointed" | "powerline" => Some(CapStyle::Arrow),
+        "slant" | "slanted" => Some(CapStyle::Slant),
+        "trapezoid" => Some(CapStyle::Trapezoid),
         _ => None,
+    };
+    named.or_else(|| {
+        let mut chars = value.chars();
+        let (left, right) = (chars.next()?, chars.next()?);
+        let single = |ch: char| unicode_width::UnicodeWidthChar::width(ch) == Some(1);
+        (chars.next().is_none() && single(left) && single(right))
+            .then_some(CapStyle::Custom { left, right })
+    })
+}
+
+/// Config value for a cap style: its name, or the two characters of a custom pair.
+pub(crate) fn cap_style_id(style: CapStyle) -> Cow<'static, str> {
+    match style {
+        CapStyle::Custom { left, right } => Cow::Owned(format!("{left}{right}")),
+        named => Cow::Borrowed(named_cap_style_id(named)),
     }
 }
 
-/// Config token and persisted value for a cap style.
-pub(crate) const fn cap_style_id(style: CapStyle) -> &'static str {
+/// Config value for a named cap style. Settings only offers named styles, so it saves through this.
+pub(crate) const fn named_cap_style_id(style: CapStyle) -> &'static str {
     match style {
         CapStyle::Padded => "padded",
         CapStyle::Half => "half",
         CapStyle::Round => "round",
         CapStyle::Arrow => "arrow",
+        CapStyle::Slant => "slant",
+        CapStyle::Trapezoid => "trapezoid",
+        // A custom pair is never one of the offered choices; CapStyle is non-exhaustive.
+        _ => "padded",
     }
 }
 
@@ -418,6 +444,9 @@ pub(crate) const fn cap_style_label(style: CapStyle) -> &'static str {
         CapStyle::Half => "Half block",
         CapStyle::Round => "Round",
         CapStyle::Arrow => "Arrow",
+        CapStyle::Slant => "Slant",
+        CapStyle::Trapezoid => "Trapezoid",
+        _ => "Custom",
     }
 }
 

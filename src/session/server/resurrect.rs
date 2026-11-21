@@ -378,8 +378,10 @@ pub(super) fn resume_target(pane: &ServerPane) -> Option<(String, String, bool)>
 /// is never a resume candidate, whatever it names; see [`protocol::active_agent_row`].
 pub(super) fn live_agent_resume(pane: &ServerPane) -> Option<RetainedResume> {
     let report = pane.runtime.integration.as_deref();
-    let active = protocol::active_agent_row(&pane.runtime.rows)
-        .filter(|row| !pane.agent.row_resume.is_stale(&row.publisher))
+    let active = pane
+        .agent
+        .row_resume
+        .active_agent_row(&pane.runtime.rows)
         .and_then(|row| row.native_session.clone());
     if let Some(session) = active {
         let agent = report

@@ -712,10 +712,7 @@ fn program_report(
         .iter()
         .any(protocol::PublishedRow::is_agent)
     {
-        let row = protocol::active_agent_row(&pane.runtime.rows)?;
-        if pane.agent.row_resume.is_stale(&row.publisher) {
-            return None;
-        }
+        let row = pane.agent.row_resume.active_agent_row(&pane.runtime.rows)?;
         Some(agent_reporting_session(row)?.to_string())
     } else {
         None
@@ -3324,9 +3321,6 @@ fn promote_standby_rows(
     let Some(standby) = pane.agent.standby_rows.remove(&id) else {
         return (Vec::new(), None);
     };
-    if pane.agent.row_resume.is_stale(withdrawn) {
-        pane.agent.row_resume.mark_stale([id.clone()]);
-    }
     let publisher = PanePublisher {
         epoch: standby.epoch,
         responses: standby.responses,
@@ -6682,15 +6676,37 @@ mod tests {
 
         // A lingering status update from the stale publisher keeps the row invalid.
         claude_row.status = "idle".into();
-        replace_pane_rows(&mut direct, vec![claude_row]);
+        replace_pane_rows(&mut direct, vec![claude_row.clone()]);
         assert!(super::super::resurrect::live_agent_resume(&direct).is_none());
 
-        // Once the stale publisher withdraws and Codex publishes its own row, resume works again.
-        replace_pane_rows(&mut direct, Vec::new());
+        // A fresh active publisher arriving while the stale publisher is still listed first must
+        // not be masked by the stale row for either resume or OSC 7501 reporting.
         let mut codex_row = active_row();
         codex_row.id = "codex-thread".into();
         codex_row.publisher = "2/codex".into();
         codex_row.native_session = Some("codex-thread".into());
+        replace_pane_rows(&mut direct, vec![claude_row, codex_row.clone()]);
+        assert_eq!(
+            super::super::resurrect::live_agent_resume(&direct)
+                .map(|resume| (resume.agent, resume.session)),
+            Some(("codex".into(), "codex-thread".into())),
+            "a stale earlier publisher must not mask a later fresh active publisher"
+        );
+        direct.screen_mut().set_program_status_enabled(true);
+        direct
+            .screen_mut()
+            .process_bytes(b"\x1b]7501;state=working:app=codex\x07");
+        let pane_ref = protocol::PaneRef {
+            session_instance: protocol::SessionInstanceId::for_test("dev"),
+            pane_id: 1,
+            generation: direct.generation,
+        };
+        let detected_codex = direct.runtime.detected_agent.clone();
+        let report = program_report(&mut direct, pane_ref, detected_codex.as_ref())
+            .expect("OSC 7501 binds to the fresh active row despite the stale earlier row");
+        assert_eq!(report.native_session.as_deref(), Some("codex-thread"));
+
+        // Withdrawing the stale publisher leaves the fresh publisher resumable as well.
         replace_pane_rows(&mut direct, vec![codex_row]);
         assert_eq!(
             super::super::resurrect::live_agent_resume(&direct)
@@ -6753,12 +6769,9 @@ mod tests {
 
             // A fresh OSC 7501 status from the new agent must not borrow the stale row's session
             // back into a synthesized integration report and reintroduce a resume target.
-            server
-                .panes
-                .get_mut(&1)
-                .unwrap()
-                .terminal
-                .process_bytes(b"\x1b]7501;state=working:app=codex\x07");
+            let screen = server.panes.get_mut(&1).unwrap().screen_mut();
+            screen.set_program_status_enabled(true);
+            screen.process_bytes(b"\x1b]7501;state=working:app=codex\x07");
             server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
             assert!(
                 server.panes[&1].runtime.integration.is_none(),
@@ -6873,6 +6886,95 @@ mod tests {
                 super::super::resurrect::resume_target(&server.panes[&1]),
                 Some(("codex".into(), "codex-thread".into(), false))
             );
+        }
+
+        // Post-replacement standby: client 2 starts publishing fresh Codex rows into standby
+        // *after* Codex replaces Claude while stale client 1 still speaks. When client 1
+        // withdraws and promotes client 2, client 2 must remain fresh and resumable.
+        {
+            let mut server = SessionServer::new_named_with_settings(
+                "dev",
+                ServerSettings {
+                    resurrect: true,
+                    ..ServerSettings::default()
+                },
+            );
+            let mut pane = make_pane();
+            pane.env.push(("ROZI_AGENT".into(), "claude".into()));
+            pane.agent.adopting = true;
+            let generation = pane.generation;
+            server.panes.insert(1, pane);
+
+            let mut claude_row = active_row();
+            claude_row.native_session = Some("claude-thread".into());
+            server
+                .apply_pane_rows(
+                    1,
+                    None,
+                    1,
+                    generation,
+                    PanePublisher {
+                        id: "1/sessions".into(),
+                        epoch: 1,
+                        kind: protocol::PublisherKind::Agent,
+                        responses: Vec::new(),
+                    },
+                    vec![claude_row],
+                )
+                .expect("client 1 publish succeeds");
+
+            let mut scan = LazyProcessScan::default();
+            server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                Some(("claude".into(), "claude-thread".into(), false))
+            );
+
+            // Codex replaces Claude while client 1 still speaks.
+            let pane = server.panes.get_mut(&1).unwrap();
+            pane.env = vec![("ROZI_AGENT".into(), "codex".into())];
+            pane.agent.probe = None;
+            server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                None
+            );
+
+            // Client 2 starts publishing fresh Codex rows into standby after replacement.
+            let mut codex_row = active_row();
+            codex_row.id = "codex-thread".into();
+            codex_row.native_session = Some("codex-thread".into());
+            server
+                .apply_pane_rows(
+                    2,
+                    None,
+                    1,
+                    generation,
+                    PanePublisher {
+                        id: "2/sessions".into(),
+                        epoch: 1,
+                        kind: protocol::PublisherKind::Agent,
+                        responses: Vec::new(),
+                    },
+                    vec![codex_row],
+                )
+                .expect("client 2 standby publish succeeds");
+            assert!(
+                server.panes[&1]
+                    .agent
+                    .standby_rows
+                    .contains_key("2/sessions")
+            );
+
+            // Client 1 withdraws and promotes client 2's fresh post-replacement rows.
+            server.snapshot_generation = server.dirty_generation;
+            server.withdraw_client_rows(1);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                Some(("codex".into(), "codex-thread".into(), false)),
+                "post-replacement standby must stay fresh on promotion"
+            );
+            assert!(server.snapshot_dirty());
         }
 
         // Catalog reload from a clean snapshot: stopping recognition of an agent erases its

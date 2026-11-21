@@ -620,6 +620,16 @@ impl RowResumeOwner {
         matches!(self, Self::Stale(publishers) if publishers.contains(publisher))
     }
 
+    /// The first active agent row whose publisher has not been marked stale by an agent exit,
+    /// relaunch, or replacement.
+    fn active_agent_row<'a>(
+        &self,
+        rows: &'a [protocol::PublishedRow],
+    ) -> Option<&'a protocol::PublishedRow> {
+        rows.iter()
+            .find(|row| row.is_agent() && row.active && !self.is_stale(&row.publisher))
+    }
+
     fn mark_stale(&mut self, publishers: impl IntoIterator<Item = String>) {
         match self {
             Self::Stale(stale) => stale.extend(publishers),

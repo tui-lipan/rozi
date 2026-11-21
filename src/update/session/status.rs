@@ -661,6 +661,8 @@ mod tests {
             reference: AgentRef::for_test(3, 1, None),
             completions,
             answered,
+            request_task: None,
+            task_updated_at_unix_ms: None,
         };
         assert!(finished_records(&[record(3, 0)], &[record(4, 1)]).is_empty());
         assert_eq!(finished_records(&[record(4, 1)], &[record(5, 1)]), [None]);
@@ -675,6 +677,8 @@ mod tests {
             reference: AgentRef::for_test(3, 1, Some(RowKey::new("1/s", id))),
             completions,
             answered: 0,
+            request_task: None,
+            task_updated_at_unix_ms: None,
         };
         let moved = Some(RowKey::new("1/s", "b"));
         assert_eq!(

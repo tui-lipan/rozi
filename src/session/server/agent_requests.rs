@@ -2042,7 +2042,40 @@ impl SessionServer {
             settle(info, AgentRequestState::Active, Some(reason.into()));
         }
         info.delivered_at_unix_ms = Some(info.updated_at_unix_ms);
+        let label = info
+            .prompt
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .map(|line| {
+                line.chars()
+                    .filter(|ch| !ch.is_control())
+                    .take(120)
+                    .collect::<String>()
+            });
+        if let Some(label) = label.filter(|label| !label.is_empty()) {
+            let task = protocol::AgentTask {
+                label,
+                delivered_at_unix_ms: info.updated_at_unix_ms,
+            };
+            self.record_request_task(&to, task);
+        }
         Ok(())
+    }
+
+    fn record_request_task(&mut self, target: &protocol::AgentRef, task: protocol::AgentTask) {
+        let pane_id = target.pane.pane_id;
+        let Some(pane) = self.panes.get_mut(&pane_id) else {
+            return;
+        };
+        if !pane.agent.record_request_task(target, task) {
+            return;
+        }
+        pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
+        let generation = pane.generation;
+        let state = pane.runtime.clone();
+        let message = self.finish_pane_runtime_change(None, pane_id, generation, state, None);
+        self.broadcast_control(&message);
     }
 
     fn request_frame(&self, request: &AgentRequestInfo) -> String {

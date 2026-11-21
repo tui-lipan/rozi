@@ -1449,6 +1449,7 @@ fn a_closed_vocabulary_on_the_wire_reads_a_newer_value_neutrally() {
         state: AgentState::Idle,
         reason: None,
         task: None,
+        task_updated_at_unix_ms: None,
         completions: 0,
         answered: 0,
         source: AgentAuthority::Reported,

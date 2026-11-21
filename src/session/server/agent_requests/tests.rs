@@ -1577,6 +1577,180 @@ fn following_a_delegated_request_respects_a_new_native_conversation() {
 }
 
 #[test]
+fn an_agent_task_changes_when_the_next_request_is_delivered() {
+    let mut rig = Rig::new(&[2, 3]);
+    let task = |rig: &Rig| {
+        let agent = rig
+            .server
+            .agent_runtimes_for(3, &rig.server.panes[&3])
+            .remove(0);
+        (agent.task, agent.task_updated_at_unix_ms)
+    };
+    let first = rig.ask(Some(2), 3, "Plan the release\nCheck the changelog too.");
+    assert_eq!(
+        task(&rig),
+        (Some("Plan the release".into()), first.delivered_at_unix_ms)
+    );
+    let second = rig.ask(Some(2), 3, "Review the version bump");
+    assert_eq!(second.state, AgentRequestState::Queued);
+    assert_eq!(task(&rig).0.as_deref(), Some("Plan the release"));
+
+    assert!(rig.reply(3, &first.id, "planned").ok);
+    rig.run_turn(3);
+    let second = rig.request(&second.id);
+    assert!(second.delivered_at_unix_ms.is_some());
+    assert_eq!(
+        task(&rig),
+        (
+            Some("Review the version bump".into()),
+            second.delivered_at_unix_ms
+        )
+    );
+}
+
+#[test]
+fn a_newer_published_row_title_supersedes_a_delivered_request_task() {
+    let mut rig = Rig::new(&[2, 3]);
+    let row = |title: &str, status: &str| protocol::PublishedRow {
+        id: "conv-1".into(),
+        publisher: "1/sessions".into(),
+        kind: protocol::PublisherKind::Agent,
+        title: title.into(),
+        status: status.into(),
+        reason: None,
+        active: true,
+        work_started_at: None,
+        cwd: None,
+        project: None,
+        native_session: Some("session-x".into()),
+        live_session: None,
+        reported: false,
+    };
+    let task = |rig: &Rig| {
+        let agent = rig
+            .server
+            .agent_runtimes_for(3, &rig.server.panes[&3])
+            .remove(0);
+        (agent.task, agent.task_updated_at_unix_ms)
+    };
+    super::super::runtime::publish_rows_for_test(
+        rig.server.panes.get_mut(&3).unwrap(),
+        vec![row("✳ Implement parser", "idle")],
+    );
+    assert_eq!(task(&rig).0.as_deref(), Some("✳ Implement parser"));
+
+    let first = rig.ask(Some(2), 3, "Fix parser tests");
+    assert_eq!(
+        task(&rig),
+        (Some("Fix parser tests".into()), first.delivered_at_unix_ms)
+    );
+
+    // Republishing the row with only status decoration changed keeps the delivered request label.
+    super::super::runtime::replace_pane_rows(
+        rig.server.panes.get_mut(&3).unwrap(),
+        vec![row("⏺ Implement parser", "working")],
+    );
+    rig.server.pump_agent_requests();
+    assert_eq!(
+        task(&rig),
+        (Some("Fix parser tests".into()), first.delivered_at_unix_ms)
+    );
+
+    // Updating the semantic row task reports a newer task from the publisher.
+    assert!(rig.reply(3, &first.id, "done").ok);
+    super::super::runtime::replace_pane_rows(
+        rig.server.panes.get_mut(&3).unwrap(),
+        vec![row("⏺ Review parser cleanup", "idle")],
+    );
+    rig.server.pump_agent_requests();
+    let (label, updated_at) = task(&rig);
+    assert_eq!(label.as_deref(), Some("⏺ Review parser cleanup"));
+    assert!(updated_at >= first.delivered_at_unix_ms);
+
+    // A subsequent delivered request supersedes the publisher title again.
+    let second = rig.ask(Some(2), 3, "Verify edge cases");
+    assert!(second.delivered_at_unix_ms.is_some());
+    assert_eq!(
+        task(&rig),
+        (
+            Some("Verify edge cases".into()),
+            second.delivered_at_unix_ms
+        )
+    );
+}
+
+#[test]
+fn withdrawing_a_published_row_carries_its_request_task_to_its_integration_claim() {
+    let mut rig = Rig::new(&[2, 3]);
+    let pane_ref = protocol::PaneRef {
+        session_instance: rig.server.instance_id.clone(),
+        pane_id: 3,
+        generation: rig.server.panes[&3].generation,
+    };
+    let row = |title: &str| protocol::PublishedRow {
+        id: "conv-1".into(),
+        publisher: "1/sessions".into(),
+        kind: protocol::PublisherKind::Agent,
+        title: title.into(),
+        status: "idle".into(),
+        reason: None,
+        active: true,
+        work_started_at: None,
+        cwd: None,
+        project: None,
+        native_session: Some("session-x".into()),
+        live_session: None,
+        reported: false,
+    };
+    {
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        pane.runtime.integration = Some(Box::new(protocol::AgentIntegrationReport {
+            integration: "hook-x".into(),
+            identity: protocol::AgentIdentity::new("claude", "Claude Code"),
+            reference: protocol::AgentRef {
+                pane: pane_ref.clone(),
+                slot: None,
+                incarnation: 50,
+            },
+            state: protocol::AgentState::Idle,
+            reason: None,
+            native_session: Some("session-x".into()),
+            unless_quiet: None,
+            seq: 1,
+            reported_at_unix_ms: 10,
+        }));
+        super::super::runtime::publish_rows_for_test(pane, vec![row("Implement parser")]);
+    }
+
+    let request = rig.ask(Some(2), 3, "Fix parser tests");
+    super::super::runtime::replace_pane_rows(rig.server.panes.get_mut(&3).unwrap(), Vec::new());
+
+    let agent = rig
+        .server
+        .agent_runtimes_for(3, &rig.server.panes[&3])
+        .remove(0);
+    assert_eq!(agent.reference.slot, None);
+    assert_eq!(agent.task.as_deref(), Some("Fix parser tests"));
+    assert_eq!(agent.task_updated_at_unix_ms, request.delivered_at_unix_ms);
+
+    // If a row later updates its title after the claim already held a request task, withdrawing
+    // the row must not resurrect that older request task.
+    {
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        super::super::runtime::replace_pane_rows(pane, vec![row("Implement parser")]);
+        super::super::runtime::replace_pane_rows(pane, vec![row("Review parser cleanup")]);
+        super::super::runtime::replace_pane_rows(pane, Vec::new());
+    }
+    let agent = rig
+        .server
+        .agent_runtimes_for(3, &rig.server.panes[&3])
+        .remove(0);
+    assert_eq!(agent.reference.slot, None);
+    assert_eq!(agent.task, None);
+    assert_eq!(agent.task_updated_at_unix_ms, None);
+}
+
+#[test]
 fn an_await_answers_once_and_never_holds_up_its_request() {
     let mut rig = Rig::new(&[2, 3]);
     let (client, mut stream) = add_client(&mut rig.server);

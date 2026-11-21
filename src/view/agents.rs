@@ -738,7 +738,7 @@ mod tests {
                 target: Some(target.clone()),
                 session: "backend".into(),
                 pane: 3,
-                row: Some(key),
+                row: Some(key.clone()),
             }
         );
         let sections = state.project_sections();
@@ -756,6 +756,20 @@ mod tests {
         assert_eq!(
             session.target,
             crate::state::RowTarget::Agent(rows[0].location.clone())
+        );
+
+        let pane = &mut state.background.get_mut(&7).unwrap().workspaces[0].panes[0];
+        let mut record = crate::session::protocol::AgentRecord::from(
+            crate::session::protocol::AgentRef::for_test(pane.id, 1, Some(key)),
+        );
+        record.request_task = Some(std::sync::Arc::new(crate::session::protocol::AgentTask {
+            label: "Check the follow-up".into(),
+            delivered_at_unix_ms: 7,
+        }));
+        pane.agents.push(record);
+        assert_eq!(
+            global_agent_rows(&state)[0].task.as_deref(),
+            Some("Check the follow-up")
         );
     }
 

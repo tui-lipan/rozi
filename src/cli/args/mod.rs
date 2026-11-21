@@ -2091,7 +2091,10 @@ pub(super) fn control_endpoint(
         if cli.attach_session.is_some() || cli.remote.is_some() || socket.is_some() {
             return Err("--here cannot be combined with --session, --remote or --socket".into());
         }
-        if let Some(reason) = crate::session::server::session_control_unsupported(command) {
+        // A UI-only command goes to the UI showing the caller's session, when one does.
+        if let Some(reason) = crate::session::server::session_control_unsupported(command)
+            && !command.uses_ui_authority()
+        {
             return Err(reason.to_string());
         }
         return Ok(ControlEndpoint::Here);
@@ -2308,10 +2311,23 @@ mod tests {
         for args in [
             vec!["--here"],
             vec!["--here", "--session", "dev", "list-panes"],
-            vec!["--here", "focus", "--target", "3"],
+            vec!["--here", "capture-ui"],
             vec!["--session", "dev", "context"],
         ] {
             assert!(parse_cli_args(args.into_iter().map(str::to_string).collect()).is_err());
+        }
+        // Revealing or focusing a pane needs the UI showing the caller's session, which `--here`
+        // finds.
+        for args in [
+            vec!["--here", "pane", "reveal", "--target", "3"],
+            vec!["--here", "focus", "3"],
+        ] {
+            let ParsedCli::Control(parsed) =
+                parse_cli_args(args.into_iter().map(str::to_string).collect()).unwrap()
+            else {
+                panic!("expected control command")
+            };
+            assert_eq!(parsed.endpoint, ControlEndpoint::Here);
         }
         let ParsedCli::Control(context) =
             parse_cli_args(vec!["context".into(), "--format".into(), "json".into()]).unwrap()

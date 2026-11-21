@@ -512,6 +512,7 @@ impl AgentScratch {
         let launches = self.launches;
         let program_fence = self.program_fence;
         let retained_resume = self.retained_resume.take();
+        let row_resume = std::mem::take(&mut self.row_resume);
         // A row report belongs to another process than the one detection follows, so a change in
         // what the pane runs says nothing about it.
         let row_reports = std::mem::take(&mut self.row_reports);
@@ -524,6 +525,7 @@ impl AgentScratch {
             launches,
             program_fence,
             retained_resume,
+            row_resume,
             row_reports,
             standby_rows,
             ..Self::default()
@@ -1975,6 +1977,9 @@ impl SessionServer {
         if pane.generation != generation {
             return;
         }
+        // Captured before `compute_pane_runtime`, because a process sweep can invalidate
+        // `row_resume` or clear `retained_resume` even when `pane.runtime` stays equal.
+        let saved_resume = tracks_snapshot_agents.then(|| super::resurrect::resume_target(pane));
         pane.agent.history_frozen = history_leased;
         let inspector = PlatformProcessInspector::default();
         let pane_ref = protocol::PaneRef {
@@ -2015,7 +2020,9 @@ impl SessionServer {
             pane.agent.retained_resume = None;
         }
         if next == pane.runtime {
-            if resume_ended {
+            let snapshot_resume_changed =
+                saved_resume.is_some_and(|saved| saved != super::resurrect::resume_target(pane));
+            if resume_ended || snapshot_resume_changed {
                 self.mark_dirty();
             }
             return;
@@ -2031,7 +2038,6 @@ impl SessionServer {
         // whether its command is recorded, and process inspection can move it with nothing
         // printed. Compared as saved, so a change the snapshot would not write dirties nothing.
         let saved_cwd = tracks_snapshot.then(|| pane.spawnable_cwd());
-        let saved_resume = tracks_snapshot_agents.then(|| super::resurrect::resume_target(pane));
         pane.agent.observe(before, &next);
         pane.runtime = next.clone();
         let snapshot_cwd_changed = saved_cwd.is_some_and(|saved| saved != pane.spawnable_cwd());
@@ -2203,6 +2209,7 @@ fn refresh_agent_identity(
     let launched = identity != pane.agent.identity || relaunched;
     if launched {
         pane.agent.withdrawn_rows.clear();
+        update_row_resume_on_launch(pane, identity.as_deref(), relaunched);
         let launch = identity.is_some() && !adopting;
         // A prompt on the command line is a run from the start, loading screen and all.
         pane.agent.launch = (launch && !prompted).then(super::AgentLaunch::default);
@@ -2223,6 +2230,44 @@ fn refresh_agent_identity(
     let anchored = !launched && pane.agent.process.as_ref().is_some_and(|p| p.pid != 0);
     if !anchored {
         pane.agent.process = named.map(|named| named.process);
+    }
+}
+
+/// Bind unclaimed pre-sweep agent rows to the first agent discovered in the pane, or mark
+/// lingering agent-row publishers stale once an agent exits, relaunches, or changes.
+fn update_row_resume_on_launch(
+    pane: &mut ServerPane,
+    next_identity: Option<&str>,
+    relaunched: bool,
+) {
+    let publishers: HashSet<String> = pane
+        .runtime
+        .rows
+        .iter()
+        .filter(|row| row.is_agent())
+        .map(|row| row.publisher.clone())
+        .collect();
+    if publishers.is_empty() {
+        pane.agent.row_resume = super::RowResumeOwner::Unbound;
+        return;
+    }
+    let invalidated = relaunched
+        || pane.agent.identity.is_some()
+        || matches!(
+            &pane.agent.row_resume,
+            super::RowResumeOwner::Bound(bound) if next_identity != Some(bound.as_str())
+        );
+    if invalidated {
+        match &mut pane.agent.row_resume {
+            super::RowResumeOwner::Stale(stale) => stale.extend(publishers),
+            owner => *owner = super::RowResumeOwner::Stale(publishers),
+        }
+        return;
+    }
+    if matches!(pane.agent.row_resume, super::RowResumeOwner::Unbound)
+        && let Some(id) = next_identity
+    {
+        pane.agent.row_resume = super::RowResumeOwner::Bound(id.to_string());
     }
 }
 
@@ -3064,6 +3109,37 @@ pub(super) fn replace_pane_rows(
     // Live agent rows speak for the pane's conversations again.
     if has_agent_rows {
         pane.agent.retained_resume = None;
+    }
+    let agent_rows_changed = previous.iter().filter(|row| row.is_agent()).ne(pane
+        .runtime
+        .rows
+        .iter()
+        .filter(|row| row.is_agent()));
+    if agent_rows_changed {
+        let fresh_owner = || {
+            if has_agent_rows {
+                pane.agent
+                    .identity
+                    .clone()
+                    .map_or(super::RowResumeOwner::Unbound, super::RowResumeOwner::Bound)
+            } else {
+                super::RowResumeOwner::Unbound
+            }
+        };
+        match &mut pane.agent.row_resume {
+            super::RowResumeOwner::Stale(stale) => {
+                stale.retain(|publisher| {
+                    pane.runtime
+                        .rows
+                        .iter()
+                        .any(|row| row.is_agent() && row.publisher == *publisher)
+                });
+                if stale.is_empty() {
+                    pane.agent.row_resume = fresh_owner();
+                }
+            }
+            owner => *owner = fresh_owner(),
+        }
     }
     end_launch_under_a_working_row(pane);
     pane.agent.observe(before, &pane.runtime);
@@ -6512,14 +6588,94 @@ mod tests {
         assert_eq!(resume.session, "thread-1");
 
         // If the agent process exits before its publisher withdraws stale rows, the sweep drops
-        // its identity immediately rather than keeping the dead agent attached to those rows.
+        // its identity immediately, and a different agent starting before those rows are withdrawn
+        // must not inherit the old agent's native session (whether directly or after an idle sweep).
         pane.runtime.detected_agent =
             derive_detected_agent(&mut pane, Some(&catalog()), None, None, true);
         assert!(pane.runtime.detected_agent.is_none());
         assert!(super::super::resurrect::live_agent_resume(&pane).is_none());
 
-        // When a runtime sweep learns the agent identity under already-published rows, the server
-        // marks the snapshot dirty if agent resurrection is enabled, and leaves it clean otherwise.
+        let codex = agent_job(200, &[(200, "codex")]);
+        pane.runtime.detected_agent = derive_detected_agent(
+            &mut pane,
+            Some(&catalog()),
+            None,
+            Some(&AgentProcessSet::from_foreground_job(&codex)),
+            true,
+        );
+        assert_eq!(
+            pane.runtime
+                .detected_agent
+                .as_ref()
+                .map(|detected| detected.agent.id.as_str()),
+            Some("codex")
+        );
+        assert!(
+            super::super::resurrect::live_agent_resume(&pane).is_none(),
+            "codex must not inherit claude's stale row after an intervening exit sweep"
+        );
+
+        // Direct agent replacement (Claude -> Codex in one sweep) also invalidates lingering rows
+        // until the stale publisher withdraws them, even if that publisher sends another update.
+        let mut direct = make_pane();
+        let mut claude_row = active_row();
+        claude_row.publisher = "1/claude".into();
+        claude_row.native_session = Some("claude-thread".into());
+        replace_pane_rows(&mut direct, vec![claude_row.clone()]);
+        direct.runtime.detected_agent = derive_detected_agent(
+            &mut direct,
+            Some(&catalog()),
+            None,
+            Some(&AgentProcessSet::from_foreground_job(&job)),
+            true,
+        );
+        assert_eq!(
+            super::super::resurrect::live_agent_resume(&direct)
+                .map(|resume| (resume.agent, resume.session)),
+            Some(("claude".into(), "claude-thread".into()))
+        );
+
+        direct.runtime.detected_agent = derive_detected_agent(
+            &mut direct,
+            Some(&catalog()),
+            None,
+            Some(&AgentProcessSet::from_foreground_job(&codex)),
+            true,
+        );
+        assert_eq!(
+            direct
+                .runtime
+                .detected_agent
+                .as_ref()
+                .map(|detected| detected.agent.id.as_str()),
+            Some("codex")
+        );
+        assert!(
+            super::super::resurrect::live_agent_resume(&direct).is_none(),
+            "direct Claude -> Codex switch must not pair codex with claude's session"
+        );
+
+        // A lingering status update from the stale publisher keeps the row invalid.
+        claude_row.status = "idle".into();
+        replace_pane_rows(&mut direct, vec![claude_row]);
+        assert!(super::super::resurrect::live_agent_resume(&direct).is_none());
+
+        // Once the stale publisher withdraws and Codex publishes its own row, resume works again.
+        replace_pane_rows(&mut direct, Vec::new());
+        let mut codex_row = active_row();
+        codex_row.id = "codex-thread".into();
+        codex_row.publisher = "2/codex".into();
+        codex_row.native_session = Some("codex-thread".into());
+        replace_pane_rows(&mut direct, vec![codex_row]);
+        assert_eq!(
+            super::super::resurrect::live_agent_resume(&direct)
+                .map(|resume| (resume.agent, resume.session)),
+            Some(("codex".into(), "codex-thread".into()))
+        );
+
+        // When a runtime sweep learns the agent identity under already-published rows, or
+        // invalidates a lingering row on agent replacement, the server marks the snapshot dirty
+        // if agent resurrection is enabled and leaves it clean otherwise.
         for (resurrect_agents, expects_dirty) in [
             (crate::config::RestoreMode::Auto, true),
             (crate::config::RestoreMode::Never, false),
@@ -6551,6 +6707,23 @@ mod tests {
                 server.snapshot_dirty(),
                 expects_dirty,
                 "resurrect_agents={resurrect_agents:?}"
+            );
+
+            // Switching to Codex while Claude's row lingers drops the resume target and dirties
+            // the snapshot (when agent resurrection is enabled) so the old conversation is cleared.
+            server.snapshot_generation = server.dirty_generation;
+            let pane = server.panes.get_mut(&1).unwrap();
+            pane.env = vec![("ROZI_AGENT".into(), "codex".into())];
+            pane.agent.probe = None;
+            server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                None
+            );
+            assert_eq!(
+                server.snapshot_dirty(),
+                expects_dirty,
+                "agent replacement under lingering rows: resurrect_agents={resurrect_agents:?}"
             );
         }
     }

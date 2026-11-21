@@ -589,10 +589,36 @@ pub struct AgentScratch {
     /// The conversation this pane would resume, kept when the published rows that named it were
     /// withdrawn because their window left the session. See [`RetainedResume`].
     pub retained_resume: Option<RetainedResume>,
+    /// Which agent owns the pane's current published agent rows for session restore. See
+    /// [`RowResumeOwner`].
+    pub row_resume: RowResumeOwner,
     /// Which OSC 7501 reports the agent running now made, rather than one launched here before it.
     /// Survives [`Self::reset_detection`](super::AgentScratch::reset_detection) with
     /// [`Self::launches`], since the screen and its records outlive the program behind them.
     pub program_fence: runtime::ProgramFence,
+}
+
+/// Which agent identity owns the pane's current published agent rows for session restore.
+///
+/// Rows can arrive before the first process sweep identifies the agent, so [`Self::Unbound`] lets
+/// that sweep claim them. Once an agent exits, relaunches, or is replaced while those rows linger,
+/// the rows' publishers become [`Self::Stale`] so a stale `native_session` cannot be paired with a
+/// different agent's resume command until the publisher withdraws its agent rows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum RowResumeOwner {
+    /// No agent has owned the current agent rows yet.
+    #[default]
+    Unbound,
+    /// The current agent rows belong to this agent id.
+    Bound(String),
+    /// Publishers whose agent rows lingered across an agent exit, relaunch, or replacement.
+    Stale(HashSet<String>),
+}
+
+impl RowResumeOwner {
+    pub(super) fn is_stale(&self, publisher: &str) -> bool {
+        matches!(self, Self::Stale(publishers) if publishers.contains(publisher))
+    }
 }
 
 /// A native conversation a pane's agent rows named, outliving those rows.

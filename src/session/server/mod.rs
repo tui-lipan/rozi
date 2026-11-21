@@ -528,6 +528,10 @@ pub struct AgentScratch {
     /// The latest rows of each agent publisher waiting for another client's copy of it to stop
     /// speaking for the pane, by qualified publisher. One takes over when that copy goes away.
     standby_rows: HashMap<String, runtime::StandbyPublisher>,
+    /// Stream epoch of each live agent publisher currently in `runtime.rows`, by qualified
+    /// publisher. Distinguishes a lingering stream from a restarted incarnation reusing the same
+    /// publisher ID without withdrawing first.
+    publisher_epochs: HashMap<String, u64>,
     /// The rows a publisher last withdrew, by qualified publisher, until the pane's program changes.
     /// A service closes its stream when its window moves to another session, and the agent runs on:
     /// reporting the same rows on return continues their runs rather than starting new ones.
@@ -602,8 +606,9 @@ pub struct AgentScratch {
 ///
 /// Rows can arrive before the first process sweep identifies the agent, so [`Self::Unbound`] lets
 /// that sweep claim them. Once an agent exits, relaunches, or is replaced while those rows linger,
-/// the rows' publishers become [`Self::Stale`] so a stale `native_session` cannot be paired with a
-/// different agent's resume command until the publisher withdraws its agent rows.
+/// the active/standby publisher incarnations `(publisher, epoch)` become [`Self::Stale`] so a
+/// stale `native_session` cannot be paired with a different agent's resume command until those
+/// incarnations withdraw or are replaced by a newer stream epoch.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum RowResumeOwner {
     /// No agent has owned the current agent rows yet.
@@ -611,26 +616,33 @@ pub enum RowResumeOwner {
     Unbound,
     /// The current agent rows belong to this agent id.
     Bound(String),
-    /// Publishers whose agent rows lingered across an agent exit, relaunch, or replacement.
-    Stale(HashSet<String>),
+    /// Publisher incarnations (`publisher -> epoch`) whose agent rows lingered across an agent
+    /// exit, relaunch, or replacement.
+    Stale(HashMap<String, u64>),
 }
 
 impl RowResumeOwner {
-    fn is_stale(&self, publisher: &str) -> bool {
-        matches!(self, Self::Stale(publishers) if publishers.contains(publisher))
+    fn is_stale(&self, publisher: &str, publisher_epochs: &HashMap<String, u64>) -> bool {
+        let Self::Stale(stale) = self else {
+            return false;
+        };
+        let current = publisher_epochs.get(publisher).copied().unwrap_or(0);
+        stale.get(publisher).is_some_and(|&epoch| epoch == current)
     }
 
-    /// The first active agent row whose publisher has not been marked stale by an agent exit,
-    /// relaunch, or replacement.
+    /// The first active agent row whose publisher incarnation has not been marked stale by an
+    /// agent exit, relaunch, or replacement.
     fn active_agent_row<'a>(
         &self,
         rows: &'a [protocol::PublishedRow],
+        publisher_epochs: &HashMap<String, u64>,
     ) -> Option<&'a protocol::PublishedRow> {
-        rows.iter()
-            .find(|row| row.is_agent() && row.active && !self.is_stale(&row.publisher))
+        rows.iter().find(|row| {
+            row.is_agent() && row.active && !self.is_stale(&row.publisher, publisher_epochs)
+        })
     }
 
-    fn mark_stale(&mut self, publishers: impl IntoIterator<Item = String>) {
+    fn mark_stale(&mut self, publishers: impl IntoIterator<Item = (String, u64)>) {
         match self {
             Self::Stale(stale) => stale.extend(publishers),
             owner => *owner = Self::Stale(publishers.into_iter().collect()),
@@ -641,15 +653,21 @@ impl RowResumeOwner {
         &mut self,
         rows: &[protocol::PublishedRow],
         standby: &HashMap<String, runtime::StandbyPublisher>,
+        publisher_epochs: &HashMap<String, u64>,
         identity: Option<&str>,
     ) {
         let Self::Stale(stale) = self else {
             return;
         };
-        stale.retain(|publisher| {
-            rows.iter()
+        stale.retain(|publisher, &mut epoch| {
+            let live_same_epoch = rows
+                .iter()
                 .any(|row| row.is_agent() && row.publisher == *publisher)
-                || standby.contains_key(publisher)
+                && publisher_epochs.get(publisher).copied().unwrap_or(0) == epoch;
+            let standby_same_epoch = standby
+                .get(publisher)
+                .is_some_and(|entry| entry.epoch == epoch);
+            live_same_epoch || standby_same_epoch
         });
         if stale.is_empty() {
             let has_agent_rows = rows.iter().any(protocol::PublishedRow::is_agent);

@@ -381,7 +381,7 @@ pub(super) fn live_agent_resume(pane: &ServerPane) -> Option<RetainedResume> {
     let active = pane
         .agent
         .row_resume
-        .active_agent_row(&pane.runtime.rows)
+        .active_agent_row(&pane.runtime.rows, &pane.agent.publisher_epochs)
         .and_then(|row| row.native_session.clone());
     if let Some(session) = active {
         let agent = report

@@ -517,6 +517,7 @@ impl AgentScratch {
         // what the pane runs says nothing about it.
         let row_reports = std::mem::take(&mut self.row_reports);
         let standby_rows = std::mem::take(&mut self.standby_rows);
+        let publisher_epochs = std::mem::take(&mut self.publisher_epochs);
         *self = Self {
             references,
             next_incarnation,
@@ -528,6 +529,7 @@ impl AgentScratch {
             row_resume,
             row_reports,
             standby_rows,
+            publisher_epochs,
             ..Self::default()
         };
     }
@@ -712,7 +714,10 @@ fn program_report(
         .iter()
         .any(protocol::PublishedRow::is_agent)
     {
-        let row = pane.agent.row_resume.active_agent_row(&pane.runtime.rows)?;
+        let row = pane
+            .agent
+            .row_resume
+            .active_agent_row(&pane.runtime.rows, &pane.agent.publisher_epochs)?;
         Some(agent_reporting_session(row)?.to_string())
     } else {
         None
@@ -1331,12 +1336,19 @@ impl SessionServer {
         if publisher.kind == protocol::PublisherKind::Agent {
             if !rows.is_empty() && another_client_speaks(&pane.runtime.rows, &publisher.id) {
                 record_standby_update(pane, publisher, rows);
+                pane.agent.row_resume.prune_stale(
+                    &pane.runtime.rows,
+                    &pane.agent.standby_rows,
+                    &pane.agent.publisher_epochs,
+                    pane.agent.identity.as_deref(),
+                );
                 return Ok(None);
             }
             if pane.agent.standby_rows.remove(&publisher.id).is_some() {
                 pane.agent.row_resume.prune_stale(
                     &pane.runtime.rows,
                     &pane.agent.standby_rows,
+                    &pane.agent.publisher_epochs,
                     pane.agent.identity.as_deref(),
                 );
             }
@@ -1404,7 +1416,30 @@ impl SessionServer {
             }
         }
         let next = splice_publisher_rows(&pane.runtime.rows, &publisher.id, rows);
+        let is_agent_publisher = publisher.kind == protocol::PublisherKind::Agent;
         if next == pane.runtime.rows {
+            if is_agent_publisher {
+                let resume_before = super::resurrect::resume_target(pane);
+                if pane
+                    .runtime
+                    .rows
+                    .iter()
+                    .any(|row| row.is_agent() && row.publisher == publisher.id)
+                {
+                    pane.agent
+                        .publisher_epochs
+                        .insert(publisher.id.clone(), publisher.epoch);
+                    pane.agent.row_resume.prune_stale(
+                        &pane.runtime.rows,
+                        &pane.agent.standby_rows,
+                        &pane.agent.publisher_epochs,
+                        pane.agent.identity.as_deref(),
+                    );
+                }
+                if super::resurrect::resume_target(pane) != resume_before {
+                    self.mark_dirty();
+                }
+            }
             self.store_published_responses(owner, pane_id, &publisher);
             if let Some(promoted) = &promoted {
                 self.store_published_responses(owner, pane_id, promoted);
@@ -1416,6 +1451,20 @@ impl SessionServer {
             .is_none()
             .then(|| events::PaneRuntimeBaseline::capture(&session_instance, pane_id, pane));
         let resume_before = super::resurrect::resume_target(pane);
+        if is_agent_publisher {
+            if let Some(promoted) = &promoted {
+                pane.agent
+                    .publisher_epochs
+                    .insert(promoted.id.clone(), promoted.epoch);
+            } else if next
+                .iter()
+                .any(|row| row.is_agent() && row.publisher == publisher.id)
+            {
+                pane.agent
+                    .publisher_epochs
+                    .insert(publisher.id.clone(), publisher.epoch);
+            }
+        }
         let mut handoffs: Vec<_> = pane
             .agent
             .handoff_detected_row(&pane.runtime, &next)
@@ -1497,6 +1546,7 @@ impl SessionServer {
             pane.agent.row_resume.prune_stale(
                 &pane.runtime.rows,
                 &pane.agent.standby_rows,
+                &pane.agent.publisher_epochs,
                 pane.agent.identity.as_deref(),
             );
             let mut next: Vec<_> = pane
@@ -1537,6 +1587,11 @@ impl SessionServer {
             // not its own rows name a conversation.
             let target_before = super::resurrect::resume_target(pane);
             let before = super::resurrect::live_agent_resume(pane);
+            for promoted in &promoted_publishers {
+                pane.agent
+                    .publisher_epochs
+                    .insert(promoted.id.clone(), promoted.epoch);
+            }
             let others_speak = next.iter().any(protocol::PublishedRow::is_agent);
             let pane_handoffs = replace_pane_rows(pane, next);
             handoffs.extend(
@@ -2266,14 +2321,24 @@ fn update_row_resume_on_launch(
     next_identity: Option<&str>,
     relaunched: bool,
 ) {
-    let publishers: HashSet<String> = pane
+    let mut publishers: HashMap<String, u64> = pane
         .runtime
         .rows
         .iter()
         .filter(|row| row.is_agent())
-        .map(|row| row.publisher.clone())
-        .chain(pane.agent.standby_rows.keys().cloned())
+        .map(|row| {
+            let epoch = pane
+                .agent
+                .publisher_epochs
+                .get(&row.publisher)
+                .copied()
+                .unwrap_or(0);
+            (row.publisher.clone(), epoch)
+        })
         .collect();
+    for (id, standby) in &pane.agent.standby_rows {
+        publishers.entry(id.clone()).or_insert(standby.epoch);
+    }
     if publishers.is_empty() {
         pane.agent.row_resume = super::RowResumeOwner::Unbound;
         return;
@@ -3134,6 +3199,12 @@ pub(super) fn replace_pane_rows(
     if has_agent_rows {
         pane.agent.retained_resume = None;
     }
+    pane.agent.publisher_epochs.retain(|publisher, _| {
+        pane.runtime
+            .rows
+            .iter()
+            .any(|row| row.is_agent() && row.publisher == *publisher)
+    });
     let agent_rows_changed = previous.iter().filter(|row| row.is_agent()).ne(pane
         .runtime
         .rows
@@ -3145,6 +3216,7 @@ pub(super) fn replace_pane_rows(
                 pane.agent.row_resume.prune_stale(
                     &pane.runtime.rows,
                     &pane.agent.standby_rows,
+                    &pane.agent.publisher_epochs,
                     pane.agent.identity.as_deref(),
                 );
             }
@@ -6973,6 +7045,110 @@ mod tests {
                 super::super::resurrect::resume_target(&server.panes[&1]),
                 Some(("codex".into(), "codex-thread".into(), false)),
                 "post-replacement standby must stay fresh on promotion"
+            );
+            assert!(server.snapshot_dirty());
+        }
+
+        // Restarted publisher with the same ID and a new stream epoch (without an intermediate
+        // empty update) replaces the stale incarnation and becomes resumable immediately, while a
+        // lingering update on the old epoch stays stale.
+        {
+            let mut server = SessionServer::new_named_with_settings(
+                "dev",
+                ServerSettings {
+                    resurrect: true,
+                    ..ServerSettings::default()
+                },
+            );
+            let mut pane = make_pane();
+            pane.env.push(("ROZI_AGENT".into(), "claude".into()));
+            pane.agent.adopting = true;
+            let generation = pane.generation;
+            server.panes.insert(1, pane);
+
+            let mut claude_row = active_row();
+            claude_row.native_session = Some("claude-thread".into());
+            server
+                .apply_pane_rows(
+                    0,
+                    None,
+                    1,
+                    generation,
+                    PanePublisher {
+                        id: "0/sessions".into(),
+                        epoch: 1,
+                        kind: protocol::PublisherKind::Agent,
+                        responses: Vec::new(),
+                    },
+                    vec![claude_row.clone()],
+                )
+                .expect("epoch 1 publish succeeds");
+
+            let mut scan = LazyProcessScan::default();
+            server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                Some(("claude".into(), "claude-thread".into(), false))
+            );
+
+            // Codex replaces Claude while `0/sessions` epoch 1 is live.
+            let pane = server.panes.get_mut(&1).unwrap();
+            pane.env = vec![("ROZI_AGENT".into(), "codex".into())];
+            pane.agent.probe = None;
+            server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                None
+            );
+
+            // Another update on the same stale epoch (1) stays stale.
+            claude_row.status = "idle".into();
+            server
+                .apply_pane_rows(
+                    0,
+                    None,
+                    1,
+                    generation,
+                    PanePublisher {
+                        id: "0/sessions".into(),
+                        epoch: 1,
+                        kind: protocol::PublisherKind::Agent,
+                        responses: Vec::new(),
+                    },
+                    vec![claude_row],
+                )
+                .expect("lingering epoch 1 update succeeds");
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                None,
+                "updates on the stale stream epoch must stay stale"
+            );
+
+            // A restarted stream reusing `"0/sessions"` with epoch 2 publishes a fresh Codex row
+            // directly without an empty update in between.
+            server.snapshot_generation = server.dirty_generation;
+            let mut codex_row = active_row();
+            codex_row.id = "codex-thread".into();
+            codex_row.native_session = Some("codex-thread".into());
+            server
+                .apply_pane_rows(
+                    0,
+                    None,
+                    1,
+                    generation,
+                    PanePublisher {
+                        id: "0/sessions".into(),
+                        epoch: 2,
+                        kind: protocol::PublisherKind::Agent,
+                        responses: Vec::new(),
+                    },
+                    vec![codex_row],
+                )
+                .expect("epoch 2 publish succeeds");
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                Some(("codex".into(), "codex-thread".into(), false)),
+                "a newer stream epoch for the same publisher ID must clear staleness"
             );
             assert!(server.snapshot_dirty());
         }

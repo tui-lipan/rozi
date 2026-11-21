@@ -452,8 +452,9 @@ document is also written to stdout.
 | Exit status | Meaning |
 | --- | --- |
 | `0` | The command succeeded. |
-| `1` | The command was invalid or refused, the reply had `ok: false`, a [wait](#wait-for-output) timed out, or a capture could not be written. |
+| `1` | The command was invalid or refused, the reply had `ok: false` (except for status `4`), a [wait](#wait-for-output) timed out, or a capture could not be written. |
 | `2` | No endpoint was reached: discovery failed, the connection failed, the reply was empty or not JSON, or a PNG was about to be written to a terminal. |
+| `4` | An [agent request](agents.md#ask-another-agent) needs your answer before the awaited request can finish. |
 
 `pick` and `prompt` have their own statuses; see [Pickers](#pickers) and [Prompts](#prompts). So does
 [a session subscription](#session-subscriptions).

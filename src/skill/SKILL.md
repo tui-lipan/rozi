@@ -317,6 +317,8 @@ rozi agents ask --target <PANE_ID> --wait --timeout 30m --format text -- 'Review
   is not a reply; a harness that merges stderr shows both around the answer. If the wait fails, `rozi agents await <ID>`,
   do not ask again. For long work, await again after a timeout rather than giving `--timeout` a
   huge value.
+- Exit 4 from `ask --wait` or `await` means an incoming request needs your answer first. Reply to
+  the request shown in text or `data.incoming` in JSON, then await the original id again.
 - **Is it a real reply?** With `--format text`, stdout is only the answer. When the agent's turn
   ended without `agents reply`, the answer is its last message or its screen, and stderr says
   `note: not a reply …`.

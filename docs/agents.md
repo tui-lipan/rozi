@@ -452,6 +452,11 @@ stays asked, so await that id rather than asking again. When the answer is not t
 rozi agents ask --target 4 --wait --timeout 30m --format text -- "Review the parser changes"
 ```
 
+If the agent being awaited sends a request that needs your answer first, `ask --wait` and
+`await` exit 4. Text output shows the incoming request. With `--format json`, read its
+`id`, `from`, `from_label`, and `prompt` from `data.incoming`. Reply to that id, then
+await the original request again.
+
 `--attach <FILE>` sends a file with the request, such as a screenshot or a log; repeat it for up to
 16 files of up to 16 MiB each. The request lists their paths after its text. A session on another
 host gets a copy of each file first, kept until that session stops, as for [pasted files](terminal.md#select-copy-and-paste);

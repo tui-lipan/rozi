@@ -1015,6 +1015,7 @@ mod tests {
                     label: "Claude Code".into(),
                     state: crate::session::protocol::AgentState::from_status("blocked"),
                     reason: None,
+                    blocker: None,
                     task: None,
                     screen_title: None,
                     completions: 0,
@@ -1717,6 +1718,7 @@ mod tests {
                     label: "Codex".into(),
                     state: AgentState::Idle,
                     reason: None,
+                    blocker: None,
                     task: None,
                     screen_title: None,
                     completions: 1,
@@ -1760,6 +1762,7 @@ mod tests {
                         let mut pane = Pane::new(41, 100, Default::default());
                         pane.terminal.detected_agent =
                             Some(crate::session::protocol::DetectedAgent {
+                                blocker: None,
                                 agent: crate::session::protocol::AgentIdentity::new(
                                     "codex", "Codex",
                                 )
@@ -1774,6 +1777,8 @@ mod tests {
                             reference: reference.clone(),
                             completions: 1,
                             answered: 0,
+                            request_task: None,
+                            task_updated_at_unix_ms: None,
                         });
                         state
                             .agent_attention

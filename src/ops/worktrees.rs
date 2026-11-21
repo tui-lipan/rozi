@@ -930,8 +930,8 @@ pub(crate) fn submit_form(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 /// Ctrl+K in the picker. The first press arms, like every other destructive picker action, and
-/// the second removes; a stale lock arms as such, so the lift is a step the user sees, and a dirty
-/// checkout re-arms as forced once Git has refused it.
+/// the second removes; a stale lock arms as such, so the lift is a step the user sees, and a
+/// checkout refused for uncommitted changes or ignored files re-arms as forced.
 pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
     let Some((cwd, tree, armed)) = ctx.state.worktree_picker.as_ref().and_then(|picker| {
         let tree = picker.selected_entry()?.clone();
@@ -1045,8 +1045,9 @@ pub(crate) fn remove_from_sidebar(ctx: &mut Context<AppRoot>, path: String, forc
 }
 
 /// Ask the session host to remove a linked checkout. The host refuses a checkout any session
-/// records as its origin, and `force` only relaxes Git's dirty-checkout check. A stale lock is
-/// lifted on the way, once the host has confirmed for itself that its owner is gone.
+/// records as its origin. `force` allows removing uncommitted changes and ignored files, never a
+/// lock; a stale lock is lifted on the way, once the host has confirmed for itself that its owner
+/// is gone.
 fn start_remove(
     ctx: &mut Context<AppRoot>,
     cwd: String,

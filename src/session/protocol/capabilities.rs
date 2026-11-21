@@ -80,11 +80,14 @@ pub enum Capability {
     SpawnAgentResume,
     /// The server honors `agent-ask` with `now`: it types the request in at once, or refuses it.
     AgentAskNow,
+    /// The server can deliver an agent message without waiting for a reply.
+    AgentAskNoReply,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 16] = [
+    pub const ALL: [Capability; 17] = [
+        Capability::AgentAskNoReply,
         Capability::AgentAskNow,
         Capability::AgentAttachments,
         Capability::AgentConversations,
@@ -122,6 +125,7 @@ impl Capability {
             Capability::AgentAttachments => "agent-attachments",
             Capability::SpawnAgentResume => "spawn-agent-resume",
             Capability::AgentAskNow => "agent-ask-now",
+            Capability::AgentAskNoReply => "agent-ask-no-reply",
         }
     }
 
@@ -141,7 +145,7 @@ impl Capability {
             | Self::SessionSharing
             | Self::SessionPublish => "0.0.50",
             Self::SpawnAgentResume => "0.1.1",
-            Self::AgentAskNow => "0.1.2",
+            Self::AgentAskNow | Self::AgentAskNoReply => "0.1.2",
         }
     }
 
@@ -213,6 +217,11 @@ pub struct GatedValue {
 
 /// Every vocabulary value added within this generation. Empty at the start of a generation.
 pub const GATED_VOCABULARY: &[GatedValue] = &[
+    GatedValue {
+        vocabulary: "AgentRequestState",
+        value: "delivered",
+        capability: Capability::AgentAskNoReply,
+    },
     GatedValue {
         vocabulary: "AgentResponseSource",
         value: "agent-cli",

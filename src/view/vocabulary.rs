@@ -60,6 +60,7 @@ pub(crate) const REQUEST_QUEUED: &str = "Queued";
 pub(crate) const REQUEST_ACTIVE: &str = "Asked";
 pub(crate) const REQUEST_LATER: &str = "Answering later";
 pub(crate) const REQUEST_ANSWERED: &str = "Answered";
+pub(crate) const REQUEST_DELIVERED: &str = "Delivered";
 pub(crate) const REQUEST_FAILED: &str = "Failed";
 pub(crate) const REQUEST_CANCELLED: &str = "Cancelled";
 /// A later exchange of a conversation, as its row says.
@@ -884,6 +885,7 @@ mod tests {
             label: label.into(),
             state: crate::session::protocol::AgentState::from_status(state),
             reason: None,
+            blocker: None,
             task: None,
             screen_title: None,
             completions: 0,

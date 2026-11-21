@@ -90,6 +90,8 @@ pub(crate) struct GlobalAgentRow {
     pub status: String,
     /// Why the agent is in its state, as it said (`Permission required`).
     pub reason: Option<String>,
+    /// A blocker recognized in the live screen.
+    pub blocker: Option<std::sync::Arc<crate::session::protocol::AgentBlocker>>,
     /// The agent finished a run this client has not looked at. See
     /// [`crate::state::AgentAttention`].
     pub finished_unseen: bool,
@@ -337,6 +339,7 @@ fn summary_row(
         session: agent.session.clone(),
         status: agent.state.as_str().to_string(),
         reason: agent.reason.clone(),
+        blocker: agent.blocker.clone(),
         finished_unseen: state.agent_attention.summary_finished_unseen(agent),
         elapsed: None,
         project: checkout.map(|checkout| project_name(checkout.repository_root())),
@@ -519,6 +522,7 @@ fn live_attachment_rows(
             session: session.to_string(),
             status: row.status.unwrap_or_default(),
             reason: row.reason,
+            blocker: row.blocker,
             finished_unseen: row.finished_unseen,
             elapsed,
             project,
@@ -558,6 +562,7 @@ mod tests {
             label: "Codex".into(),
             state: crate::session::protocol::AgentState::from_status(state),
             reason: None,
+            blocker: None,
             task: None,
             screen_title: None,
             completions: 0,
@@ -595,6 +600,7 @@ mod tests {
             pane.terminal.project_root = Some("/srv/live".into());
             pane.terminal.git_branch = Some("main".into());
             pane.terminal.detected_agent = Some(DetectedAgent {
+                blocker: None,
                 agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
                 state: DetectedAgentState::Blocked,
             });
@@ -708,6 +714,7 @@ mod tests {
         attachment.connection = ConnectionState::Connected;
         let mut pane = Pane::new(3, 100, Default::default());
         pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            blocker: None,
             agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
             state: crate::session::protocol::DetectedAgentState::Idle,
         });
@@ -738,7 +745,7 @@ mod tests {
                 target: Some(target.clone()),
                 session: "backend".into(),
                 pane: 3,
-                row: Some(key),
+                row: Some(key.clone()),
             }
         );
         let sections = state.project_sections();
@@ -756,6 +763,20 @@ mod tests {
         assert_eq!(
             session.target,
             crate::state::RowTarget::Agent(rows[0].location.clone())
+        );
+
+        let pane = &mut state.background.get_mut(&7).unwrap().workspaces[0].panes[0];
+        let mut record = crate::session::protocol::AgentRecord::from(
+            crate::session::protocol::AgentRef::for_test(pane.id, 1, Some(key)),
+        );
+        record.request_task = Some(std::sync::Arc::new(crate::session::protocol::AgentTask {
+            label: "Check the follow-up".into(),
+            delivered_at_unix_ms: 7,
+        }));
+        pane.agents.push(record);
+        assert_eq!(
+            global_agent_rows(&state)[0].task.as_deref(),
+            Some("Check the follow-up")
         );
     }
 
@@ -818,6 +839,7 @@ mod tests {
             session: "dev".into(),
             status: "blocked".into(),
             reason: Some("Permission required".into()),
+            blocker: None,
             finished_unseen: false,
             elapsed: Some(std::time::Duration::from_secs(240)),
             project: Some("rozi".into()),
@@ -857,6 +879,7 @@ mod tests {
             )),
             task: None,
             reason: None,
+            blocker: None,
             order: 0,
             screen_title: None,
         };
@@ -1020,6 +1043,7 @@ mod tests {
         state.current_mut().session_name = Some("dev".into());
         let mut pane = Pane::new(42, 100, Default::default());
         pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            blocker: None,
             agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
             state: crate::session::protocol::DetectedAgentState::Working,
         });

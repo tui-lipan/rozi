@@ -23,7 +23,9 @@ pub use spec::{AgentMatchSpec, AgentOrigin, AgentSpec, AgentStateSpec, build_def
 use crate::platform::process::{AgentProcessSet, ForegroundProcess};
 use crate::session::protocol::{AgentIdentity, DetectedAgentState};
 
+#[cfg(test)]
 use definition::evaluate;
+use definition::evaluate_with_blocker;
 use process::identify_set;
 
 /// Whether an OSC 7501 `app` names the agent `agent_id`: its definition ID, or a name the agent
@@ -59,6 +61,7 @@ pub fn agent_program_status<'a>(
 pub(crate) struct AgentObservation {
     pub agent: std::sync::Arc<AgentIdentity>,
     pub state: Option<DetectedAgentState>,
+    pub blocker: Option<std::sync::Arc<crate::session::protocol::AgentBlocker>>,
 }
 
 /// Which agent is running behind a pane, and the process in `set` that is it.
@@ -134,7 +137,7 @@ pub(crate) fn observe(
     screen: &str,
     title: &str,
 ) -> AgentObservation {
-    let state = evaluate(
+    let (state, blocker) = evaluate_with_blocker(
         definition,
         catalog.base(),
         AgentDetectionInput {
@@ -142,9 +145,24 @@ pub(crate) fn observe(
             title: &title.to_lowercase(),
         },
     );
+    let blocker = blocker.map(|kind| {
+        let reset = (kind == "usage-limit")
+            .then(|| {
+                definition::footer_text(screen)
+                    .lines()
+                    .find_map(|line| line.split_once("limit resets "))
+                    .and_then(|(_, time)| crate::session::protocol::clean_pane_text(time, 80))
+            })
+            .flatten();
+        std::sync::Arc::new(crate::session::protocol::AgentBlocker {
+            kind: kind.into(),
+            reset,
+        })
+    });
     AgentObservation {
         agent: definition.identity.clone(),
         state,
+        blocker,
     }
 }
 

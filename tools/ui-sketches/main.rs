@@ -790,6 +790,7 @@ fn agent_picker() {
             },
         );
         pane.terminal.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new("claude", "Claude Code").into(),
             state: DetectedAgentState::Working,
         });
@@ -1375,6 +1376,7 @@ fn sidebar_activity() {
     let agent_pane = |id: u32, label: &str, status: &str, cwd: &str| {
         let mut pane = live_pane(id);
         pane.terminal.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new(label.to_lowercase(), label).into(),
             state: DetectedAgentState::Idle,
         });
@@ -1488,6 +1490,7 @@ fn sidebar_agents() {
 
         let mut claude = live_pane(10);
         claude.terminal.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new("claude", "Claude Code").into(),
             state: DetectedAgentState::Idle,
         });
@@ -1531,6 +1534,7 @@ fn sidebar_agents() {
 
         let mut codex = live_pane(11);
         codex.terminal.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new("codex", "Codex").into(),
             state: DetectedAgentState::Idle,
         });
@@ -1609,6 +1613,7 @@ fn sidebar_activity_worktrees() {
     let agent_pane = |id: u32, label: &str, root: &str, branch: &str| {
         let mut pane = live_pane(id);
         pane.terminal.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new(label.to_lowercase(), label).into(),
             state: DetectedAgentState::Idle,
         });

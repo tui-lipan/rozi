@@ -498,17 +498,6 @@ pub fn run() -> Result<()> {
     if let Some(id) = resume {
         plan.session = super::relaunch::resume_session(&id, &mut plan.messages);
     }
-    let startup_host_colors = query_host_colors();
-    let terminal_bg = startup_host_colors.map(|colors| colors.bg);
-    let startup_system_theme = startup_host_colors.map(ops::theme::system_theme_from_host_colors);
-    let resolved_theme =
-        config::resolve_theme(&plan.config.theme.name, startup_system_theme.as_ref());
-    plan.messages.extend(resolved_theme.warnings);
-    let theme = ops::theme::apply_backdrop_policy(
-        resolved_theme.theme,
-        terminal_bg,
-        plan.config.pane.background_follows_terminal,
-    );
 
     let (control_listener, control_guard) = match control::bind_control_socket() {
         Ok((listener, guard)) => (Some(listener), Some(guard)),
@@ -520,8 +509,6 @@ pub fn run() -> Result<()> {
     };
 
     let app = App::new()
-        .theme(theme.clone())
-        .terminal_bg(terminal_bg)
         .live_host_terminal_colors(true)
         .toast_placement(ToastPlacement::BottomEnd)
         .toast_margin((1, 2, 1, 1))
@@ -572,8 +559,6 @@ pub fn run() -> Result<()> {
         .mount(
             AppRoot::new(
                 plan.config,
-                theme,
-                startup_system_theme,
                 plan.profile,
                 plan.messages,
                 control_listener,

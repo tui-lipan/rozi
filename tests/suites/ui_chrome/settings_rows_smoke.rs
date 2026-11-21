@@ -1507,12 +1507,24 @@ fn behavior_choices_wait_for_confirmation_and_cancel_preserves_current_config() 
 #[test]
 fn settings_caret_obeys_global_blink_policy_through_timer_ticks() {
     rozi::test_support::on_large_stack(|| {
+        let _config_lock = rozi::test_support::lock_config_file();
         let mut backend = settings_backend(100, 35);
+        let action = rozi::state::SettingsAction::CycleCursorBlink;
         for (policy, blinking) in [
             (rozi::config::CursorBlink::Static, false),
             (rozi::config::CursorBlink::Blinking, true),
         ] {
-            backend.state_mut().config.cursor.blink = policy;
+            let index = rozi::config::CursorBlink::all()
+                .iter()
+                .position(|&choice| choice == policy)
+                .expect("cursor blink option");
+            let ring = action.choice_ring(&backend.state().config).unwrap();
+            backend.state_mut().settings_choice = Some(
+                rozi::state::SettingsChoiceEditor::from_ring(action, ring, &backend.state().config),
+            );
+            backend
+                .dispatch(rozi::Msg::SettingsChoicePick(index))
+                .expect("pick cursor blink policy");
             backend.render();
             for _ in 0..4 {
                 backend.advance(std::time::Duration::from_millis(500));

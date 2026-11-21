@@ -161,6 +161,7 @@ impl Pattern {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentStateRule {
     pub state: AgentStateOutcome,
+    pub blocker: Option<String>,
     pub source: MatchSource,
     pub scope: MatchScope,
     /// Every one of these must match.
@@ -370,25 +371,35 @@ pub struct AgentDetectionInput<'a> {
 /// vocabulary. `None` is [`AgentStateOutcome::Unknown`]; a screen that matches nothing is idle,
 /// because only a positively observed prompt is idle and a definition whose rules all fail has
 /// observed its agent sitting at one.
+#[cfg(test)]
 pub fn evaluate(
     definition: &AgentDefinition,
     base: &[AgentStateRule],
     input: AgentDetectionInput<'_>,
 ) -> Option<DetectedAgentState> {
+    evaluate_with_blocker(definition, base, input).0
+}
+
+pub(super) fn evaluate_with_blocker<'a>(
+    definition: &'a AgentDefinition,
+    base: &'a [AgentStateRule],
+    input: AgentDetectionInput<'_>,
+) -> (Option<DetectedAgentState>, Option<&'a str>) {
     let footer = footer_text(input.screen);
     let base = if definition.base { base } else { &[] };
     for outcome in AgentStateOutcome::PRECEDENCE {
-        let matched = definition
-            .states
-            .iter()
-            .chain(base)
-            .filter(|rule| rule.state == outcome)
-            .any(|rule| rule.matches(input.screen, &footer, input.title));
-        if matched {
-            return outcome.resolve();
+        let mut matching = definition.states.iter().chain(base).filter(|rule| {
+            rule.state == outcome && rule.matches(input.screen, &footer, input.title)
+        });
+        if let Some(first) = matching.next() {
+            let blocker = first
+                .blocker
+                .as_deref()
+                .or_else(|| matching.find_map(|rule| rule.blocker.as_deref()));
+            return (outcome.resolve(), blocker);
         }
     }
-    Some(DetectedAgentState::Idle)
+    (Some(DetectedAgentState::Idle), None)
 }
 
 /// Whether the live screen shows a blocker that takes precedence over a report.
@@ -405,7 +416,7 @@ pub fn blocked_screen_outranks_reports(
 }
 
 /// The last [`FOOTER_ROWS`] non-empty lines, in original order.
-fn footer_text(screen: &str) -> String {
+pub(super) fn footer_text(screen: &str) -> String {
     let mut lines: Vec<&str> = screen
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -423,6 +434,7 @@ mod tests {
     fn rule(state: AgentStateOutcome, any_of: &[&str]) -> AgentStateRule {
         AgentStateRule {
             state,
+            blocker: None,
             source: MatchSource::Screen,
             scope: MatchScope::All,
             all_of: Vec::new(),
@@ -594,6 +606,7 @@ mod tests {
     #[test]
     fn all_of_any_of_and_none_of_compose() {
         let composed = AgentStateRule {
+            blocker: None,
             state: AgentStateOutcome::Blocked,
             source: MatchSource::Screen,
             scope: MatchScope::All,

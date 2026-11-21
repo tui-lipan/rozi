@@ -40,8 +40,6 @@ use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub(crate) const MAX_STARTUP_REPORT_BYTES: usize = 4096;
-
 /// Set by [`install_shutdown_handler`]'s handler; polled by the session server's accept loop.
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -87,8 +85,6 @@ pub struct ServerStart<'a> {
     pub no_resurrect: bool,
     /// Directory for the first shell in a fresh detached server.
     pub cwd: Option<&'a Path>,
-    /// Optional file for the nonce form to report its startup error on stdout.
-    pub startup_report: Option<&'a std::fs::File>,
 }
 
 fn spawn_server_child(
@@ -280,10 +276,7 @@ fn base_server_command(
                 .map(|root| (super::paths::ROZI_RUNTIME_DIR_ENV, root)),
         )
         .stdin(std::process::Stdio::null())
-        .stdout(match start.startup_report {
-            Some(report) => std::process::Stdio::from(report.try_clone()?),
-            None => std::process::Stdio::null(),
-        })
+        .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     Ok(command)
 }

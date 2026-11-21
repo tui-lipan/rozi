@@ -9,22 +9,6 @@
 
 # The shared vocabulary, applied to every agent that does not set `base = false`. It is what makes
 # an agent with no rules of its own - most of them - already worth detecting.
-[[base]]
-state = "blocked"
-screen = { any_of = [
-    "permission required",
-    "action required",
-    "do you want to proceed?",
-    "waiting for permission",
-    "allow command?",
-    "[y/n]",
-    "yes (y)",
-] }
-
-[[base]]
-state = "blocked"
-title = { any_of = ["action required"] }
-
 # Asking to trust a directory is asking. Both of these read as idle before they were captured - a
 # pane waiting for permission looks perfectly quiet, which is the worst way for this to be wrong.
 #
@@ -34,6 +18,7 @@ title = { any_of = ["action required"] }
 # it is live, and scrolls above them once the agent moves on.
 [[base]]
 state = "blocked"
+blocker = "trust"
 scope = "footer"
 screen = { any_of = [
     "do you trust the contents of this directory",
@@ -53,6 +38,7 @@ screen = { any_of = [
 # chooser is open and goes away with it.
 [[base]]
 state = "blocked"
+blocker = "question"
 scope = "footer"
 screen = { any_of = [
     "type your own answer",
@@ -74,6 +60,7 @@ screen = { regex = true, any_of = ["(?m)^\\s*\\W{0,3}\\s*question \\d+\\s*(/|of)
 # so without this a pane that has stopped for you reads as one that is busy.
 [[base]]
 state = "blocked"
+blocker = "question"
 scope = "footer"
 screen = { any_of = ["waiting for user input"] }
 
@@ -99,8 +86,27 @@ screen = { all_of = ["esc cancel"], any_of = ["enter select"] }
 # measuring the wrong thing.
 [[base]]
 state = "blocked"
+blocker = "approval"
 scope = "footer"
 screen = { any_of = ["requires approval"] }
+
+[[base]]
+state = "blocked"
+blocker = "approval"
+screen = { any_of = [
+    "permission required",
+    "action required",
+    "do you want to proceed?",
+    "waiting for permission",
+    "allow command?",
+    "[y/n]",
+    "yes (y)",
+] }
+
+[[base]]
+state = "blocked"
+blocker = "approval"
+title = { any_of = ["action required"] }
 
 # A braille spinner at the front of the terminal title. Agents animate one there while a turn is in
 # flight and drop it the moment they stop, which makes it the only working signal some of them give
@@ -189,10 +195,23 @@ state = "blocked"
 scope = "footer"
 screen = { any_of = ["Enter to confirm · Esc to cancel"] }
 
+[[agents.states]]
+state = "blocked"
+blocker = "trust"
+scope = "footer"
+screen = { all_of = ["yes, i trust this folder", "enter to confirm · esc to cancel"] }
+
+[[agents.states]]
+state = "blocked"
+blocker = "approval"
+scope = "footer"
+screen = { all_of = ["do you want to proceed?", "esc to cancel · tab to amend"] }
+
 # Claude can report an error while its current turn waits for the quota to reset. The warning
 # directly under the composer divider is live status. Earlier quota errors stay in the transcript.
 [[agents.states]]
 state = "blocked"
+blocker = "usage-limit"
 scope = "footer"
 outranks_reports = true
 screen = { regex = true, any_of = ["(?m)^─{8,}[ \\t]*\\n[ \\t]*⚠[ \\t]+usage limit reached\\b"] }
@@ -375,6 +394,7 @@ match = { names = ["cursor", "cursor-agent"], paths = ["cursor-agent"] }
 # Signed out, this line is nearly all it draws, and any key starts the sign-in.
 [[agents.states]]
 state = "blocked"
+blocker = "login"
 scope = "footer"
 screen = { any_of = ["press any key to log in"] }
 
@@ -397,6 +417,7 @@ match = { names = ["agy", "antigravity", "antigravity-cli"] }
 # Its startup trust dialog names nothing the shared vocabulary knows.
 [[agents.states]]
 state = "blocked"
+blocker = "trust"
 scope = "footer"
 screen = { any_of = ["do you trust the contents of this project?"] }
 
@@ -458,6 +479,7 @@ match = { names = ["kiro", "kiro-cli"] }
 # Its sign-in prompt.
 [[agents.states]]
 state = "blocked"
+blocker = "login"
 scope = "footer"
 screen = { any_of = ["press enter to continue to the browser"] }
 
@@ -487,6 +509,7 @@ match = { names = ["amp", "amp-local"] }
 # Its sign-in question, whose `[(y)es, (n)o]` is not the shared `[y/n]`.
 [[agents.states]]
 state = "blocked"
+blocker = "login"
 scope = "footer"
 screen = { any_of = ["would you like to log in to amp?"] }
 

@@ -308,6 +308,8 @@ mod tests {
             reference: crate::session::protocol::AgentRef::for_test(1, 7, None),
             completions,
             answered: 0,
+            request_task: None,
+            task_updated_at_unix_ms: None,
         }
     }
 
@@ -333,6 +335,7 @@ mod tests {
             agent_launch: 4,
             sequence: 10,
             detected_agent: Some(DetectedAgent {
+                blocker: None,
                 agent: AgentIdentity::new("pi", "Pi").into(),
                 state: DetectedAgentState::Working,
             }),

@@ -9,6 +9,7 @@ notes = "antigravity, question tool open"
 [[case]]
 name = "asking-a-question"
 state = "blocked"
+blocker = "question"
 title = "user@host:~/.cache/rozi-agent-lab"
 screen = '''
 > testing purposes: can you use the question tool and ask me any question?
@@ -70,6 +71,7 @@ screen = '''
 [[case]]
 name = "startup-trust-dialog"
 state = "blocked"
+blocker = "trust"
 screen = '''
 Accessing workspace:
 

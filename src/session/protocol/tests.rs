@@ -9,6 +9,7 @@ use tui_lipan::Color;
 #[test]
 fn detected_blocked_elevates_over_quiescent_reports_but_not_working() {
     let detected = DetectedAgent {
+        blocker: None,
         agent: AgentIdentity::new("opencode", "OpenCode").into(),
         state: DetectedAgentState::Blocked,
     };
@@ -1448,7 +1449,9 @@ fn a_closed_vocabulary_on_the_wire_reads_a_newer_value_neutrally() {
         label: "Claude Code".into(),
         state: AgentState::Idle,
         reason: None,
+        blocker: None,
         task: None,
+        task_updated_at_unix_ms: None,
         completions: 0,
         answered: 0,
         source: AgentAuthority::Reported,
@@ -1465,6 +1468,7 @@ fn a_closed_vocabulary_on_the_wire_reads_a_newer_value_neutrally() {
     );
 
     let detected = DetectedAgent {
+        blocker: None,
         agent: std::sync::Arc::new(identity),
         state: DetectedAgentState::Idle,
     };

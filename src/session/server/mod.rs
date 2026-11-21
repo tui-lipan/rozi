@@ -70,7 +70,9 @@ mod shutdown;
 mod subscriptions;
 mod waits;
 mod worktree;
-pub(crate) use create::{create_detached_session, restart_named_session, upgrade_named_session};
+pub(crate) use create::{
+    create_detached_session, report_startup_error, restart_named_session, upgrade_named_session,
+};
 pub(crate) use deployments::DEPLOY_CHUNK_BYTES;
 pub(crate) use shutdown::{
     StoppedForRestart, shutdown_named_session, shutdown_named_session_if_present,
@@ -573,6 +575,8 @@ pub struct AgentScratch {
     /// say anything new, so a quiet pane costs a pointer comparison instead of a rule pass - and
     /// the held state's age keeps measuring from real evidence.
     pub read: Option<AgentRead>,
+    /// Cached screen blocker observation while published rows own the pane's state.
+    pub blocker_read: Option<AgentBlockerRead>,
     /// The last state a sweep positively observed, retained while later sweeps see no evidence.
     pub hold: Option<AgentHold>,
     /// The last state loud enough to hold, and when it was last positively seen, so neither a
@@ -620,6 +624,9 @@ struct TrackedAgentReference {
     answered: u64,
     /// A request was typed into this agent, so the run it starts next answers it.
     request_run: bool,
+    request_task: Option<std::sync::Arc<protocol::AgentTask>>,
+    /// When a published row last reported a new task title, superseding any earlier request task.
+    task_updated_at_unix_ms: Option<u64>,
     /// The agent behind this reference was the pane's screen-detected agent, so its incarnation
     /// follows it while it runs; see `AgentScratch::carry_detected`.
     from_detected: bool,
@@ -665,6 +672,13 @@ pub struct AgentRead {
     pub screen: std::sync::Arc<str>,
     pub title: Option<String>,
     pub resolved: Option<protocol::DetectedAgent>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AgentBlockerRead {
+    pub screen: std::sync::Arc<str>,
+    pub title: Option<String>,
+    pub blocker: Option<std::sync::Arc<protocol::AgentBlocker>>,
 }
 
 /// A positively observed agent state, held across sweeps that observe nothing.
@@ -2612,7 +2626,8 @@ pub fn run_named_session_mode_with_nonce(
         eprintln!("rozi: could not install server shutdown handler: {err}");
     }
 
-    let (listener, endpoint) = bind_session_socket(name)?;
+    let (listener, endpoint) = bind_session_socket(name)
+        .map_err(|err| resurrect::not_started(name, "its socket could not be bound", &err))?;
     let loaded = crate::config::load_config();
     crate::config::log_config_warnings(&loaded.warnings);
     crate::pane::engine::install(loaded.config.experimental.terminal_engine);
@@ -2655,10 +2670,7 @@ pub fn run_named_session_mode_with_nonce(
     let recovered = if fresh {
         // Only the snapshot: starting again is not deleting the session, so its deployments stay.
         server.delete_snapshot().map_err(|err| {
-            io::Error::new(
-                err.kind(),
-                format!("could not clear the saved session: {err}"),
-            )
+            resurrect::not_started(name, "its saved session could not be cleared", &err)
         })
     } else if server.settings.resurrect {
         match server.restore() {

@@ -309,6 +309,8 @@ rozi agents ask --target <PANE_ID> --wait --timeout 30m --format text -- 'Review
   keeps its context. Requests between the same two agents share a `conversation`, which the
   Agent conversations view draws as one thread. From another session or host, pass
   `--follows <ID>` with your earlier request's id to join its conversation.
+- Use `agents ask --no-reply --target <PANE> -- <TEXT>` for a message that needs no answer.
+  It uses the same queue and reaches `delivered` after typing.
 - **Files.** `--attach <FILE>` (repeatable, up to 16 files of 16 MiB) sends a screenshot, log, or
   any other file with the request; the other agent gets their paths after your text. With
   `--remote`, Rozi copies them to that host first. Do not paste your own local paths into the
@@ -317,6 +319,8 @@ rozi agents ask --target <PANE_ID> --wait --timeout 30m --format text -- 'Review
   is not a reply; a harness that merges stderr shows both around the answer. If the wait fails, `rozi agents await <ID>`,
   do not ask again. For long work, await again after a timeout rather than giving `--timeout` a
   huge value.
+- Exit 4 from `ask --wait` or `await` means an incoming request needs your answer first. Reply to
+  the request shown in text or `data.incoming` in JSON, then await the original id again.
 - **Is it a real reply?** With `--format text`, stdout is only the answer. When the agent's turn
   ended without `agents reply`, the answer is its last message or its screen, and stderr says
   `note: not a reply …`.

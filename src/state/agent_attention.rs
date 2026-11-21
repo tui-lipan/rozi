@@ -209,6 +209,7 @@ mod tests {
             label: "Claude Code".into(),
             state: AgentState::Idle,
             reason: None,
+            blocker: None,
             task: None,
             screen_title: None,
             completions: 1,
@@ -218,6 +219,7 @@ mod tests {
         {
             let pane = &mut state.current_mut().workspaces[0].panes[0];
             pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+                blocker: None,
                 agent: crate::session::protocol::AgentIdentity::new("claude", "Claude Code").into(),
                 state: crate::session::protocol::DetectedAgentState::Idle,
             });
@@ -225,6 +227,8 @@ mod tests {
                 reference: reference.clone(),
                 completions: 1,
                 answered: 0,
+                request_task: None,
+                task_updated_at_unix_ms: None,
             }];
         }
         state

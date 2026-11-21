@@ -36,6 +36,9 @@ pub struct AgentSummary {
     /// Why the agent is in its state, as it said (`Permission required`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// A blocker recognized in the live screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<std::sync::Arc<super::AgentBlocker>>,
     /// What the agent works on, when it named its work. See [`super::AgentRuntime::task`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task: Option<String>,
@@ -107,6 +110,7 @@ mod tests {
             label: "Pi".into(),
             state,
             reason: None,
+            blocker: None,
             task: None,
             screen_title: None,
             completions: 0,

@@ -104,6 +104,7 @@ mod tests {
             label: "Codex".into(),
             state: crate::session::protocol::AgentState::from_status(state),
             reason: None,
+            blocker: None,
             task: None,
             screen_title: None,
             completions: 0,
@@ -217,6 +218,7 @@ mod tests {
                             state: PaneRuntimeState {
                                 sequence,
                                 detected_agent: Some(DetectedAgent {
+                                    blocker: None,
                                     agent: AgentIdentity::new("codex", "Codex").into(),
                                     state: agent_state,
                                 }),

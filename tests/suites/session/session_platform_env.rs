@@ -112,8 +112,16 @@ fn detached_start_reports_the_socket_limit_and_the_servers_startup_error() {
     );
 
     let message = run(&runtime);
+    assert_eq!(
+        message
+            .to_lowercase()
+            .matches("session `test-startup`")
+            .count(),
+        1,
+        "{message}"
+    );
     assert!(
-        message.contains("could not clear the saved session"),
+        message.contains("was not started because its saved session could not be cleared"),
         "{message}"
     );
     assert!(
@@ -121,6 +129,12 @@ fn detached_start_reports_the_socket_limit_and_the_servers_startup_error() {
             .path()
             .exists()
     );
+    let leftover_reports = std::fs::read_dir(runtime.join("rozi"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("startup-"))
+        .count();
+    assert_eq!(leftover_reports, 0, "the startup report outlived the start");
 }
 
 #[test]

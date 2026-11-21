@@ -9,7 +9,7 @@
 //! Adding an agent therefore means adding a screen, not just a table. See the corpus README for
 //! how to capture one.
 
-use super::{AgentCatalog, AgentDetectionInput, definition::evaluate};
+use super::{AgentCatalog, AgentDetectionInput, observe};
 use crate::session::protocol::DetectedAgentState;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -99,6 +99,10 @@ struct Case {
     state: String,
     #[serde(default)]
     title: String,
+    #[serde(default)]
+    blocker: Option<String>,
+    #[serde(default)]
+    reset: Option<String>,
     screen: String,
 }
 
@@ -139,20 +143,18 @@ fn screens_read_the_states_their_fixtures_claim() {
             );
             // Detection lowercases before matching, so needles stay lowercase; a fixture is raw
             // screen text and has to go through the same door.
-            let read = evaluate(
-                definition,
-                catalog.base(),
-                AgentDetectionInput {
-                    screen: &case.screen.to_lowercase(),
-                    title: &case.title.to_lowercase(),
-                },
-            );
-            assert_eq!(
-                read,
-                case.expected(),
-                "{id}/{}: this screen reads as {read:?}",
-                case.name
-            );
+            let observed = observe(&catalog, definition, &case.screen, &case.title);
+            assert_eq!(observed.state, case.expected(), "{id}/{}", case.name);
+            if let Some(kind) = case.blocker.as_deref() {
+                let blocker = observed
+                    .blocker
+                    .as_deref()
+                    .unwrap_or_else(|| panic!("{id}/{}: expected blocker {kind}", case.name));
+                assert_eq!(blocker.kind, kind, "{id}/{}", case.name);
+                assert_eq!(blocker.reset, case.reset, "{id}/{}", case.name);
+            } else if observed.state != Some(DetectedAgentState::Blocked) {
+                assert!(observed.blocker.is_none(), "{id}/{}", case.name);
+            }
             checked += 1;
         }
     }

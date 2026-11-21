@@ -1527,13 +1527,16 @@ pub(crate) fn unrestorable_snapshot_error(name: &str, reason: &Unrestorable) -> 
 pub(super) fn restore_refusal(name: &str, err: &io::Error) -> io::Error {
     match Unrestorable::of(err) {
         Some(reason) => unrestorable_snapshot_error(name, reason),
-        None => io::Error::new(
-            err.kind(),
-            format!(
-                "session `{name}` was not started because its snapshot could not be read: {err}"
-            ),
-        ),
+        None => not_started(name, "its snapshot could not be read", err),
     }
+}
+
+/// A server's refusal to start, worded to stand alone: its launcher reports it as it is.
+pub(super) fn not_started(name: &str, because: &str, err: &io::Error) -> io::Error {
+    io::Error::new(
+        err.kind(),
+        format!("session `{name}` was not started because {because}: {err}"),
+    )
 }
 
 /// Discard `name`'s snapshot, and only that, so the server started next under the name begins with
@@ -3085,6 +3088,7 @@ mod tests {
         );
         let mut pane = running("claude", &[], protocol::PaneCommandPhase::Executing);
         pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Idle,
         });
@@ -3195,6 +3199,7 @@ mod tests {
         let (client, _stream) = super::super::tests::attach_client(&mut server);
         let mut pane = running("codex", &[], protocol::PaneCommandPhase::Executing);
         pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("codex", "Codex").into(),
             state: protocol::DetectedAgentState::Idle,
         });
@@ -3343,6 +3348,7 @@ mod tests {
         let (client, _stream) = super::super::tests::attach_client(&mut server);
         let mut pane = running("claude", &[], protocol::PaneCommandPhase::Executing);
         pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Idle,
         });
@@ -3425,6 +3431,7 @@ mod tests {
         );
         let mut pane = running("claude", &[], protocol::PaneCommandPhase::Executing);
         pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Idle,
         });
@@ -3457,6 +3464,7 @@ mod tests {
         );
         let mut pane = running("claude", &[], protocol::PaneCommandPhase::Executing);
         pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Idle,
         });

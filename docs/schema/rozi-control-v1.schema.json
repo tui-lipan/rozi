@@ -72,6 +72,26 @@
       ],
       "type": "string"
     },
+    "AgentBlocker": {
+      "description": "A reason the visible agent is waiting for input or capacity.",
+      "properties": {
+        "kind": {
+          "description": "The category the matching rule assigned, such as `trust` or `usage-limit`.",
+          "type": "string"
+        },
+        "reset": {
+          "description": "The reset time as the agent displayed it, in its own timezone.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
     "AgentIdentity": {
       "description": "Who a detected agent is.\n\nOpen rather than an enum of the tools Rozi happens to know: `id` and `label` both come from the\n[`AgentDefinition`](crate::agent_detection::AgentDefinition) that matched, and a definition\ndeclared in `config.toml` or shipped by an extension produces one of these exactly as a built-in\ndoes. Nothing downstream may branch on a known set of ids - the sidebar renders `label`.",
       "properties": {
@@ -94,6 +114,17 @@
       "properties": {
         "agent": {
           "type": "string"
+        },
+        "blocker": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentBlocker"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A blocker recognized in the live screen."
         },
         "completions": {
           "default": 0,
@@ -141,9 +172,17 @@
           "$ref": "#/$defs/AgentState"
         },
         "task": {
-          "description": "What the agent works on, when its published row names it.",
+          "description": "The agent's last delivered request or the task named by its published row.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "task_updated_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
             "null"
           ]
         },
@@ -340,6 +379,9 @@
         "id": {
           "type": "string"
         },
+        "no_reply": {
+          "type": "boolean"
+        },
         "parent": {
           "description": "The request the asking agent was answering when it asked this one.",
           "type": [
@@ -420,7 +462,8 @@
           "enum": [
             "answered",
             "failed",
-            "cancelled"
+            "cancelled",
+            "unknown"
           ],
           "type": "string"
         },
@@ -432,6 +475,11 @@
         {
           "const": "active",
           "description": "Typed into the agent and not yet answered.",
+          "type": "string"
+        },
+        {
+          "const": "delivered",
+          "description": "A one-way message was typed into the pane.",
           "type": "string"
         }
       ]
@@ -476,6 +524,9 @@
         },
         "id": {
           "type": "string"
+        },
+        "no_reply": {
+          "type": "boolean"
         },
         "parent": {
           "type": [
@@ -656,6 +707,16 @@
           "minimum": 0,
           "type": "integer"
         },
+        "blocker": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentBlocker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "completions": {
           "description": "Runs this agent has finished. See [`AgentRecord::completions`].",
           "format": "uint64",
@@ -685,9 +746,17 @@
           "$ref": "#/$defs/AgentState"
         },
         "task": {
-          "description": "What the agent is working on, when it named its work: the title of the published row it\nis. Never a terminal title, which changes with every tool call.",
+          "description": "The last delivered request or the task named in the published row.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "task_updated_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
             "null"
           ]
         }
@@ -2702,6 +2771,10 @@
                 "string",
                 "null"
               ]
+            },
+            "no_reply": {
+              "description": "Deliver a message without keeping a request open for an answer.",
+              "type": "boolean"
             },
             "now": {
               "description": "Type the request in at once, even while the agent is working or another request is\nbeing answered, for an agent that takes typed input mid-turn as a follow-up. Refused\nwhen the agent shows a dialog or someone has just typed into its pane.",
@@ -4852,6 +4925,10 @@
                 "null"
               ]
             },
+            "no_reply": {
+              "description": "Deliver a message without keeping a request open for an answer.",
+              "type": "boolean"
+            },
             "now": {
               "description": "Type the request in at once, even while the agent is working or another request is\nbeing answered, for an agent that takes typed input mid-turn as a follow-up. Refused\nwhen the agent shows a dialog or someone has just typed into its pane.",
               "type": "boolean"
@@ -6160,6 +6237,17 @@
     "GlobalAgentInfo": {
       "description": "One agent anywhere this UI knows about.",
       "properties": {
+        "blocker": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentBlocker"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A blocker recognized in the live screen."
+        },
         "branch": {
           "description": "The branch checked out where the agent works.",
           "type": [

@@ -134,6 +134,7 @@ Each `[[agents.states]]` rule accepts:
 | `screen` | Pattern group matched against visible terminal text |
 | `title` | Pattern group matched against the terminal title |
 | `outranks_reports` | `true` to block automated prompts and requests while this `blocked` rule matches, even if a report says the agent is ready |
+| `blocker` | Optional reason for a matching `blocked` rule. Use `approval`, `trust`, `question`, `login`, or `usage-limit`. |
 
 Set exactly one of `screen` or `title`.
 
@@ -313,7 +314,14 @@ the same `ref`. `rozi context --format json` verifies your own pane and session;
 
 ### Every agent, everywhere
 
-`agents list` covers one session. `agents list --all` asks the running rozi for every agent it knows
+When rozi recognizes why an agent is blocked, `agents list`, `agents get`, and wait timeouts
+show the reason. JSON includes `blocker.kind` and, if shown on a usage-limit warning, `blocker.reset`
+with the agent's displayed reset time.
+
+`agents list` covers one session. When a request is delivered or a publisher updates a row's title,
+the newer task appears in `agents list` and `agents get`. JSON includes `task_updated_at_unix_ms`.
+
+`agents list --all` asks the running rozi for every agent it knows
 about — the session on screen, your other local sessions, and every
 [connected host](remote.md#agents-on-a-machine-you-are-not-in) — most urgent first, the same list as
 the [Agents view](sessions.md#go-to-an-agent):
@@ -436,7 +444,7 @@ once with a request id; the answer is collected for you:
 
 ```bash
 id=$(rozi agents ask --target 4 --format json -- "Review the parser changes" | jq -r .id)
-rozi agents await "$id" --timeout 10m
+rozi agents await "$id" --timeout 1h30m
 ```
 
 `--target <PANE>` asks the agent on screen in that pane; `--ref` from `agents list` asks one exact
@@ -452,10 +460,18 @@ stays asked, so await that id rather than asking again. When the answer is not t
 rozi agents ask --target 4 --wait --timeout 30m --format text -- "Review the parser changes"
 ```
 
+If the agent being awaited sends a request that needs your answer first, `ask --wait` and
+`await` exit 4. Text output shows the incoming request. With `--format json`, read its
+`id`, `from`, `from_label`, and `prompt` from `data.incoming`. Reply to that id, then
+await the original request again.
+
 `--attach <FILE>` sends a file with the request, such as a screenshot or a log; repeat it for up to
 16 files of up to 16 MiB each. The request lists their paths after its text. A session on another
 host gets a copy of each file first, kept until that session stops, as for [pasted files](terminal.md#select-copy-and-paste);
 if the ask fails, the copies are removed.
+
+Send a message with `agents ask --no-reply --target <PANE> -- <TEXT>` when you only need it delivered.
+The message uses the same queue and ends in `delivered` once it is typed into the pane.
 
 rozi types the request into the other agent once it is idle, done, or in error, shows no blocker
 such as an approval dialog or Claude Code's usage-limit pause, and nobody has typed into its pane
@@ -464,7 +480,9 @@ it: `rozi agents reply <ID> --format text --stdin`, with the answer on stdin. If
 starts a turn nor shows the request within ten seconds, rozi types it once more when nothing on its
 screen changed, and otherwise fails it: a program still starting can drop what is typed into it.
 Without `--now`, an agent receives one request at a time. An approval dialog or usage-limit pause keeps an active
-request open. Without a reply, the answer is the agent's
+request open. A delivered request with a known native conversation stays open if its agent
+restarts in the same pane. Once the agent reports the original conversation in its slot or on
+screen, it can reply to the original request id. Without a reply, the answer is the agent's
 [integration response](#read-the-agents-response), or else its terminal
 once the turn has ended and the screen has settled, read the same way, including an
 alternate-screen transcript. An agent that will
@@ -490,7 +508,7 @@ responses answer those requests in order, the last response the last request.
 | `queued` | Not typed yet; `reason` says what it waits for. A reply answers it without typing it. |
 | `active` | Typed into the agent, or promised a later reply; `reason` says which. |
 | `answered` | `response` holds the answer. The first answer stands; a different reply is refused with `conflict`. |
-| `failed` | The agent exited, was replaced, or moved to another conversation before answering. |
+| `failed` | Delivery failed, the pane closed or was replaced, or the target could no longer answer from its original conversation. `reason` gives the cause. |
 | `cancelled` | Cancelled by whoever asked, or the asking agent left or changed conversation before delivery. |
 
 JSON gives each request that was typed in its `delivered_at_unix_ms`; a request cancelled after

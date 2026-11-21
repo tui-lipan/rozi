@@ -341,9 +341,6 @@ pub struct State {
     pub extension_update: Option<ExtensionUpdateRun>,
     pub next_pick_id: u64,
     pub theme: Theme,
-    pub system_theme: Option<Theme>,
-    /// Last runner-managed host palette generation incorporated into `system_theme`.
-    pub host_terminal_color_generation: u64,
     pub theme_watcher: Option<ThemeWatcher>,
     /// Global search-scan generation; never reset when the search overlay closes.
     pub search_scan_epoch: u64,
@@ -771,8 +768,6 @@ impl State {
             extension_update: None,
             next_pick_id: 1,
             theme,
-            system_theme: None,
-            host_terminal_color_generation: 0,
             theme_watcher: None,
             search_scan_epoch: 0,
             search_scan_scheduled_epoch: None,

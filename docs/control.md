@@ -452,8 +452,9 @@ document is also written to stdout.
 | Exit status | Meaning |
 | --- | --- |
 | `0` | The command succeeded. |
-| `1` | The command was invalid or refused, the reply had `ok: false`, a [wait](#wait-for-output) timed out, or a capture could not be written. |
+| `1` | The command was invalid or refused, the reply had `ok: false` (except for status `4`), a [wait](#wait-for-output) timed out, or a capture could not be written. |
 | `2` | No endpoint was reached: discovery failed, the connection failed, the reply was empty or not JSON, or a PNG was about to be written to a terminal. |
+| `4` | An [agent request](agents.md#ask-another-agent) needs your answer before the awaited request can finish. |
 
 `pick` and `prompt` have their own statuses; see [Pickers](#pickers) and [Prompts](#prompts). So does
 [a session subscription](#session-subscriptions).
@@ -897,8 +898,9 @@ rozi capture-pane --target 3 --settle 500ms --timeout 30s --render png --output 
 | `--settle DURATION` | The visible screen has not changed for `DURATION`. |
 | `--timeout DURATION` | Required with either option, counted from when the request arrives. At most one hour. |
 
-Durations are written `500ms`, `30s`, or `2m`; a bare number is seconds. With both `--wait-for`
-and `--settle`, rozi waits for the text first, then for the screen to stay unchanged.
+Use durations such as `500ms`, `30s`, `2m`, or `1h`. You can combine units, as in `2m30s`. A bare
+number is seconds. With both `--wait-for` and `--settle`, rozi waits for the text first, then for
+the screen to stay unchanged.
 
 The two commands wait differently:
 

@@ -118,6 +118,7 @@ impl Rig {
         pane.rows = 8;
         pane.terminal.resize(8, 30);
         pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Idle,
         });
@@ -899,6 +900,7 @@ fn an_explicit_reply_during_a_requests_history_read_wins_and_restores() {
             follows: None,
             asker_label: None,
             now: false,
+            no_reply: false,
         },
     );
     let id = asked.data.unwrap()["id"].as_str().unwrap().to_owned();

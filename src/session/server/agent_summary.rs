@@ -51,6 +51,7 @@ impl SessionServer {
                     label: runtime.label,
                     state: runtime.state,
                     reason: runtime.reason,
+                    blocker: runtime.blocker,
                     task: runtime.task,
                     screen_title,
                     completions: runtime.completions,

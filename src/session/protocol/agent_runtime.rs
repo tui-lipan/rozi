@@ -162,6 +162,21 @@ pub struct AgentRecord {
     /// the user to look at it; see [`Self::noticed_runs`].
     #[serde(default, skip_serializing_if = "is_zero")]
     pub answered: u64,
+    /// The most recently delivered request's task label, while no newer published row task has
+    /// superseded it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_task: Option<std::sync::Arc<AgentTask>>,
+    /// When a published row last reported a new task title, when no delivered request is newer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_updated_at_unix_ms: Option<u64>,
+}
+
+/// A task label and the time rozi delivered the request it came from.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct AgentTask {
+    pub label: String,
+    pub delivered_at_unix_ms: u64,
 }
 
 impl AgentRecord {
@@ -178,6 +193,8 @@ impl From<AgentRef> for AgentRecord {
             reference,
             completions: 0,
             answered: 0,
+            request_task: None,
+            task_updated_at_unix_ms: None,
         }
     }
 }
@@ -200,10 +217,13 @@ pub struct AgentRuntime {
     /// Why the agent is in its state, as the agent said it (`Permission required`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    /// What the agent is working on, when it named its work: the title of the published row it
-    /// is. Never a terminal title, which changes with every tool call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<std::sync::Arc<super::AgentBlocker>>,
+    /// The last delivered request or the task named in the published row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_updated_at_unix_ms: Option<u64>,
     /// Runs this agent has finished. See [`AgentRecord::completions`].
     #[serde(default, skip_serializing_if = "is_zero")]
     pub completions: u64,
@@ -242,6 +262,7 @@ pub struct PaneOccupant {
     pub label: String,
     pub state: ActivityState,
     pub reason: Option<String>,
+    pub blocker: Option<std::sync::Arc<super::AgentBlocker>>,
     pub source: AgentAuthority,
     pub program_status: Option<tui_lipan::ProgramStatusRecord>,
 }
@@ -268,6 +289,7 @@ pub fn pane_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
             label: String::new(),
             state: ActivityState::from_status(&status.value),
             reason: status.reason.clone(),
+            blocker: None,
             source: AgentAuthority::Reported,
         });
     }
@@ -283,6 +305,7 @@ pub fn pane_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
                 label: row.title.clone(),
                 state: ActivityState::from_status(&row.status),
                 reason: row.reason.clone(),
+                blocker: None,
                 source: AgentAuthority::Published,
             }),
     );
@@ -310,15 +333,18 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
                     .as_ref()
                     .map(|detected| detected.agent.as_ref().clone())
                     .unwrap_or_else(|| AgentIdentity::new(&row.id, display_row_label(row)));
+                let slot = row.key();
+                let blocker = occupant_blocker(runtime, Some(&slot), &identity.id);
                 let mut occupant = PaneOccupant {
                     program_status: None,
-                    slot: Some(row.key()),
+                    slot: Some(slot),
                     label: identity.label.clone(),
                     agent: Some(identity),
                     state: ActivityState::from_status(
                         AgentState::from_status(&row.status).as_str(),
                     ),
                     reason: row.reason.clone(),
+                    blocker,
                     // A hook report folded into the row is the row's word now.
                     source: if row.reported {
                         AgentAuthority::Reported
@@ -331,18 +357,27 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
                     occupant.reason = report.reason.clone();
                     occupant.source = AgentAuthority::Reported;
                 }
+                if let Some(blocker) = occupant.blocker.as_ref() {
+                    occupant.reason = Some(blocker.reason());
+                }
                 occupant
             })
             .collect();
     }
     if let Some(report) = &runtime.integration {
+        let blocker = occupant_blocker(runtime, None, &report.identity.id);
+        let reason = blocker
+            .as_ref()
+            .map(|blocker| blocker.reason())
+            .or_else(|| report.reason.clone());
         return vec![PaneOccupant {
             program_status: None,
             slot: None,
             label: report.identity.label.clone(),
             agent: Some(report.identity.clone()),
             state: ActivityState::from_status(report.state.as_str()),
-            reason: report.reason.clone(),
+            reason,
+            blocker,
             source: AgentAuthority::Reported,
         }];
     }
@@ -353,6 +388,8 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
         return Vec::new();
     };
     let identity = detected.agent.as_ref().clone();
+    let blocker = detected.blocker.clone();
+    let reason = blocker.as_ref().map(|blocker| blocker.reason()).or(reason);
     vec![PaneOccupant {
         program_status: None,
         slot: None,
@@ -360,8 +397,30 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
         agent: Some(identity),
         state: ActivityState::from_status(AgentState::from_status(status).as_str()),
         reason,
+        blocker,
         source,
     }]
+}
+
+/// The detected screen blocker that applies to `occupant`, when it is the agent on screen.
+fn occupant_blocker(
+    runtime: &PaneRuntimeState,
+    slot: Option<&RowKey>,
+    agent_id: &str,
+) -> Option<std::sync::Arc<super::AgentBlocker>> {
+    let on_screen = match slot {
+        None => true,
+        Some(slot) => active_agent_row(&runtime.rows).is_some_and(|row| row.has_key(slot)),
+    };
+    on_screen
+        .then(|| {
+            runtime
+                .detected_agent
+                .as_ref()
+                .filter(|detected| detected.agent.id == agent_id)
+                .and_then(|detected| detected.blocker.clone())
+        })
+        .flatten()
 }
 
 /// The identities the session server tracks references for: one per agent occupant, keyed by
@@ -410,18 +469,30 @@ pub fn effective_agent_runtimes(
                     .reference
                     .clone(),
             };
-            let (completions, answered) = records
-                .iter()
-                .find(|record| record.reference == reference)
-                .map_or((0, 0), |record| (record.completions, record.answered));
-            let task = occupant_task(&runtime.rows, occupant.slot.as_ref(), &occupant.label);
+            let record = records.iter().find(|record| record.reference == reference);
+            let (completions, answered) =
+                record.map_or((0, 0), |record| (record.completions, record.answered));
+            let request_task = record.and_then(|record| record.request_task.as_deref());
+            let (task, task_updated_at_unix_ms) = match request_task {
+                Some(task) => (Some(task.label.clone()), Some(task.delivered_at_unix_ms)),
+                None => {
+                    let task =
+                        occupant_task(&runtime.rows, occupant.slot.as_ref(), &occupant.label);
+                    let updated_at = task
+                        .as_ref()
+                        .and_then(|_| record.and_then(|record| record.task_updated_at_unix_ms));
+                    (task, updated_at)
+                }
+            };
             Some(AgentRuntime {
                 reference,
                 identity,
                 label: occupant.label,
                 state: AgentState::from_status(occupant.state.as_str()),
                 reason: occupant.reason,
+                blocker: occupant.blocker,
                 task,
+                task_updated_at_unix_ms,
                 completions,
                 answered,
                 source: occupant.source,
@@ -437,6 +508,21 @@ pub fn occupant_task(rows: &[PublishedRow], slot: Option<&RowKey>, label: &str) 
     let row = rows.iter().find(|row| row.has_key(slot))?;
     let title = row.title.trim();
     (!title.is_empty() && !title.eq_ignore_ascii_case(label.trim())).then(|| title.to_string())
+}
+
+/// What one published agent row says it is working on, normalized the same way rows present tasks
+/// so status decoration or agent prefixes do not read as a new task.
+pub fn published_row_task(
+    row: &PublishedRow,
+    detected_agent: Option<&DetectedAgent>,
+) -> Option<String> {
+    if !row.is_agent() {
+        return None;
+    }
+    let label = detected_agent
+        .map(|detected| detected.agent.label.as_str())
+        .unwrap_or_else(|| display_row_label(row));
+    super::agent_title::task_title(&row.title, label)
 }
 
 fn effective_single_status(
@@ -744,7 +830,9 @@ mod tests {
             identity: AgentIdentity::new("claude", "Claude Code"),
             state: AgentState::Idle,
             reason: None,
+            blocker: None,
             task: None,
+            task_updated_at_unix_ms: None,
             completions: 0,
             answered: 0,
             source: AgentAuthority::Published,
@@ -872,6 +960,7 @@ mod tests {
                 set_at: 42,
             }),
             detected_agent: Some(DetectedAgent {
+                blocker: None,
                 agent: AgentIdentity::new("claude", "Claude Code").into(),
                 state: DetectedAgentState::Blocked,
             }),
@@ -1072,6 +1161,7 @@ mod tests {
 
     fn codex() -> Option<DetectedAgent> {
         Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new("codex", "Codex").into(),
             state: DetectedAgentState::Working,
         })

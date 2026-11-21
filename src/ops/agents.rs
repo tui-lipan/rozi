@@ -263,6 +263,7 @@ pub(crate) fn overview(state: &crate::state::State) -> Vec<crate::control::Globa
                 task: row.task,
                 state: state_word,
                 reason: row.reason,
+                blocker: row.blocker,
                 project: row.project,
                 branch: row.branch,
                 here,
@@ -629,7 +630,13 @@ mod tests {
                 agent: "codex".into(),
                 label: "Codex".into(),
                 state: crate::session::protocol::AgentState::from_status("blocked"),
-                reason: None,
+                reason: Some("Usage limit reached · resets 2pm".into()),
+                blocker: Some(std::sync::Arc::new(
+                    crate::session::protocol::AgentBlocker {
+                        kind: "usage-limit".into(),
+                        reset: Some("2pm".into()),
+                    },
+                )),
                 task: None,
                 screen_title: None,
                 completions: 0,
@@ -659,6 +666,17 @@ mod tests {
         assert_eq!(overview.len(), 1);
         assert_eq!(overview[0].location.host.as_deref(), Some("workbox"));
         assert_eq!(overview[0].state, "blocked");
+        assert_eq!(
+            overview[0].reason.as_deref(),
+            Some("Usage limit reached · resets 2pm")
+        );
+        assert_eq!(
+            overview[0].blocker.as_deref(),
+            Some(&crate::session::protocol::AgentBlocker {
+                kind: "usage-limit".into(),
+                reset: Some("2pm".into()),
+            })
+        );
         assert!(!overview[0].here);
         assert_eq!(
             location_from_spec(&state, &overview[0].location),
@@ -672,6 +690,73 @@ mod tests {
         let mut unknown = overview[0].location.clone();
         unknown.session = "gone".into();
         assert!(location_from_spec(&state, &unknown).is_err());
+
+        // Live attached panes with published rows also carry the screen blocker on the active row.
+        state.current_mut().session_name = Some("dev".into());
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
+        pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            agent: crate::session::protocol::AgentIdentity::new("claude", "Claude Code").into(),
+            state: crate::session::protocol::DetectedAgentState::Idle,
+            blocker: Some(std::sync::Arc::new(
+                crate::session::protocol::AgentBlocker {
+                    kind: "usage-limit".into(),
+                    reset: Some("3pm".into()),
+                },
+            )),
+        });
+        pane.terminal.published_rows = vec![
+            crate::session::protocol::PublishedRow {
+                id: "active".into(),
+                publisher: "1/sessions".into(),
+                kind: crate::session::protocol::PublisherKind::Agent,
+                title: "Fix tests".into(),
+                status: "blocked".into(),
+                reason: None,
+                active: true,
+                work_started_at: None,
+                cwd: None,
+                project: None,
+                native_session: None,
+                live_session: None,
+                reported: false,
+            },
+            crate::session::protocol::PublishedRow {
+                id: "bg".into(),
+                publisher: "1/sessions".into(),
+                kind: crate::session::protocol::PublisherKind::Agent,
+                title: "Background".into(),
+                status: "idle".into(),
+                reason: None,
+                active: false,
+                work_started_at: None,
+                cwd: None,
+                project: None,
+                native_session: None,
+                live_session: None,
+                reported: false,
+            },
+        ];
+        let live_overview = super::overview(&state);
+        let active = live_overview
+            .iter()
+            .find(|agent| agent.here && agent.task.as_deref() == Some("Fix tests"))
+            .expect("active published row in overview");
+        assert_eq!(
+            active.reason.as_deref(),
+            Some("Usage limit reached · resets 3pm")
+        );
+        assert_eq!(
+            active.blocker.as_deref(),
+            Some(&crate::session::protocol::AgentBlocker {
+                kind: "usage-limit".into(),
+                reset: Some("3pm".into()),
+            })
+        );
+        let bg = live_overview
+            .iter()
+            .find(|agent| agent.here && agent.task.as_deref() == Some("Background"))
+            .expect("background published row in overview");
+        assert_eq!(bg.blocker, None);
     }
 
     #[test]
@@ -741,6 +826,7 @@ mod tests {
                             .unwrap()
                             .terminal
                             .detected_agent = Some(DetectedAgent {
+                            blocker: None,
                             agent: AgentIdentity::new("codex", "Codex").into(),
                             state: DetectedAgentState::Blocked,
                         });
@@ -901,6 +987,7 @@ mod tests {
                     label: "Codex".into(),
                     state: crate::session::protocol::AgentState::from_status("blocked"),
                     reason: Some("Permission required".into()),
+                    blocker: None,
                     task: None,
                     screen_title: None,
                     completions: 0,
@@ -938,6 +1025,7 @@ mod tests {
                         label: "Codex".into(),
                         state: crate::session::protocol::AgentState::from_status("blocked"),
                         reason: None,
+                        blocker: None,
                         task: None,
                         screen_title: None,
                         completions: 0,
@@ -970,6 +1058,7 @@ mod tests {
             label: label.into(),
             state: crate::session::protocol::AgentState::from_status(status),
             reason: None,
+            blocker: None,
             task: None,
             screen_title: None,
             completions: 0,
@@ -1271,6 +1360,7 @@ mod tests {
                 label: "Codex".into(),
                 state: crate::session::protocol::AgentState::from_status("idle"),
                 reason: None,
+                blocker: None,
                 task: None,
                 screen_title: None,
                 completions: 0,
@@ -1335,6 +1425,7 @@ mod tests {
                     label: (*label).into(),
                     state: crate::session::protocol::AgentState::from_status("idle"),
                     reason: None,
+                    blocker: None,
                     task: None,
                     screen_title: None,
                     completions: 0,
@@ -1458,6 +1549,7 @@ mod tests {
             pane.terminal.git_branch = Some("master".into());
             if !agent.is_empty() {
                 pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+                    blocker: None,
                     agent: crate::session::protocol::AgentIdentity::new(
                         agent.to_lowercase(),
                         *agent,
@@ -1707,6 +1799,7 @@ mod tests {
                         label: "Claude Code".into(),
                         state: crate::session::protocol::AgentState::from_status("idle"),
                         reason: None,
+                        blocker: None,
                         task: None,
                         screen_title: None,
                         completions: 0,

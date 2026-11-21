@@ -573,6 +573,8 @@ pub struct AgentScratch {
     /// say anything new, so a quiet pane costs a pointer comparison instead of a rule pass - and
     /// the held state's age keeps measuring from real evidence.
     pub read: Option<AgentRead>,
+    /// Cached screen blocker observation while published rows own the pane's state.
+    pub blocker_read: Option<AgentBlockerRead>,
     /// The last state a sweep positively observed, retained while later sweeps see no evidence.
     pub hold: Option<AgentHold>,
     /// The last state loud enough to hold, and when it was last positively seen, so neither a
@@ -665,6 +667,13 @@ pub struct AgentRead {
     pub screen: std::sync::Arc<str>,
     pub title: Option<String>,
     pub resolved: Option<protocol::DetectedAgent>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AgentBlockerRead {
+    pub screen: std::sync::Arc<str>,
+    pub title: Option<String>,
+    pub blocker: Option<std::sync::Arc<protocol::AgentBlocker>>,
 }
 
 /// A positively observed agent state, held across sweeps that observe nothing.

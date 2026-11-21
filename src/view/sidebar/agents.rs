@@ -45,6 +45,8 @@ pub(crate) struct AgentRow {
     pub task: Option<String>,
     /// Why the occupant is in its state, as it said (`Permission required`).
     pub reason: Option<String>,
+    /// A blocker recognized in the live screen.
+    pub blocker: Option<std::sync::Arc<crate::session::protocol::AgentBlocker>>,
     /// Position among its pane's occupants, so one pane's rows keep the projection's order.
     pub order: usize,
     /// What a pane's own agent shows as its terminal title, when that says more than its name or
@@ -363,6 +365,7 @@ pub(crate) fn attachment_agent_rows(
                                     })
                                     .or(reported_title),
                                 reason: occupant.reason.clone(),
+                                blocker: occupant.blocker.clone(),
                                 identity: occupant.agent.clone(),
                                 order,
                                 screen_title,
@@ -2864,6 +2867,7 @@ mod tests {
             identity: Some(AgentIdentity::new("claude", "Claude Code")),
             task: None,
             reason: None,
+            blocker: None,
             order: 0,
             screen_title: None,
         };
@@ -2934,6 +2938,7 @@ mod tests {
             identity: Some(AgentIdentity::new("claude", "Claude Code")),
             task: None,
             reason: None,
+            blocker: None,
             order: 0,
             screen_title: None,
         };
@@ -3096,6 +3101,7 @@ mod tests {
             identity: Some(AgentIdentity::new("claude", "Claude Code")),
             task: Some("a task title long enough to fill the sidebar".into()),
             reason: Some("Thinking".into()),
+            blocker: None,
             order: 0,
             screen_title: None,
         };
@@ -3159,6 +3165,7 @@ mod tests {
             identity: Some(AgentIdentity::new("claude", "Claude Code")),
             task: task.map(str::to_string),
             reason: None,
+            blocker: None,
             order: 0,
             screen_title: None,
         };

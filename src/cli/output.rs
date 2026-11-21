@@ -1666,6 +1666,7 @@ fn format_global_agents_text(data: Option<&serde_json::Value>, styles: OutputSty
                 TableCell::plain(text(agent.get("label"))),
                 TableCell::plain(text(agent.get("task"))),
                 TableCell::plain(text(agent.get("state"))),
+                TableCell::plain(text(agent.get("reason"))),
                 TableCell::plain(place),
                 TableCell::plain(
                     location
@@ -1677,7 +1678,7 @@ fn format_global_agents_text(data: Option<&serde_json::Value>, styles: OutputSty
         })
         .collect::<Vec<_>>();
     format_table(
-        &["AGENT", "TASK", "STATE", "SESSION", "PANE"],
+        &["AGENT", "TASK", "STATE", "REASON", "SESSION", "PANE"],
         &rows,
         styles,
     )
@@ -2368,5 +2369,38 @@ mod tests {
         )
         .expect("empty share list formats");
         assert!(empty.contains("No shares for dev"), "{empty}");
+    }
+
+    #[test]
+    fn global_agents_text_shows_reason_column() {
+        let payload = serde_json::json!({
+            "ok": true,
+            "data": [{
+                "location": {
+                    "host": "workbox",
+                    "session": "backend",
+                    "pane": 4
+                },
+                "label": "Claude Code",
+                "task": "Fix tests",
+                "state": "blocked",
+                "reason": "Usage limit reached · resets 2pm",
+                "blocker": {
+                    "kind": "usage-limit",
+                    "reset": "2pm"
+                },
+                "here": false
+            }]
+        });
+        let table = format_control_text(
+            &control::ControlCommand::AgentsOverview,
+            &payload,
+            OutputStyles::plain(),
+        );
+        assert!(table.contains("REASON"), "{table}");
+        assert!(
+            table.contains("Usage limit reached · resets 2pm"),
+            "{table}"
+        );
     }
 }

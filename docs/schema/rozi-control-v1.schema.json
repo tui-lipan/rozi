@@ -6201,6 +6201,17 @@
     "GlobalAgentInfo": {
       "description": "One agent anywhere this UI knows about.",
       "properties": {
+        "blocker": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentBlocker"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A blocker recognized in the live screen."
+        },
         "branch": {
           "description": "The branch checked out where the agent works.",
           "type": [

@@ -2035,6 +2035,9 @@ pub struct GlobalAgentInfo {
     /// Why the agent is in its state, as it said (`Permission required`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// A blocker recognized in the live screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<std::sync::Arc<crate::session::protocol::AgentBlocker>>,
     /// The repository the agent works in, named after its primary checkout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,

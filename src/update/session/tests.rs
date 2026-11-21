@@ -1077,6 +1077,7 @@ fn summary_edges_report_transitions_rather_than_standing_states() {
         label: "Codex".into(),
         state,
         reason: None,
+        blocker: None,
         task: None,
         screen_title: None,
         completions,

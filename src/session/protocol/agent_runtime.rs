@@ -244,6 +244,7 @@ pub struct PaneOccupant {
     pub label: String,
     pub state: ActivityState,
     pub reason: Option<String>,
+    pub blocker: Option<std::sync::Arc<super::AgentBlocker>>,
     pub source: AgentAuthority,
     pub program_status: Option<tui_lipan::ProgramStatusRecord>,
 }
@@ -270,6 +271,7 @@ pub fn pane_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
             label: String::new(),
             state: ActivityState::from_status(&status.value),
             reason: status.reason.clone(),
+            blocker: None,
             source: AgentAuthority::Reported,
         });
     }
@@ -285,6 +287,7 @@ pub fn pane_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
                 label: row.title.clone(),
                 state: ActivityState::from_status(&row.status),
                 reason: row.reason.clone(),
+                blocker: None,
                 source: AgentAuthority::Published,
             }),
     );
@@ -312,15 +315,18 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
                     .as_ref()
                     .map(|detected| detected.agent.as_ref().clone())
                     .unwrap_or_else(|| AgentIdentity::new(&row.id, display_row_label(row)));
+                let slot = row.key();
+                let blocker = occupant_blocker(runtime, Some(&slot), &identity.id);
                 let mut occupant = PaneOccupant {
                     program_status: None,
-                    slot: Some(row.key()),
+                    slot: Some(slot),
                     label: identity.label.clone(),
                     agent: Some(identity),
                     state: ActivityState::from_status(
                         AgentState::from_status(&row.status).as_str(),
                     ),
                     reason: row.reason.clone(),
+                    blocker,
                     // A hook report folded into the row is the row's word now.
                     source: if row.reported {
                         AgentAuthority::Reported
@@ -333,18 +339,27 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
                     occupant.reason = report.reason.clone();
                     occupant.source = AgentAuthority::Reported;
                 }
+                if let Some(blocker) = occupant.blocker.as_ref() {
+                    occupant.reason = Some(blocker.reason());
+                }
                 occupant
             })
             .collect();
     }
     if let Some(report) = &runtime.integration {
+        let blocker = occupant_blocker(runtime, None, &report.identity.id);
+        let reason = blocker
+            .as_ref()
+            .map(|blocker| blocker.reason())
+            .or_else(|| report.reason.clone());
         return vec![PaneOccupant {
             program_status: None,
             slot: None,
             label: report.identity.label.clone(),
             agent: Some(report.identity.clone()),
             state: ActivityState::from_status(report.state.as_str()),
-            reason: report.reason.clone(),
+            reason,
+            blocker,
             source: AgentAuthority::Reported,
         }];
     }
@@ -355,6 +370,8 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
         return Vec::new();
     };
     let identity = detected.agent.as_ref().clone();
+    let blocker = detected.blocker.clone();
+    let reason = blocker.as_ref().map(|blocker| blocker.reason()).or(reason);
     vec![PaneOccupant {
         program_status: None,
         slot: None,
@@ -362,8 +379,30 @@ fn agent_occupants(runtime: &PaneRuntimeState) -> Vec<PaneOccupant> {
         agent: Some(identity),
         state: ActivityState::from_status(AgentState::from_status(status).as_str()),
         reason,
+        blocker,
         source,
     }]
+}
+
+/// The detected screen blocker that applies to `occupant`, when it is the agent on screen.
+fn occupant_blocker(
+    runtime: &PaneRuntimeState,
+    slot: Option<&RowKey>,
+    agent_id: &str,
+) -> Option<std::sync::Arc<super::AgentBlocker>> {
+    let on_screen = match slot {
+        None => true,
+        Some(slot) => active_agent_row(&runtime.rows).is_some_and(|row| row.has_key(slot)),
+    };
+    on_screen
+        .then(|| {
+            runtime
+                .detected_agent
+                .as_ref()
+                .filter(|detected| detected.agent.id == agent_id)
+                .and_then(|detected| detected.blocker.clone())
+        })
+        .flatten()
 }
 
 /// The identities the session server tracks references for: one per agent occupant, keyed by
@@ -417,22 +456,13 @@ pub fn effective_agent_runtimes(
                 .find(|record| record.reference == reference)
                 .map_or((0, 0), |record| (record.completions, record.answered));
             let task = occupant_task(&runtime.rows, occupant.slot.as_ref(), &occupant.label);
-            let blocker = runtime
-                .detected_agent
-                .as_ref()
-                .filter(|detected| occupant.slot.is_none() && detected.agent.id == identity.id)
-                .and_then(|detected| detected.blocker.clone());
-            let reason = blocker
-                .as_ref()
-                .map(|blocker| blocker.reason())
-                .or(occupant.reason);
             Some(AgentRuntime {
                 reference,
                 identity,
                 label: occupant.label,
                 state: AgentState::from_status(occupant.state.as_str()),
-                reason,
-                blocker,
+                reason: occupant.reason,
+                blocker: occupant.blocker,
                 task,
                 completions,
                 answered,

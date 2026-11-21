@@ -209,6 +209,7 @@ mod tests {
             label: "Claude Code".into(),
             state: AgentState::Idle,
             reason: None,
+            blocker: None,
             task: None,
             screen_title: None,
             completions: 1,

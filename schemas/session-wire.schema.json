@@ -413,6 +413,17 @@
           "minimum": 0,
           "type": "integer"
         },
+        "blocker": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentBlocker"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A blocker recognized in the live screen."
+        },
         "changed_at": {
           "description": "Unix milliseconds when this pane's semantic agent state last changed.",
           "format": "uint64",

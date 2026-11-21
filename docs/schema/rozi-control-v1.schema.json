@@ -340,6 +340,9 @@
         "id": {
           "type": "string"
         },
+        "no_reply": {
+          "type": "boolean"
+        },
         "parent": {
           "description": "The request the asking agent was answering when it asked this one.",
           "type": [
@@ -420,7 +423,8 @@
           "enum": [
             "answered",
             "failed",
-            "cancelled"
+            "cancelled",
+            "unknown"
           ],
           "type": "string"
         },
@@ -432,6 +436,11 @@
         {
           "const": "active",
           "description": "Typed into the agent and not yet answered.",
+          "type": "string"
+        },
+        {
+          "const": "delivered",
+          "description": "A one-way message was typed into the pane.",
           "type": "string"
         }
       ]
@@ -476,6 +485,9 @@
         },
         "id": {
           "type": "string"
+        },
+        "no_reply": {
+          "type": "boolean"
         },
         "parent": {
           "type": [
@@ -2703,6 +2715,10 @@
                 "null"
               ]
             },
+            "no_reply": {
+              "description": "Deliver a message without keeping a request open for an answer.",
+              "type": "boolean"
+            },
             "now": {
               "description": "Type the request in at once, even while the agent is working or another request is\nbeing answered, for an agent that takes typed input mid-turn as a follow-up. Refused\nwhen the agent shows a dialog or someone has just typed into its pane.",
               "type": "boolean"
@@ -4851,6 +4867,10 @@
                 "string",
                 "null"
               ]
+            },
+            "no_reply": {
+              "description": "Deliver a message without keeping a request open for an answer.",
+              "type": "boolean"
             },
             "now": {
               "description": "Type the request in at once, even while the agent is working or another request is\nbeing answered, for an agent that takes typed input mid-turn as a follow-up. Refused\nwhen the agent shows a dialog or someone has just typed into its pane.",

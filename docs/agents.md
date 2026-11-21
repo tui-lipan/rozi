@@ -462,6 +462,9 @@ await the original request again.
 host gets a copy of each file first, kept until that session stops, as for [pasted files](terminal.md#select-copy-and-paste);
 if the ask fails, the copies are removed.
 
+Send a message with `agents ask --no-reply --target <PANE> -- <TEXT>` when you only need it delivered.
+The message uses the same queue and ends in `delivered` once it is typed into the pane.
+
 rozi types the request into the other agent once it is idle, done, or in error, shows no blocker
 such as an approval dialog or Claude Code's usage-limit pause, and nobody has typed into its pane
 and its screen has not changed for two seconds. The typed text names the request and how to answer

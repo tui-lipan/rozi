@@ -66,6 +66,7 @@ pub(super) struct AskOptions<'a> {
     pub asker_label: Option<String>,
     /// Type the request in at once, or refuse it.
     pub now: bool,
+    pub no_reply: bool,
 }
 
 pub(super) struct AgentRequestStore {
@@ -622,7 +623,10 @@ impl AgentRequestStore {
             .iter()
             .map(|stored| &stored.info)
             .find(|info| {
-                !info.state.is_resolved() && info.to == *caller && self.descends_from(info, awaited)
+                !info.no_reply
+                    && !info.state.is_resolved()
+                    && info.to == *caller
+                    && self.descends_from(info, awaited)
             })
     }
 
@@ -762,6 +766,7 @@ impl SessionServer {
             follows,
             asker_label,
             now,
+            no_reply,
         } = options;
         if prompt.trim().is_empty() {
             return invalid("a request needs prompt text");
@@ -845,6 +850,7 @@ impl SessionServer {
             to_native_session: to_native_session.clone(),
             to: to.clone(),
             prompt,
+            no_reply,
             state: AgentRequestState::Queued,
             reason: Some("waiting for the agent to be ready".into()),
             response: None,
@@ -977,9 +983,15 @@ impl SessionServer {
     }
 
     /// The requests attached clients are shown, for a client that has just attached.
-    pub(super) fn agent_requests_message(&self) -> protocol::ServerMessage {
+    pub(super) fn agent_requests_message(&self, include_messages: bool) -> protocol::ServerMessage {
         protocol::ServerMessage::AgentRequestsChanged {
-            requests: self.agent_requests.sent.clone(),
+            requests: self
+                .agent_requests
+                .sent
+                .iter()
+                .filter(|request| include_messages || !request.no_reply)
+                .cloned()
+                .collect(),
             server_now_unix_ms: crate::runtime_metrics::unix_time_millis(),
         }
     }
@@ -995,11 +1007,35 @@ impl SessionServer {
         if requests == store.sent {
             return;
         }
-        store.sent = requests.clone();
-        self.broadcast_control(&protocol::ServerMessage::AgentRequestsChanged {
-            requests,
-            server_now_unix_ms: crate::runtime_metrics::unix_time_millis(),
-        });
+        store.sent = requests;
+        let all = self.agent_requests_message(true);
+        if !self
+            .agent_requests
+            .sent
+            .iter()
+            .any(|request| request.no_reply)
+        {
+            self.broadcast_control(&all);
+            return;
+        }
+        let originals = self.agent_requests_message(false);
+        let clients: Vec<_> = self
+            .clients
+            .iter()
+            .filter(|client| client.attached)
+            .map(|client| {
+                (
+                    client.id,
+                    client
+                        .capabilities
+                        .supports(protocol::Capability::AgentAskNoReply),
+                )
+            })
+            .collect();
+        for (id, supports_messages) in clients {
+            let message = if supports_messages { &all } else { &originals };
+            self.enqueue(id, Target::Client(id), message.clone());
+        }
     }
 
     /// Keep request `id` open for its agent to reply after the turn it was delivered in: that
@@ -1331,7 +1367,10 @@ impl SessionServer {
         }
         match request.state {
             AgentRequestState::Cancelled => return ControlResponse::ok(request.clone()),
-            AgentRequestState::Answered | AgentRequestState::Failed => {
+            AgentRequestState::Answered
+            | AgentRequestState::Delivered
+            | AgentRequestState::Failed
+            | AgentRequestState::Unknown => {
                 return conflict(format!(
                     "request `{id}` is already {}",
                     state_name(request.state)
@@ -1817,6 +1856,9 @@ impl SessionServer {
     /// known when it asked is the one it is first seen in.
     fn requester_gone(&mut self, id: &str) -> Option<String> {
         let info = &self.agent_requests.get(id)?.info;
+        if info.no_reply {
+            return None;
+        }
         let from = info.from.as_ref()?;
         if let Err(reason) = self.request_agent(from) {
             return Some(format!("the asking agent is gone: {reason}"));
@@ -1936,6 +1978,7 @@ impl SessionServer {
     ) -> std::result::Result<(), String> {
         let request = &self.agent_requests.get(id).expect("queued request").info;
         let to = request.to.clone();
+        let no_reply = request.no_reply;
         let frame = self.request_frame(request);
         let bytes = self
             .session_prompt_bytes(to.pane.pane_id, &frame)
@@ -1965,7 +2008,7 @@ impl SessionServer {
                     delivered: Instant::now(),
                     departed: busy,
                     waiting_after_screen_block: false,
-                    shown: false,
+                    shown: no_reply,
                     attempts: 1,
                     before,
                 },
@@ -1993,29 +2036,45 @@ impl SessionServer {
             DELIVERED
         };
         let info = self.agent_requests.info_mut(id).expect("queued request");
-        settle(info, AgentRequestState::Active, Some(reason.into()));
+        if info.no_reply {
+            settle(info, AgentRequestState::Delivered, None);
+        } else {
+            settle(info, AgentRequestState::Active, Some(reason.into()));
+        }
         info.delivered_at_unix_ms = Some(info.updated_at_unix_ms);
         Ok(())
     }
 
     fn request_frame(&self, request: &AgentRequestInfo) -> String {
         let asker = match &request.from {
-            Some(from) => self
-                .current_agent_runtime(from)
-                .ok()
-                .map(|runtime| {
-                    format!(
-                        " from {} in pane {}",
-                        runtime.label, runtime.reference.pane.pane_id
-                    )
-                })
-                .unwrap_or_default(),
+            Some(from) => {
+                // A one-way message stays queued after its sender exits. The label was recorded
+                // when it was asked, and the reference still names that pane.
+                let (label, pane) = self
+                    .current_agent_runtime(from)
+                    .ok()
+                    .map(|runtime| (runtime.label, runtime.reference.pane.pane_id))
+                    .unwrap_or_else(|| {
+                        (
+                            request.from_label.clone().unwrap_or_default(),
+                            from.pane.pane_id,
+                        )
+                    });
+                if label.is_empty() {
+                    format!(" from pane {pane}")
+                } else {
+                    format!(" from {label} in pane {pane}")
+                }
+            }
             None => request
                 .from_label
                 .as_ref()
                 .map(|label| format!(" from \"{label}\", outside this session"))
                 .unwrap_or_default(),
         };
+        if request.no_reply {
+            return format!("Message{asker} (no reply needed)\n\n{}", request.prompt);
+        }
         // The exchange before this one in its conversation; requests are stored as asked.
         let requests = &self.agent_requests.requests;
         let asked_before = requests
@@ -2078,6 +2137,8 @@ fn state_name(state: AgentRequestState) -> &'static str {
         AgentRequestState::Queued => "queued",
         AgentRequestState::Active => "active",
         AgentRequestState::Answered => "answered",
+        AgentRequestState::Delivered => "delivered",
+        AgentRequestState::Unknown => "unknown",
         AgentRequestState::Failed => "failed",
         AgentRequestState::Cancelled => "cancelled",
     }

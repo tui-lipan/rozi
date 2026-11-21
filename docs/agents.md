@@ -313,8 +313,8 @@ the same `ref`. `rozi context --format json` verifies your own pane and session;
 
 ### Every agent, everywhere
 
-`agents list` covers one session. When a request is delivered, its first line becomes the target's
-task in `agents list` and `agents get`. JSON includes `task_updated_at_unix_ms`.
+`agents list` covers one session. When a request is delivered or a publisher updates a row's title,
+the newer task appears in `agents list` and `agents get`. JSON includes `task_updated_at_unix_ms`.
 
 `agents list --all` asks the running rozi for every agent it knows
 about — the session on screen, your other local sessions, and every

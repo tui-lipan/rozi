@@ -1775,6 +1775,7 @@ mod tests {
                             completions: 1,
                             answered: 0,
                             request_task: None,
+                            task_updated_at_unix_ms: None,
                         });
                         state
                             .agent_attention

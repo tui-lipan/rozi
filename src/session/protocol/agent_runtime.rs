@@ -162,9 +162,13 @@ pub struct AgentRecord {
     /// the user to look at it; see [`Self::noticed_runs`].
     #[serde(default, skip_serializing_if = "is_zero")]
     pub answered: u64,
-    /// The most recently delivered request's task label, retained for this agent run.
+    /// The most recently delivered request's task label, while no newer published row task has
+    /// superseded it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_task: Option<std::sync::Arc<AgentTask>>,
+    /// When a published row last reported a new task title, when no delivered request is newer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_updated_at_unix_ms: Option<u64>,
 }
 
 /// A task label and the time rozi delivered the request it came from.
@@ -190,6 +194,7 @@ impl From<AgentRef> for AgentRecord {
             completions: 0,
             answered: 0,
             request_task: None,
+            task_updated_at_unix_ms: None,
         }
     }
 }
@@ -427,9 +432,17 @@ pub fn effective_agent_runtimes(
             let (completions, answered) =
                 record.map_or((0, 0), |record| (record.completions, record.answered));
             let request_task = record.and_then(|record| record.request_task.as_deref());
-            let task = request_task
-                .map(|task| task.label.clone())
-                .or_else(|| occupant_task(&runtime.rows, occupant.slot.as_ref(), &occupant.label));
+            let (task, task_updated_at_unix_ms) = match request_task {
+                Some(task) => (Some(task.label.clone()), Some(task.delivered_at_unix_ms)),
+                None => {
+                    let task =
+                        occupant_task(&runtime.rows, occupant.slot.as_ref(), &occupant.label);
+                    let updated_at = task
+                        .as_ref()
+                        .and_then(|_| record.and_then(|record| record.task_updated_at_unix_ms));
+                    (task, updated_at)
+                }
+            };
             Some(AgentRuntime {
                 reference,
                 identity,
@@ -437,7 +450,7 @@ pub fn effective_agent_runtimes(
                 state: AgentState::from_status(occupant.state.as_str()),
                 reason: occupant.reason,
                 task,
-                task_updated_at_unix_ms: request_task.map(|task| task.delivered_at_unix_ms),
+                task_updated_at_unix_ms,
                 completions,
                 answered,
                 source: occupant.source,
@@ -451,6 +464,22 @@ pub fn effective_agent_runtimes(
 pub fn occupant_task(rows: &[PublishedRow], slot: Option<&RowKey>, label: &str) -> Option<String> {
     let slot = slot?;
     let row = rows.iter().find(|row| row.has_key(slot))?;
+    let title = row.title.trim();
+    (!title.is_empty() && !title.eq_ignore_ascii_case(label.trim())).then(|| title.to_string())
+}
+
+/// What one published agent row says it is working on, using the same identity label as
+/// [`agent_occupants`].
+pub fn published_row_task(
+    row: &PublishedRow,
+    detected_agent: Option<&DetectedAgent>,
+) -> Option<String> {
+    if !row.is_agent() {
+        return None;
+    }
+    let label = detected_agent
+        .map(|detected| detected.agent.label.as_str())
+        .unwrap_or_else(|| display_row_label(row));
     let title = row.title.trim();
     (!title.is_empty() && !title.eq_ignore_ascii_case(label.trim())).then(|| title.to_string())
 }

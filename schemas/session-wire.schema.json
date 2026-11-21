@@ -138,7 +138,16 @@
               "type": "null"
             }
           ],
-          "description": "The most recently delivered request's task label, retained for this agent run."
+          "description": "The most recently delivered request's task label, while no newer published row task has\nsuperseded it."
+        },
+        "task_updated_at_unix_ms": {
+          "description": "When a published row last reported a new task title, when no delivered request is newer.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [

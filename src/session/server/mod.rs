@@ -616,8 +616,39 @@ pub enum RowResumeOwner {
 }
 
 impl RowResumeOwner {
-    pub(super) fn is_stale(&self, publisher: &str) -> bool {
+    fn is_stale(&self, publisher: &str) -> bool {
         matches!(self, Self::Stale(publishers) if publishers.contains(publisher))
+    }
+
+    fn mark_stale(&mut self, publishers: impl IntoIterator<Item = String>) {
+        match self {
+            Self::Stale(stale) => stale.extend(publishers),
+            owner => *owner = Self::Stale(publishers.into_iter().collect()),
+        }
+    }
+
+    fn prune_stale(
+        &mut self,
+        rows: &[protocol::PublishedRow],
+        standby: &HashMap<String, runtime::StandbyPublisher>,
+        identity: Option<&str>,
+    ) {
+        let Self::Stale(stale) = self else {
+            return;
+        };
+        stale.retain(|publisher| {
+            rows.iter()
+                .any(|row| row.is_agent() && row.publisher == *publisher)
+                || standby.contains_key(publisher)
+        });
+        if stale.is_empty() {
+            let has_agent_rows = rows.iter().any(protocol::PublishedRow::is_agent);
+            *self = if has_agent_rows {
+                identity.map_or(Self::Unbound, |id| Self::Bound(id.to_string()))
+            } else {
+                Self::Unbound
+            };
+        }
     }
 }
 

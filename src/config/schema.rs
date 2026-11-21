@@ -2708,12 +2708,13 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Round and arrow caps need a Nerd Font; with [`Self::nerd_icons`] off they render as padded.
-    /// Half-block caps stay as they are: they use standard Unicode, not the Nerd Font PUA.
+    /// Round, arrow, and custom Private Use Area caps need a Nerd Font; with [`Self::nerd_icons`]
+    /// off they render as padded. Styles drawn with standard Unicode stay as they are.
     pub fn effective_cap_style(&self, style: CapStyle) -> CapStyle {
-        match style {
-            CapStyle::Round | CapStyle::Arrow if !self.nerd_icons => CapStyle::Padded,
-            other => other,
+        if self.nerd_icons {
+            style
+        } else {
+            style.font_safe()
         }
     }
 
@@ -3011,7 +3012,7 @@ impl WorkbarConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{next_cap_style, parse_cap_style};
+    use crate::state::{cap_style_id, next_cap_style, parse_cap_style};
 
     #[test]
     fn session_startup_parses_known_values_and_defaults_to_picker() {
@@ -3204,10 +3205,18 @@ mod tests {
         assert_eq!(parse_cap_style("Half Block"), Some(CapStyle::Half));
         assert_eq!(parse_cap_style("pill"), Some(CapStyle::Round));
         assert_eq!(parse_cap_style("powerline"), Some(CapStyle::Arrow));
+        assert_eq!(parse_cap_style("slant"), Some(CapStyle::Slant));
+        assert_eq!(parse_cap_style("trapezoid"), Some(CapStyle::Trapezoid));
         assert_eq!(parse_cap_style("nonsense"), None);
-        assert_eq!(CapStyle::Padded.chars(), None);
-        assert!(CapStyle::Round.chars().is_some());
-        assert_eq!(next_cap_style(CapStyle::Arrow), CapStyle::Padded);
+        let custom = CapStyle::Custom {
+            left: '◥',
+            right: '◣',
+        };
+        assert_eq!(parse_cap_style(" ◥◣ "), Some(custom));
+        assert_eq!(parse_cap_style(&cap_style_id(custom)), Some(custom));
+        assert_eq!(parse_cap_style("【】"), None, "caps must be one cell wide");
+        assert_eq!(parse_cap_style("<->"), None);
+        assert_eq!(next_cap_style(CapStyle::Trapezoid), CapStyle::Padded);
     }
 
     #[test]
@@ -3232,6 +3241,7 @@ mod tests {
             CapStyle::Padded
         );
         assert_eq!(config.effective_cap_style(CapStyle::Half), CapStyle::Half);
+        assert_eq!(config.effective_cap_style(CapStyle::Slant), CapStyle::Slant);
         assert_eq!(
             config.effective_cap_style(CapStyle::Padded),
             CapStyle::Padded

@@ -243,6 +243,9 @@ impl ControlCommand {
             | Self::RecordUiMark { .. }
             | Self::Pick { .. }
             | Self::Prompt { .. } => None,
+            Self::AgentAsk { no_reply: true, .. } => {
+                Some(crate::session::protocol::Capability::AgentAskNoReply)
+            }
             // An older server would ignore `now` and queue the request, so it is never sent one.
             Self::AgentAsk { now: true, .. } => {
                 Some(crate::session::protocol::Capability::AgentAskNow)
@@ -920,6 +923,9 @@ pub enum ControlCommand {
         /// when the agent shows a dialog or someone has just typed into its pane.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         now: bool,
+        /// Deliver a message without keeping a request open for an answer.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        no_reply: bool,
     },
     /// Answer a request sent to the calling agent.
     AgentReply { id: String, text: String },
@@ -1236,9 +1242,11 @@ pub struct AgentInfo {
     /// A blocker recognized in the live screen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocker: Option<std::sync::Arc<crate::session::protocol::AgentBlocker>>,
-    /// What the agent works on, when its published row names it.
+    /// The agent's last delivered request or the task named by its published row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_updated_at_unix_ms: Option<u64>,
     /// Runs this agent has finished. A new `ref` starts again from zero, so compare two values only
     /// for the same `ref`.
     #[serde(default)]
@@ -2836,13 +2844,20 @@ pub enum AgentRequestState {
     /// Typed into the agent and not yet answered.
     Active,
     Answered,
+    /// A one-way message was typed into the pane.
+    Delivered,
     Failed,
     Cancelled,
+    #[serde(other)]
+    Unknown,
 }
 
 impl AgentRequestState {
     pub fn is_resolved(self) -> bool {
-        matches!(self, Self::Answered | Self::Failed | Self::Cancelled)
+        matches!(
+            self,
+            Self::Answered | Self::Delivered | Self::Failed | Self::Cancelled | Self::Unknown
+        )
     }
 }
 
@@ -2876,6 +2891,8 @@ pub struct AgentRequestInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to_label: Option<String>,
     pub prompt: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_reply: bool,
     pub state: AgentRequestState,
     /// Why the request is still queued, what became of it once typed in, or why it failed or
     /// was cancelled.
@@ -2907,6 +2924,8 @@ pub struct AgentRequestSummary {
     pub from_label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to_label: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_reply: bool,
     pub state: AgentRequestState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -2963,6 +2982,7 @@ impl From<&AgentRequestInfo> for AgentRequestSummary {
             from_label: request.from_label.clone(),
             to_label: request.to_label.clone(),
             state: request.state,
+            no_reply: request.no_reply,
             reason: request.reason.clone(),
             response_source: request
                 .response
@@ -3521,6 +3541,7 @@ mod tests {
             asker_label: None,
             attachments: Vec::new(),
             now: false,
+            no_reply: false,
         };
         assert_eq!(
             ask(None).required_session_capability(),
@@ -3551,7 +3572,8 @@ mod tests {
                 | crate::session::protocol::Capability::AgentConversations
                 | crate::session::protocol::Capability::AgentAttachments => "0.0.50",
                 crate::session::protocol::Capability::SpawnAgentResume => "0.1.1",
-                crate::session::protocol::Capability::AgentAskNow => "0.1.2",
+                crate::session::protocol::Capability::AgentAskNow
+                | crate::session::protocol::Capability::AgentAskNoReply => "0.1.2",
                 _ => "0.0.44",
             };
             assert_eq!(cap.introduced_in(), expected, "{cap}");

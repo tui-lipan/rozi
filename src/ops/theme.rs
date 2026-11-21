@@ -7,49 +7,79 @@ use crate::ops::focus::request_theme_picker_focus;
 use crate::state::{AlertPaint, Mode, State, ThemePickerPreview, ensure_rozi_color};
 use crate::{AppRoot, Msg, schedule_theme_tick};
 
-/// Apply the client cursor preference without changing the stored theme.
-pub(crate) fn cursor_theme(
-    mut theme: Theme,
+/// Resolve the client cursor preference onto a caret palette without mutating the stored theme.
+fn resolved_caret_palette(
+    mut caret: CaretPalette,
     blink: crate::config::CursorBlink,
     host: Option<tui_lipan::style::TerminalCursorStyle>,
-) -> Theme {
+) -> CaretPalette {
     if let Some(blinking) = blink
         .override_blinking()
         .or(host.map(|style| style.blinking))
     {
         // TerminalDefault couples shape and blink. Resolve its shape before overriding blink.
-        if theme.caret.shape == CaretShape::TerminalDefault {
-            theme.caret.shape = host.map_or(CaretShape::Block, |style| style.shape);
+        if caret.shape == CaretShape::TerminalDefault {
+            caret.shape = host.map_or(CaretShape::Block, |style| style.shape);
         }
-        theme.caret.blinking = blinking;
+        caret.blinking = blinking;
     }
-    theme
+    caret
 }
 
-pub(crate) fn system_theme_from_host_colors(colors: HostTerminalColors) -> Theme {
-    Theme::from_host_colors(colors)
-}
+/// Keep the framework's app-wide theme aligned with `state.theme`, the active cursor-blink
+/// policy, and translucent host-background passthrough so toasts, portals, DevTools, and every
+/// subtree share one live theme without a root `ThemeProvider`.
+pub(crate) fn sync_app_theme(ctx: &mut Context<AppRoot>) {
+    let desired_caret = resolved_caret_palette(
+        ctx.state.theme.caret,
+        ctx.state.config.cursor.blink,
+        ctx.host_cursor_style(),
+    );
+    let original_caret = std::mem::replace(&mut ctx.state.theme.caret, desired_caret);
+    let already_synced = *ctx.theme_ref() == ctx.state.theme;
+    if !already_synced {
+        ctx.set_theme(ctx.state.theme.clone());
+    }
+    ctx.state.theme.caret = original_caret;
 
-/// The host terminal's probed default background, if rozi queried it at startup. Carried on the
-/// derived `system_theme` as a [`HostTerminalColors`] extension so it stays available regardless of
-/// which theme is active.
-pub(crate) fn host_background(state: &State) -> Option<Color> {
-    state
-        .system_theme
-        .as_ref()
-        .and_then(|theme| theme.extension::<HostTerminalColors>())
+    let passthrough = ctx
+        .host_terminal_colors()
         .map(|colors| colors.bg)
+        .filter(|bg| ctx.state.theme.surface.backdrop == *bg);
+    ctx.set_host_default_background(passthrough);
 }
 
-/// Let a translucent host terminal show through wherever rozi paints the host's own background.
-///
-/// Explicit colors are drawn opaque even when they equal the terminal's background, so this writes
-/// them as the terminal's default background instead. It applies only while the canvas uses the
-/// host background, as with the `system` theme or `pane.background_follows_terminal`.
-pub(crate) fn sync_host_default_background(ctx: &mut Context<AppRoot>) {
-    let host_bg = host_background(&ctx.state);
-    let passthrough = host_bg.filter(|bg| ctx.state.theme.surface.backdrop == *bg);
-    ctx.set_host_default_background(passthrough);
+/// Apply the current backdrop policy and terminal pane palette to a freshly resolved theme.
+pub(crate) fn apply_resolved_theme(ctx: &mut Context<AppRoot>, theme: Theme) {
+    let host_bg = ctx.host_terminal_colors().map(|colors| colors.bg);
+    ctx.state.theme = apply_backdrop_policy(
+        theme,
+        host_bg,
+        ctx.state.config.pane.background_follows_terminal,
+    );
+    apply_terminal_palette_to_state(&mut ctx.state);
+}
+
+/// Watch a custom theme file for live reloads; returns `true` when the tick loop needs starting.
+pub(crate) fn install_theme_watcher(
+    ctx: &mut Context<AppRoot>,
+    watch_path: Option<&std::path::Path>,
+) -> bool {
+    let had_watcher = ctx.state.theme_watcher.is_some();
+    ctx.state.theme_watcher = None;
+    let Some(path) = watch_path else {
+        return false;
+    };
+    match ThemeWatcher::new(path.to_path_buf(), crate::config::custom_theme_base()) {
+        Ok(watcher) => {
+            ctx.state.theme_watcher = Some(watcher);
+            !had_watcher
+        }
+        Err(err) => {
+            crate::pane::pty_events::notify_error(ctx, "Theme watch failed", err.to_string());
+            false
+        }
+    }
 }
 
 /// Set rozi's subdued caret default while leaving explicit theme `[caret]` colors intact.
@@ -93,47 +123,20 @@ pub(crate) fn apply_backdrop_policy(
 }
 
 /// Re-resolve the active theme from `config.theme.name` and reapply the current backdrop
-/// policy. Used when flipping `pane.background_follows_terminal`, since the already-resolved
-/// `state.theme` may have had its `surface.backdrop` overwritten by a previous policy pass and
-/// can no longer tell us what the theme itself authored.
+/// policy. Used when flipping `pane.background_follows_terminal` or when host colors change,
+/// since the already-resolved `state.theme` may have had its `surface.backdrop` overwritten.
 pub(crate) fn reapply_active_theme(ctx: &mut Context<AppRoot>) -> Update {
-    let system_theme = ctx.state.system_theme.clone();
     let resolved =
-        crate::config::resolve_theme(&ctx.state.config.theme.name, system_theme.as_ref());
-    let host_bg = host_background(&ctx.state);
-    ctx.state.theme = apply_backdrop_policy(
-        resolved.theme,
-        host_bg,
-        ctx.state.config.pane.background_follows_terminal,
-    );
-    apply_terminal_palette_to_state(&mut ctx.state);
+        crate::config::resolve_theme(&ctx.state.config.theme.name, ctx.host_terminal_colors());
+    apply_resolved_theme(ctx, resolved.theme);
     Update::full()
 }
 
 pub(crate) fn host_terminal_colors_changed(ctx: &mut Context<AppRoot>) -> Update {
-    let generation = ctx.host_terminal_color_generation();
-    if generation <= ctx.state.host_terminal_color_generation {
+    if ctx.host_terminal_colors().is_none() {
         return Update::none();
     }
-    ctx.state.host_terminal_color_generation = generation;
-
-    let Some(colors) = ctx.host_terminal_colors() else {
-        return Update::none();
-    };
-    sync_system_theme_from_host_colors(&mut ctx.state, colors);
-    Update::full()
-}
-
-fn sync_system_theme_from_host_colors(state: &mut State, colors: HostTerminalColors) {
-    state.system_theme = Some(system_theme_from_host_colors(colors));
-    let resolved =
-        crate::config::resolve_theme(&state.config.theme.name, state.system_theme.as_ref());
-    state.theme = apply_backdrop_policy(
-        resolved.theme,
-        Some(colors.bg),
-        state.config.pane.background_follows_terminal,
-    );
-    apply_terminal_palette_to_state(state);
+    reapply_active_theme(ctx)
 }
 
 pub(crate) fn theme_tick(ctx: &mut Context<AppRoot>) -> Update {
@@ -155,13 +158,7 @@ pub(crate) fn theme_tick(ctx: &mut Context<AppRoot>) -> Update {
     }
 
     if let Some(theme) = newest_theme {
-        let host_bg = host_background(&ctx.state);
-        ctx.state.theme = apply_backdrop_policy(
-            theme,
-            host_bg,
-            ctx.state.config.pane.background_follows_terminal,
-        );
-        apply_terminal_palette_to_state(&mut ctx.state);
+        apply_resolved_theme(ctx, theme);
         return Update::with_command(schedule_theme_tick());
     }
     Update::command_only(schedule_theme_tick())
@@ -214,15 +211,8 @@ pub(crate) fn preview_theme(ctx: &mut Context<AppRoot>, index: usize) -> Update 
             theme: ctx.state.theme.clone(),
         });
     }
-    let system_theme = ctx.state.system_theme.clone();
-    let resolved = crate::config::resolve_theme(&choice.id(), system_theme.as_ref()).theme;
-    let host_bg = host_background(&ctx.state);
-    ctx.state.theme = apply_backdrop_policy(
-        resolved,
-        host_bg,
-        ctx.state.config.pane.background_follows_terminal,
-    );
-    apply_terminal_palette_to_state(&mut ctx.state);
+    let resolved = crate::config::resolve_theme(&choice.id(), ctx.host_terminal_colors()).theme;
+    apply_resolved_theme(ctx, resolved);
     Update::full()
 }
 
@@ -254,39 +244,19 @@ pub(crate) fn select_theme(ctx: &mut Context<AppRoot>, index: usize) -> Update {
         return close_after_theme_pick(ctx);
     };
     let name = choice.id();
-    let system_theme = ctx.state.system_theme.clone();
-    let resolved = crate::config::resolve_theme(&name, system_theme.as_ref());
+    let resolved = crate::config::resolve_theme(&name, ctx.host_terminal_colors());
     for warning in &resolved.warnings {
         crate::pane::pty_events::notify_error(ctx, "Theme warning", warning.clone());
     }
 
     // Watch the active theme's file only when it is a custom file; start the reload tick loop
     // if it was not already running (switching between custom files keeps it running).
-    let had_watcher = ctx.state.theme_watcher.is_some();
-    ctx.state.theme_watcher = None;
-    let mut start_tick = false;
-    if let Some(path) = &resolved.watch_path {
-        match ThemeWatcher::new(path.clone(), crate::config::custom_theme_base()) {
-            Ok(watcher) => {
-                ctx.state.theme_watcher = Some(watcher);
-                start_tick = !had_watcher;
-            }
-            Err(err) => {
-                crate::pane::pty_events::notify_error(ctx, "Theme watch failed", err.to_string());
-            }
-        }
-    }
+    let start_tick = install_theme_watcher(ctx, resolved.watch_path.as_deref());
 
     ctx.state.config.theme.name = name.clone();
-    let host_bg = host_background(&ctx.state);
-    ctx.state.theme = apply_backdrop_policy(
-        resolved.theme,
-        host_bg,
-        ctx.state.config.pane.background_follows_terminal,
-    );
+    apply_resolved_theme(ctx, resolved.theme);
     ctx.state.theme_picker_preview = None;
     ctx.state.theme_picker_selected = None;
-    apply_terminal_palette_to_state(&mut ctx.state);
     ctx.state.show_theme_picker = false;
     ctx.state.commands_dirty = true;
     let closed = close_after_theme_pick(ctx);
@@ -826,7 +796,7 @@ mod tests {
     #[test]
     fn system_theme_terminal_palette_preserves_host_ansi_slots() {
         let colors = host_colors();
-        let theme = system_theme_from_host_colors(colors);
+        let theme = Theme::from_host_colors(colors);
         let pane_background = Color::rgb(1, 2, 3);
 
         let palette = TerminalColorPalette::from_theme(&theme, pane_background);
@@ -838,40 +808,47 @@ mod tests {
 
     #[test]
     fn live_system_palette_change_rebuilds_theme_and_pane_palette() {
-        let first = host_colors();
-        let mut second = first;
-        second.ansi[4] = Color::rgb(180, 80, 20);
-        let mut config = Config::default();
-        config.theme.name = "system".to_string();
-        let mut state = State::new(config, system_theme_from_host_colors(first));
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let _config_lock = crate::test_support::lock_config_file();
+            let first = host_colors();
+            let mut second = first;
+            second.ansi[4] = Color::rgb(180, 80, 20);
 
-        sync_system_theme_from_host_colors(&mut state, first);
-        let first_theme = state.theme.clone();
-        sync_system_theme_from_host_colors(&mut state, second);
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            let system_index = crate::config::theme_choices()
+                .iter()
+                .position(|choice| choice.id() == "system")
+                .expect("system choice");
+            backend
+                .dispatch(Msg::SelectTheme(system_index))
+                .expect("select system theme");
 
-        assert_ne!(state.theme, first_theme);
-        assert_eq!(
-            state.theme,
-            apply_backdrop_policy(
-                system_theme_from_host_colors(second),
-                Some(second.bg),
-                false
-            )
-        );
-        assert_eq!(
-            state.current().workspaces[0].panes[0]
-                .terminal
-                .last_palette
-                .expect("palette should be cached")
-                .ansi,
-            second.ansi
-        );
+            assert!(backend.set_host_terminal_colors(first).unwrap());
+            let first_theme = backend.state().theme.clone();
+            assert!(backend.set_host_terminal_colors(second).unwrap());
+
+            assert_ne!(backend.state().theme, first_theme);
+            assert_eq!(
+                backend.state().theme,
+                apply_backdrop_policy(Theme::from_host_colors(second), Some(second.bg), false)
+            );
+            assert_eq!(backend.theme().surface.backdrop, second.bg);
+            assert_eq!(
+                backend.state().current().workspaces[0].panes[0]
+                    .terminal
+                    .last_palette
+                    .expect("palette should be cached")
+                    .ansi,
+                second.ansi
+            );
+        });
     }
 
     #[test]
     fn host_terminal_palette_background_still_follows_pane_background() {
         let colors = host_colors();
-        let theme = system_theme_from_host_colors(colors);
+        let theme = Theme::from_host_colors(colors);
         let mut state = State::new(Config::default(), theme.clone());
         state.config.pane.highlight_focused_background = true;
 
@@ -1086,26 +1063,17 @@ mod cursor_tests {
             shape: CaretShape::Bar,
             blinking: false,
         };
-        let theme = Theme::default().caret_blinking(true);
-        let inherited = cursor_theme(theme.clone(), CursorBlink::Inherit, Some(host));
-        assert!(!inherited.caret.blinking);
-        assert_eq!(inherited.caret.shape, theme.caret.shape);
-        assert!(
-            cursor_theme(theme.clone(), CursorBlink::Inherit, None)
-                .caret
-                .blinking
-        );
-        assert!(
-            !cursor_theme(theme.clone(), CursorBlink::Static, None)
-                .caret
-                .blinking
-        );
-        let forced = cursor_theme(
-            theme.caret_shape(CaretShape::TerminalDefault),
-            CursorBlink::Blinking,
-            Some(host),
-        );
-        assert!(forced.caret.blinking);
-        assert_eq!(forced.caret.shape, CaretShape::Bar);
+        let caret = Theme::default().caret_blinking(true).caret;
+        let inherited = resolved_caret_palette(caret, CursorBlink::Inherit, Some(host));
+        assert!(!inherited.blinking);
+        assert_eq!(inherited.shape, caret.shape);
+        assert!(resolved_caret_palette(caret, CursorBlink::Inherit, None).blinking);
+        assert!(!resolved_caret_palette(caret, CursorBlink::Static, None).blinking);
+        let terminal_default = Theme::default()
+            .caret_shape(CaretShape::TerminalDefault)
+            .caret;
+        let forced = resolved_caret_palette(terminal_default, CursorBlink::Blinking, Some(host));
+        assert!(forced.blinking);
+        assert_eq!(forced.shape, CaretShape::Bar);
     }
 }

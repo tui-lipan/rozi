@@ -357,11 +357,18 @@ pub(crate) fn attachment_agent_rows(
                                     .agent
                                     .as_ref()
                                     .and_then(|identity| {
-                                        crate::session::protocol::occupant_task(
-                                            &pane.terminal.published_rows,
-                                            occupant.slot.as_ref(),
-                                            &identity.label,
-                                        )
+                                        pane.agents
+                                            .iter()
+                                            .find(|record| record.reference.slot == occupant.slot)
+                                            .and_then(|record| record.request_task.as_deref())
+                                            .map(|task| task.label.clone())
+                                            .or_else(|| {
+                                                crate::session::protocol::occupant_task(
+                                                    &pane.terminal.published_rows,
+                                                    occupant.slot.as_ref(),
+                                                    &identity.label,
+                                                )
+                                            })
                                     })
                                     .or(reported_title),
                                 reason: occupant.reason.clone(),

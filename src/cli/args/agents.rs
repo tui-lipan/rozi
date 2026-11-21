@@ -121,6 +121,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Prompt an agent that is still working",
             ),
             row("    --now", "Type a request in now, even mid-turn"),
+            row("    --no-reply", "Send a message that needs no answer"),
             row(
                 "    --follows <ID>",
                 "Continue the conversation of an earlier request",
@@ -512,6 +513,7 @@ fn parse_ask(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
     let mut follows = None;
     let mut require_reply = false;
     let mut now = false;
+    let mut no_reply = false;
     let mut attachments = Vec::new();
     let mut iter = args.into_iter();
     while let Some(argument) = iter.next() {
@@ -534,6 +536,7 @@ fn parse_ask(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
             }
             "--require-reply" => require_reply = true,
             "--now" => now = true,
+            "--no-reply" => no_reply = true,
             "--for" => {
                 let id = super::require_value(&mut iter, "--for requires a request id")?;
                 if parent.replace(id).is_some() {
@@ -563,6 +566,9 @@ fn parse_ask(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
             other => return Err(unexpected("agents ask", other)),
         }
     }
+    if no_reply && (wait || require_reply) {
+        return Err("--no-reply cannot be combined with --wait or --require-reply".into());
+    }
     let await_ms = match (wait, timeout_ms) {
         (true, Some(timeout_ms)) => Some(timeout_ms),
         (true, None) => {
@@ -588,6 +594,7 @@ fn parse_ask(args: Vec<String>) -> std::result::Result<ParsedAgents, String> {
             asker_label: None,
             attachments: Vec::new(),
             now,
+            no_reply,
         },
         format,
         await_ms,
@@ -1190,7 +1197,7 @@ mod tests {
             "--until".into(),
             "quiescent".into(),
             "--timeout".into(),
-            "30s".into(),
+            "6h".into(),
             "--format".into(),
             "json".into(),
         ])
@@ -1201,7 +1208,7 @@ mod tests {
             ControlCommand::AgentWait {
                 target: AgentTarget::Pane(3),
                 until: AgentWaitCondition::Quiescent,
-                timeout_ms: Some(30_000),
+                timeout_ms: Some(21_600_000),
             }
         );
     }
@@ -1323,6 +1330,7 @@ mod tests {
                 asker_label: None,
                 attachments: Vec::new(),
                 now: true,
+                no_reply: false,
             }
         );
         assert_eq!(parsed.await_ms, None);
@@ -1332,18 +1340,38 @@ mod tests {
             "3",
             "--wait",
             "--timeout",
-            "30m",
+            "1h30m",
             "--",
             "review",
         ]))
         .unwrap();
-        assert_eq!(waiting.await_ms, Some(30 * 60 * 1000));
+        assert_eq!(waiting.await_ms, Some(5_400_000));
         for incomplete in [&["--wait"][..], &["--timeout", "1m"][..]] {
             let mut list = vec!["ask", "--target", "3"];
             list.extend_from_slice(incomplete);
             list.extend(["--", "review"]);
             assert!(parse_agents(args(&list)).is_err(), "{incomplete:?}");
         }
+        let message =
+            parse_agents(args(&["ask", "--target", "3", "--no-reply", "--", "FYI"])).unwrap();
+        assert!(matches!(
+            message.command,
+            ControlCommand::AgentAsk { no_reply: true, .. }
+        ));
+        assert!(
+            parse_agents(args(&[
+                "ask",
+                "--target",
+                "3",
+                "--no-reply",
+                "--wait",
+                "--timeout",
+                "1m",
+                "--",
+                "FYI"
+            ]))
+            .is_err()
+        );
         let error = parse_agents_args(args(&["await", "--timeout", "1m", "rq_1"])).unwrap_err();
         assert!(error.contains("takes a request id first"), "{error}");
     }

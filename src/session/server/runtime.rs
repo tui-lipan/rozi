@@ -119,6 +119,8 @@ impl AgentScratch {
                     run_open: false,
                     answered: 0,
                     request_run: false,
+                    request_task: None,
+                    task_updated_at_unix_ms: None,
                     from_detected: false,
                 },
             );
@@ -238,17 +240,40 @@ impl AgentScratch {
     /// The last agent rows are gone while a claim on the pane - a hook, or the agent's own report -
     /// holds a reference of its own beside them, and the turn it drove on the row ran under the
     /// row's reference. The claim keeps its reference, which clients know it by, and takes over the
-    /// row's open run: a turn withdrawn while blocked can end without being seen working again.
+    /// row's open run and task freshness: a turn withdrawn while blocked can end without being seen
+    /// working again, and the task label stays continuous across the handoff.
     /// Without a claim, [`Self::carry_detected`] hands the row's whole reference back instead.
     fn carry_run_to_claim(&mut self, slot: &protocol::RowKey) {
         let Some(row) = self.references.get(&Some(slot.clone())) else {
             return;
         };
-        let (identity, run_open) = (row.identity.clone(), row.run_open);
+        let (identity, run_open, request_task, task_updated_at_unix_ms) = (
+            row.identity.clone(),
+            row.run_open,
+            row.request_task.clone(),
+            row.task_updated_at_unix_ms,
+        );
         if let Some(claim) = self.references.get_mut(&None)
             && claim.identity == identity
         {
             claim.run_open |= run_open;
+            if let Some(row_task) = request_task {
+                let fresher = claim.request_task.as_deref().is_none_or(|claim_task| {
+                    row_task.delivered_at_unix_ms >= claim_task.delivered_at_unix_ms
+                });
+                if fresher {
+                    claim.request_task = Some(row_task);
+                    claim.task_updated_at_unix_ms = None;
+                }
+            } else if let Some(row_updated_at) = task_updated_at_unix_ms
+                && claim
+                    .request_task
+                    .as_deref()
+                    .is_some_and(|claim_task| row_updated_at >= claim_task.delivered_at_unix_ms)
+            {
+                claim.request_task = None;
+                claim.task_updated_at_unix_ms = None;
+            }
         }
     }
 
@@ -258,18 +283,22 @@ impl AgentScratch {
         let incarnation = integration.reference.incarnation;
         let identity = integration.identity.id.clone();
         self.next_incarnation = self.next_incarnation.max(incarnation);
-        let (completions, run_open, answered, request_run) = self
-            .references
-            .get(&None)
-            .filter(|tracked| tracked.incarnation == incarnation && tracked.identity == identity)
-            .map_or((0, false, 0, false), |tracked| {
-                (
-                    tracked.completions,
-                    tracked.run_open,
-                    tracked.answered,
-                    tracked.request_run,
-                )
-            });
+        let (completions, run_open, answered, request_run, request_task, task_updated_at_unix_ms) =
+            self.references
+                .get(&None)
+                .filter(|tracked| {
+                    tracked.incarnation == incarnation && tracked.identity == identity
+                })
+                .map_or((0, false, 0, false, None, None), |tracked| {
+                    (
+                        tracked.completions,
+                        tracked.run_open,
+                        tracked.answered,
+                        tracked.request_run,
+                        tracked.request_task.clone(),
+                        tracked.task_updated_at_unix_ms,
+                    )
+                });
         self.references.insert(
             None,
             TrackedAgentReference {
@@ -279,6 +308,8 @@ impl AgentScratch {
                 run_open,
                 answered,
                 request_run,
+                request_task,
+                task_updated_at_unix_ms,
                 from_detected: false,
             },
         );
@@ -302,6 +333,27 @@ impl AgentScratch {
     pub(super) fn begin_request_run(&mut self, reference: &protocol::AgentRef) {
         if let Some(tracked) = self.tracked_mut(reference) {
             tracked.request_run = true;
+        }
+    }
+
+    pub(super) fn record_request_task(
+        &mut self,
+        reference: &protocol::AgentRef,
+        task: protocol::AgentTask,
+    ) -> bool {
+        let Some(tracked) = self.tracked_mut(reference) else {
+            return false;
+        };
+        tracked.request_task = Some(std::sync::Arc::new(task));
+        tracked.task_updated_at_unix_ms = None;
+        true
+    }
+
+    /// A published agent row reported a new task title, superseding any earlier delivered request.
+    fn record_published_row_task(&mut self, slot: &protocol::RowKey, updated_at_unix_ms: u64) {
+        if let Some(tracked) = self.references.get_mut(&Some(slot.clone())) {
+            tracked.request_task = None;
+            tracked.task_updated_at_unix_ms = Some(updated_at_unix_ms);
         }
     }
 
@@ -428,6 +480,8 @@ impl AgentScratch {
                     run_open: false,
                     answered: 0,
                     request_run: false,
+                    request_task: None,
+                    task_updated_at_unix_ms: None,
                     from_detected: false,
                 },
             );
@@ -497,6 +551,8 @@ impl AgentScratch {
                 },
                 completions: tracked.completions,
                 answered: tracked.answered,
+                request_task: tracked.request_task.clone(),
+                task_updated_at_unix_ms: tracked.task_updated_at_unix_ms,
             })
             .collect::<Vec<_>>();
         records.sort_by(|left, right| left.reference.slot.cmp(&right.reference.slot));
@@ -3012,6 +3068,31 @@ pub(super) fn replace_pane_rows(
         })
     };
     let mut carried = std::mem::take(&mut pane.agent.carried);
+    let updated_at = crate::runtime_metrics::unix_time_millis();
+    let detected = pane.runtime.detected_agent.as_ref();
+    let mut superseded = Vec::new();
+    for row in pane.runtime.rows.iter().filter(|row| row.is_agent()) {
+        let key = row.key();
+        let previous_row = previous.iter().find(|old| old.has_key(&key)).or_else(|| {
+            carried.iter().find_map(|handoff| {
+                (handoff.to.as_ref() == Some(&key))
+                    .then_some(handoff.from.as_ref())
+                    .flatten()
+                    .and_then(|from| previous.iter().find(|old| old.has_key(from)))
+            })
+        });
+        let Some(previous_row) = previous_row else {
+            continue;
+        };
+        let old_task = protocol::published_row_task(previous_row, detected);
+        let new_task = protocol::published_row_task(row, detected);
+        if new_task.is_some() && new_task != old_task {
+            superseded.push(key);
+        }
+    }
+    for key in superseded {
+        pane.agent.record_published_row_task(&key, updated_at);
+    }
     for handoff in &mut carried {
         handoff.new_session = row_session(&pane.runtime.rows, &handoff.to);
         // Another copy's row may show another conversation, so a request keeps the one it was

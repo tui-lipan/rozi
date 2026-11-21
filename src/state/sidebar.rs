@@ -375,7 +375,8 @@ pub struct SidebarWorktrees {
     /// The refresh signal the last request answered, so a list is asked for once per change.
     pub requested_token: Option<u64>,
     pub error: Option<String>,
-    /// A checkout Git refused to remove because it is dirty. Its ✕ now forces the removal.
+    /// A checkout whose removal needs force: it has uncommitted changes or ignored files. Its ✕ now
+    /// forces the removal.
     pub force_remove: Option<String>,
 }
 

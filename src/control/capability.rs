@@ -11,6 +11,7 @@ pub enum ControlCapability {
     /// `agent-ask` honors `now`, typing the request in at once or refusing it. An older binary
     /// ignores the field and queues the request.
     AgentAskNow,
+    AgentAskNoReply,
     AgentPromptResults,
     /// A session server keeps requests between its agents: `agent-ask`, `agent-reply`,
     /// `agent-await`, `agent-request`, `agent-requests`, and `agent-cancel`.
@@ -124,7 +125,8 @@ pub enum ControlCapability {
 
 impl ControlCapability {
     /// Every control capability this binary has, in name order.
-    pub const ALL: [ControlCapability; 44] = [
+    pub const ALL: [ControlCapability; 45] = [
+        ControlCapability::AgentAskNoReply,
         ControlCapability::AgentAskNow,
         ControlCapability::AgentPromptResults,
         ControlCapability::AgentRequests,
@@ -175,6 +177,7 @@ impl ControlCapability {
     pub const fn as_str(self) -> &'static str {
         match self {
             ControlCapability::AgentAskNow => "agent-ask-now",
+            ControlCapability::AgentAskNoReply => "agent-ask-no-reply",
             ControlCapability::AgentPromptResults => "agent-prompt-results",
             ControlCapability::AgentRequests => "agent-requests",
             ControlCapability::AgentResponses => "agent-responses",

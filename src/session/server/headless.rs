@@ -935,6 +935,7 @@ impl SessionServer {
                 asker_label,
                 attachments,
                 now,
+                no_reply,
             } => match self.attached_prompt(prompt, &attachments) {
                 Err(refusal) => refusal,
                 Ok(prompt) => {
@@ -947,6 +948,7 @@ impl SessionServer {
                             follows: follows.as_deref(),
                             asker_label,
                             now,
+                            no_reply,
                         },
                     );
                     // Only a request that exists keeps its files; a refused ask leaves them
@@ -1540,6 +1542,7 @@ impl SessionServer {
                     reason: runtime.reason,
                     blocker: runtime.blocker,
                     task: runtime.task,
+                    task_updated_at_unix_ms: runtime.task_updated_at_unix_ms,
                     completions: runtime.completions,
                     cwd: protocol::occupant_cwd(
                         &pane.runtime.rows,

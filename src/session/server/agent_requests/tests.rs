@@ -87,6 +87,7 @@ impl Rig {
                 follows: None,
                 asker_label: None,
                 now: false,
+                no_reply: false,
             },
         ))
     }
@@ -128,6 +129,7 @@ impl Rig {
                 follows: None,
                 asker_label: None,
                 now: false,
+                no_reply: false,
             },
         )
     }
@@ -670,6 +672,72 @@ fn only_a_pane_showing_the_request_counts_as_having_taken_it() {
 }
 
 #[test]
+fn a_message_exits_the_queue_as_delivered_and_keeps_no_answer() {
+    let mut rig = Rig::new(&[2, 3]);
+    rig.set_state(3, DetectedAgentState::Working);
+    let sender = rig.agent(2);
+    let queued = info(rig.server.ask_agent(
+        Some(sender),
+        AgentTarget::Pane(3),
+        "The base branch moved.".into(),
+        AskOptions {
+            parent: None,
+            follows: None,
+            asker_label: None,
+            now: false,
+            no_reply: true,
+        },
+    ));
+    assert_eq!(queued.state, AgentRequestState::Queued);
+    rig.set_state(3, DetectedAgentState::Idle);
+    let delivered = rig.request(&queued.id);
+    assert_eq!(delivered.state, AgentRequestState::Delivered);
+    assert!(delivered.delivered_at_unix_ms.is_some());
+    assert!(delivered.response.is_none());
+    assert!(!rig.reply(3, &queued.id, "unsolicited answer").ok);
+    rig.run_turn(3);
+    assert_eq!(rig.request(&queued.id).state, AgentRequestState::Delivered);
+    let protocol::ServerMessage::AgentRequestsChanged { requests, .. } =
+        rig.server.agent_requests_message(false)
+    else {
+        panic!("expected requests");
+    };
+    assert!(
+        requests.is_empty(),
+        "old clients cannot decode the new state"
+    );
+}
+
+#[test]
+fn a_queued_message_names_its_sender_after_that_agent_leaves() {
+    let mut rig = Rig::new(&[2, 3]);
+    rig.set_state(3, DetectedAgentState::Working);
+    let sender = rig.agent(2);
+    let queued = info(rig.server.ask_agent(
+        Some(sender.clone()),
+        AgentTarget::Pane(3),
+        "The base branch moved.".into(),
+        AskOptions {
+            parent: None,
+            follows: None,
+            asker_label: None,
+            now: false,
+            no_reply: true,
+        },
+    ));
+    assert_eq!(queued.state, AgentRequestState::Queued);
+    assert_eq!(queued.from_label.as_deref(), Some("Claude Code"));
+    rig.server.panes.get_mut(&2).unwrap().runtime.detected_agent = None;
+    assert!(rig.server.current_agent_runtime(&sender).is_err());
+    rig.set_state(3, DetectedAgentState::Idle);
+    assert_eq!(rig.request(&queued.id).state, AgentRequestState::Delivered);
+    assert!(
+        rig.typed_into(3, "Message from Claude Code in pane 2 (no reply needed)"),
+        "a departed sender is still named from the request"
+    );
+}
+
+#[test]
 fn requests_reach_a_target_one_turn_at_a_time() {
     let mut rig = Rig::new(&[2, 3, 4]);
 
@@ -991,6 +1059,7 @@ fn an_agent_owing_several_requests_names_the_one_it_asks_for() {
                 follows: None,
                 asker_label: None,
                 now: false,
+                no_reply: false,
             },
         )
     };
@@ -1006,9 +1075,90 @@ fn an_agent_owing_several_requests_names_the_one_it_asks_for() {
     assert_eq!(
         rig.server
             .agent_requests
-            .await_cycle(Some(&asker), &first.id),
+            .await_cycle(Some(&asker), &first.id)
+            .map(|info| info.id.as_str()),
         Some(follow_up.id.as_str())
     );
+}
+
+#[test]
+fn an_active_reply_survives_an_agent_restart_only_in_its_original_conversation() {
+    for resumed_session in ["original", "different"] {
+        let mut rig = Rig::new(&[3]);
+        rig.move_to(3, "original");
+        let first = rig.agent(3);
+        let request = rig.ask(None, 3, "Wait for the long check and reply.");
+        assert_eq!(request.state, AgentRequestState::Active);
+
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        let detected = pane.runtime.detected_agent.take();
+        pane.runtime.integration = None;
+        pane.agent.sync_references(&pane.runtime);
+        rig.server.pump_agent_requests();
+        assert_eq!(
+            rig.request(&request.id).reason.as_deref(),
+            Some(WAITING_FOR_RESUME)
+        );
+
+        rig.server.panes.get_mut(&3).unwrap().runtime.detected_agent = detected;
+        rig.move_to(3, resumed_session);
+        rig.server.pump_agent_requests();
+        assert_ne!(rig.agent(3), first);
+        if resumed_session == "original" {
+            assert!(
+                !rig.server
+                    .reply_to_request(Some(first), &request.id, "stale answer".into())
+                    .ok
+            );
+            assert!(rig.reply(3, &request.id, "The check passed.").ok);
+            assert_eq!(rig.request(&request.id).state, AgentRequestState::Answered);
+        } else {
+            assert_eq!(rig.request(&request.id).state, AgentRequestState::Failed);
+            assert!(!rig.reply(3, &request.id, "wrong conversation").ok);
+        }
+    }
+}
+
+#[test]
+fn replacing_the_pane_generation_fails_requests_even_for_the_same_conversation() {
+    for deferred in [false, true] {
+        let mut rig = Rig::new(&[3]);
+        rig.move_to(3, "original");
+        let target = rig.agent(3);
+        let request = rig.ask(None, 3, "Wait for the check and reply.");
+        assert_eq!(request.state, AgentRequestState::Active);
+        if deferred {
+            assert!(rig.server.reply_later(Some(target.clone()), &request.id).ok);
+        }
+
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        pane.generation += 1;
+        pane.runtime.integration = None;
+        pane.agent.sync_references(&pane.runtime);
+        rig.move_to(3, "original");
+        let replacement = rig.agent(3);
+        assert_ne!(replacement.pane.generation, target.pane.generation);
+
+        rig.server.pump_agent_requests();
+        let failed = rig.request(&request.id);
+        assert_eq!(
+            failed.state,
+            AgentRequestState::Failed,
+            "deferred={deferred}"
+        );
+        assert_eq!(failed.to, target);
+        assert!(
+            failed
+                .reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("pane 3 has been replaced")
+        );
+        assert!(
+            !rig.reply(3, &request.id, "reply from the replacement pane")
+                .ok
+        );
+    }
 }
 
 #[test]
@@ -1236,6 +1386,7 @@ fn an_ask_keeps_its_uploads_only_when_the_request_is_created() {
         asker_label: None,
         attachments,
         now: false,
+        no_reply: false,
     };
 
     // One missing upload refuses the whole ask, and the others stay unclaimed.
@@ -1296,6 +1447,7 @@ fn exchanges_between_the_same_two_agents_make_one_conversation() {
             follows: Some(&delegated.id),
             asker_label: None,
             now: false,
+            no_reply: false,
         },
     );
     assert_eq!(
@@ -1322,6 +1474,7 @@ fn exchanges_between_the_same_two_agents_make_one_conversation() {
                 follows: Some(&outside.id),
                 asker_label: Some("Claude \"Code\"\u{1b}[31m on\nfar-host\u{202e}\u{e0041}".into()),
                 now: false,
+                no_reply: false,
             },
         )
     };
@@ -1345,6 +1498,7 @@ fn exchanges_between_the_same_two_agents_make_one_conversation() {
             follows: Some(&first.id),
             asker_label: None,
             now: false,
+            no_reply: false,
         },
     );
     assert_eq!(code(someone_elses), Some(ControlErrorCode::InvalidArgument));
@@ -1364,6 +1518,7 @@ fn a_new_native_conversation_ends_the_conversation_for_good() {
                 follows: Some(id),
                 asker_label: None,
                 now: false,
+                no_reply: false,
             },
         )
     };
@@ -1416,9 +1571,184 @@ fn following_a_delegated_request_respects_a_new_native_conversation() {
             follows: Some(&delegated.id),
             asker_label: None,
             now: false,
+            no_reply: false,
         },
     );
     assert_eq!(code(follows), Some(ControlErrorCode::InvalidArgument));
+}
+
+#[test]
+fn an_agent_task_changes_when_the_next_request_is_delivered() {
+    let mut rig = Rig::new(&[2, 3]);
+    let task = |rig: &Rig| {
+        let agent = rig
+            .server
+            .agent_runtimes_for(3, &rig.server.panes[&3])
+            .remove(0);
+        (agent.task, agent.task_updated_at_unix_ms)
+    };
+    let first = rig.ask(Some(2), 3, "Plan the release\nCheck the changelog too.");
+    assert_eq!(
+        task(&rig),
+        (Some("Plan the release".into()), first.delivered_at_unix_ms)
+    );
+    let second = rig.ask(Some(2), 3, "Review the version bump");
+    assert_eq!(second.state, AgentRequestState::Queued);
+    assert_eq!(task(&rig).0.as_deref(), Some("Plan the release"));
+
+    assert!(rig.reply(3, &first.id, "planned").ok);
+    rig.run_turn(3);
+    let second = rig.request(&second.id);
+    assert!(second.delivered_at_unix_ms.is_some());
+    assert_eq!(
+        task(&rig),
+        (
+            Some("Review the version bump".into()),
+            second.delivered_at_unix_ms
+        )
+    );
+}
+
+#[test]
+fn a_newer_published_row_title_supersedes_a_delivered_request_task() {
+    let mut rig = Rig::new(&[2, 3]);
+    let row = |title: &str, status: &str| protocol::PublishedRow {
+        id: "conv-1".into(),
+        publisher: "1/sessions".into(),
+        kind: protocol::PublisherKind::Agent,
+        title: title.into(),
+        status: status.into(),
+        reason: None,
+        active: true,
+        work_started_at: None,
+        cwd: None,
+        project: None,
+        native_session: Some("session-x".into()),
+        live_session: None,
+        reported: false,
+    };
+    let task = |rig: &Rig| {
+        let agent = rig
+            .server
+            .agent_runtimes_for(3, &rig.server.panes[&3])
+            .remove(0);
+        (agent.task, agent.task_updated_at_unix_ms)
+    };
+    super::super::runtime::publish_rows_for_test(
+        rig.server.panes.get_mut(&3).unwrap(),
+        vec![row("✳ Implement parser", "idle")],
+    );
+    assert_eq!(task(&rig).0.as_deref(), Some("✳ Implement parser"));
+
+    let first = rig.ask(Some(2), 3, "Fix parser tests");
+    assert_eq!(
+        task(&rig),
+        (Some("Fix parser tests".into()), first.delivered_at_unix_ms)
+    );
+
+    // Republishing the row with only status decoration changed keeps the delivered request label.
+    super::super::runtime::replace_pane_rows(
+        rig.server.panes.get_mut(&3).unwrap(),
+        vec![row("⏺ Implement parser", "working")],
+    );
+    rig.server.pump_agent_requests();
+    assert_eq!(
+        task(&rig),
+        (Some("Fix parser tests".into()), first.delivered_at_unix_ms)
+    );
+
+    // Updating the semantic row task reports a newer task from the publisher.
+    assert!(rig.reply(3, &first.id, "done").ok);
+    super::super::runtime::replace_pane_rows(
+        rig.server.panes.get_mut(&3).unwrap(),
+        vec![row("⏺ Review parser cleanup", "idle")],
+    );
+    rig.server.pump_agent_requests();
+    let (label, updated_at) = task(&rig);
+    assert_eq!(label.as_deref(), Some("⏺ Review parser cleanup"));
+    assert!(updated_at >= first.delivered_at_unix_ms);
+
+    // A subsequent delivered request supersedes the publisher title again.
+    let second = rig.ask(Some(2), 3, "Verify edge cases");
+    assert!(second.delivered_at_unix_ms.is_some());
+    assert_eq!(
+        task(&rig),
+        (
+            Some("Verify edge cases".into()),
+            second.delivered_at_unix_ms
+        )
+    );
+}
+
+#[test]
+fn withdrawing_a_published_row_carries_its_request_task_to_its_integration_claim() {
+    let mut rig = Rig::new(&[2, 3]);
+    let pane_ref = protocol::PaneRef {
+        session_instance: rig.server.instance_id.clone(),
+        pane_id: 3,
+        generation: rig.server.panes[&3].generation,
+    };
+    let row = |title: &str| protocol::PublishedRow {
+        id: "conv-1".into(),
+        publisher: "1/sessions".into(),
+        kind: protocol::PublisherKind::Agent,
+        title: title.into(),
+        status: "idle".into(),
+        reason: None,
+        active: true,
+        work_started_at: None,
+        cwd: None,
+        project: None,
+        native_session: Some("session-x".into()),
+        live_session: None,
+        reported: false,
+    };
+    {
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        pane.runtime.integration = Some(Box::new(protocol::AgentIntegrationReport {
+            integration: "hook-x".into(),
+            identity: protocol::AgentIdentity::new("claude", "Claude Code"),
+            reference: protocol::AgentRef {
+                pane: pane_ref.clone(),
+                slot: None,
+                incarnation: 50,
+            },
+            state: protocol::AgentState::Idle,
+            reason: None,
+            native_session: Some("session-x".into()),
+            unless_quiet: None,
+            seq: 1,
+            reported_at_unix_ms: 10,
+        }));
+        super::super::runtime::publish_rows_for_test(pane, vec![row("Implement parser")]);
+    }
+
+    let request = rig.ask(Some(2), 3, "Fix parser tests");
+    super::super::runtime::replace_pane_rows(rig.server.panes.get_mut(&3).unwrap(), Vec::new());
+
+    let agent = rig
+        .server
+        .agent_runtimes_for(3, &rig.server.panes[&3])
+        .remove(0);
+    assert_eq!(agent.reference.slot, None);
+    assert_eq!(agent.task.as_deref(), Some("Fix parser tests"));
+    assert_eq!(agent.task_updated_at_unix_ms, request.delivered_at_unix_ms);
+
+    // If a row later updates its title after the claim already held a request task, withdrawing
+    // the row must not resurrect that older request task.
+    {
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        super::super::runtime::replace_pane_rows(pane, vec![row("Implement parser")]);
+        super::super::runtime::replace_pane_rows(pane, vec![row("Review parser cleanup")]);
+        super::super::runtime::replace_pane_rows(pane, Vec::new());
+    }
+    let agent = rig
+        .server
+        .agent_runtimes_for(3, &rig.server.panes[&3])
+        .remove(0);
+    assert_eq!(agent.reference.slot, None);
+    assert_eq!(agent.task, None);
+    assert_eq!(agent.task_updated_at_unix_ms, None);
 }
 
 #[test]
@@ -1452,6 +1782,13 @@ fn an_await_answers_once_and_never_holds_up_its_request() {
     };
     assert_eq!(response.code, Some(ControlErrorCode::Conflict));
     assert!(response.error.unwrap().contains(&inbound.id));
+    let incoming = &response.data.unwrap()["incoming"];
+    assert_eq!(incoming["id"], inbound.id);
+    assert_eq!(
+        incoming["from"],
+        serde_json::to_value(rig.agent(3)).unwrap()
+    );
+    assert_eq!(incoming["prompt"], "which version?");
 
     // A script's await ends with its connection; the request carries on.
     assert!(
@@ -1497,7 +1834,9 @@ fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
                 created_at_unix_ms: 0,
                 updated_at_unix_ms: 0,
                 delivered_at_unix_ms: Some(0),
+                no_reply: false,
             },
+            target_agent: "claude".into(),
             depth: 1,
             later: false,
         });

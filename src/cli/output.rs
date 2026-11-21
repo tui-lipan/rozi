@@ -1603,6 +1603,7 @@ fn format_agents_text(data: Option<&serde_json::Value>, styles: OutputStyles) ->
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or("—"),
                 ),
+                TableCell::plain(text("task")),
                 TableCell::plain(text("state")),
                 TableCell::plain(text("reason")),
                 TableCell::plain(
@@ -1625,6 +1626,7 @@ fn format_agents_text(data: Option<&serde_json::Value>, styles: OutputStyles) ->
         &[
             "AGENT",
             "ACTIVITY",
+            "TASK",
             "STATE",
             "REASON",
             "PANE",

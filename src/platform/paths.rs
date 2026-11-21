@@ -49,6 +49,8 @@ pub(crate) fn user_dirs_are_isolated() -> bool {
 /// without a cross-test environment-variable lock.
 #[derive(Clone, Debug, Default)]
 pub struct PlatformEnv {
+    /// Root selected by the `--runtime-dir` startup option and inherited by Rozi children.
+    pub rozi_runtime_dir: Option<PathBuf>,
     /// `$HOME` (Unix/macOS only; ignored on Windows).
     pub home: Option<PathBuf>,
     /// `$XDG_CONFIG_HOME`, only if it was set to a non-empty absolute path.
@@ -88,6 +90,7 @@ impl PlatformEnv {
     /// The real process environment, whatever isolation is in force.
     pub(crate) fn snapshot() -> Self {
         Self {
+            rozi_runtime_dir: env_absolute_path(ROZI_RUNTIME_DIR_ENV),
             home: env_path("HOME"),
             xdg_config_home: env_absolute_path("XDG_CONFIG_HOME"),
             xdg_state_home: env_absolute_path("XDG_STATE_HOME"),
@@ -98,6 +101,27 @@ impl PlatformEnv {
             local_appdata: env_absolute_path("LOCALAPPDATA"),
         }
     }
+}
+
+pub(crate) const ROZI_RUNTIME_DIR_ENV: &str = "ROZI_RUNTIME_DIR";
+
+/// Select an isolated root before starting any work or subprocesses. Children keep the root but
+/// get their own routing variables when Rozi starts them.
+pub(crate) fn select_runtime_dir(path: &std::path::Path) -> io::Result<()> {
+    let root = std::env::current_dir()?.join(path);
+    fs_security::ensure_private_dir(&root)?;
+    let root = root.canonicalize()?;
+    // Called on startup, before any threads have read or captured the process environment.
+    unsafe {
+        for (key, _) in std::env::vars_os() {
+            let name = key.to_string_lossy().to_ascii_uppercase();
+            if name == "ROZI" || name.starts_with("ROZI_") {
+                std::env::remove_var(key);
+            }
+        }
+        std::env::set_var(ROZI_RUNTIME_DIR_ENV, root);
+    }
+    Ok(())
 }
 
 fn env_path(key: &str) -> Option<PathBuf> {
@@ -151,6 +175,9 @@ fn env_absolute_path(key: &str) -> Option<PathBuf> {
 /// Base config directory: `$XDG_CONFIG_HOME/rozi`, else `~/.config/rozi`;
 /// `%APPDATA%\rozi` on Windows.
 pub fn config_dir(env: &PlatformEnv) -> PathBuf {
+    if let Some(root) = &env.rozi_runtime_dir {
+        return root.join("config");
+    }
     if cfg!(windows)
         && let Some(appdata) = &env.appdata
     {
@@ -162,6 +189,9 @@ pub fn config_dir(env: &PlatformEnv) -> PathBuf {
 /// Base state directory: `$XDG_STATE_HOME/rozi`, else `~/.local/state/rozi`;
 /// `%LOCALAPPDATA%\rozi\state` on Windows.
 pub fn state_dir(env: &PlatformEnv) -> PathBuf {
+    if let Some(root) = &env.rozi_runtime_dir {
+        return root.join("state");
+    }
     if cfg!(windows)
         && let Some(local_appdata) = &env.local_appdata
     {
@@ -185,7 +215,9 @@ pub fn state_dir(env: &PlatformEnv) -> PathBuf {
 /// process normally has neither, only `LOCALAPPDATA`, so every new session server exited with "state
 /// directory unavailable" before it was ready.
 pub fn state_dir_if_available(env: &PlatformEnv) -> Option<PathBuf> {
-    let available = if cfg!(windows) {
+    let available = if env.rozi_runtime_dir.is_some() {
+        true
+    } else if cfg!(windows) {
         env.local_appdata.is_some()
     } else {
         env.xdg_state_home.is_some() || env.home.is_some()
@@ -197,6 +229,9 @@ pub fn state_dir_if_available(env: &PlatformEnv) -> Option<PathBuf> {
 /// `%LOCALAPPDATA%\rozi\cache` on Windows.
 ///
 pub fn cache_dir(env: &PlatformEnv) -> PathBuf {
+    if let Some(root) = &env.rozi_runtime_dir {
+        return root.join("cache");
+    }
     if cfg!(windows)
         && let Some(local_appdata) = &env.local_appdata
     {
@@ -219,6 +254,9 @@ pub fn replay_spool_file(env: &PlatformEnv) -> io::Result<fs::File> {
 /// Base data directory used by managed installations: `$XDG_DATA_HOME/rozi`, else
 /// `~/.local/share/rozi`; `%LOCALAPPDATA%\rozi` on Windows.
 pub fn data_dir(env: &PlatformEnv) -> PathBuf {
+    if let Some(root) = &env.rozi_runtime_dir {
+        return root.join("data");
+    }
     if cfg!(windows)
         && let Some(local_appdata) = &env.local_appdata
     {
@@ -381,6 +419,9 @@ pub fn runtime_dir(env: &PlatformEnv) -> io::Result<PathBuf> {
 /// managed installation root. `rozi --help` therefore established the install root before
 /// `rozi install` ever ran, and the installer's own `--help` probe was enough to do it.
 pub fn runtime_dir_path(env: &PlatformEnv) -> PathBuf {
+    if let Some(root) = &env.rozi_runtime_dir {
+        return root.join("run");
+    }
     if cfg!(windows) {
         if let Some(local_appdata) = &env.local_appdata {
             local_appdata.join(APP_DIR).join("run")
@@ -461,6 +502,12 @@ fn fallback_runtime_dir_in(temp_dir: PathBuf, owner: &str) -> PathBuf {
 /// machine-wide path and admits traversal but not listing. It is refused unless this account owns
 /// it and it is a real directory: nothing here repairs a path another account created.
 pub fn ensure_own_shared_dir() -> io::Result<PathBuf> {
+    if PlatformEnv::from_process().rozi_runtime_dir.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "isolated sessions cannot be shared",
+        ));
+    }
     #[cfg(unix)]
     {
         unix_shared_dir::ensure_own_shared_dir()

@@ -214,6 +214,7 @@ fn sweep_orphaned_roots(base: &Path, prefix: &str) {
 pub(crate) fn isolated_env() -> PlatformEnv {
     let root = scratch_root();
     PlatformEnv {
+        rozi_runtime_dir: None,
         home: Some(root.to_path_buf()),
         xdg_config_home: Some(root.join("config")),
         xdg_state_home: Some(root.join("state")),

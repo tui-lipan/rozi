@@ -11,6 +11,7 @@ use rozi::session::protocol::{
 
 fn environment(home: &Path) -> PlatformEnv {
     PlatformEnv {
+        rozi_runtime_dir: None,
         home: Some(home.into()),
         xdg_config_home: Some(home.join("config")),
         xdg_state_home: Some(home.join("state")),

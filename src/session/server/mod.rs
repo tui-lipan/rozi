@@ -2597,7 +2597,7 @@ pub fn run_named_session(name: &str) -> io::Result<()> {
 }
 
 pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
-    run_named_session_mode_with_nonce(name, fresh, None, true)
+    run_named_session_mode_with_nonce(name, fresh, None, true, None)
 }
 
 /// `resurrect: false` keeps this server from ever writing a snapshot, overriding
@@ -2607,6 +2607,7 @@ pub fn run_named_session_mode_with_nonce(
     fresh: bool,
     startup_nonce: Option<String>,
     resurrect: bool,
+    cwd: Option<&str>,
 ) -> io::Result<()> {
     if !crate::session::discovery::valid_attach_target(name) {
         return Err(io::Error::new(
@@ -2682,7 +2683,9 @@ pub fn run_named_session_mode_with_nonce(
     } else {
         Ok(())
     };
-    if let Err(err) = recovered {
+    let started =
+        recovered.and_then(|()| cwd.map_or(Ok(()), |cwd| server.start_detached_shell(cwd)));
+    if let Err(err) = started {
         if let Some(endpoint) = &server.endpoint {
             endpoint.remove_stale();
         }

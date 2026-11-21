@@ -4,7 +4,7 @@
 //! server, expressed without Unix signal APIs or Win32 handles leaking into higher-level modules:
 //!
 //! - [`spawn_detached_server`] - background server spawn during session bootstrap. Unix starts a
-//!   new process session and closes all three stdio streams; Windows additionally passes
+//!   new process session and redirects its stdio streams; Windows additionally passes
 //!   `DETACHED_PROCESS | CREATE_NO_WINDOW` so the server never inherits (or pops up) a console, and
 //!   stops this process's own stdio handles reaching the server by inheritance.
 //! - [`DetachedServer`] - the spawned server's handle. Dropping it never kills the server, but on
@@ -83,6 +83,8 @@ pub struct ServerStart<'a> {
     /// Never write a resurrection snapshot, whatever `[session] resurrect` says. Requires a
     /// `startup_nonce`: only the nonce form of the server command carries it.
     pub no_resurrect: bool,
+    /// Directory for the first shell in a fresh detached server.
+    pub cwd: Option<&'a Path>,
 }
 
 fn spawn_server_child(
@@ -109,7 +111,7 @@ fn spawn_server_child(
     }
     #[cfg(not(windows))]
     {
-        let mut command = base_server_command(exe, name, start);
+        let mut command = base_server_command(exe, name, start)?;
         configure_detached_server(&mut command);
         command.spawn()
     }
@@ -230,7 +232,11 @@ mod reaper {
     }
 }
 
-fn base_server_command(exe: &Path, name: &str, start: ServerStart<'_>) -> std::process::Command {
+fn base_server_command(
+    exe: &Path,
+    name: &str,
+    start: ServerStart<'_>,
+) -> io::Result<std::process::Command> {
     let mut command = std::process::Command::new(exe);
     if let Some(nonce) = start.startup_nonce {
         command
@@ -243,6 +249,9 @@ fn base_server_command(exe: &Path, name: &str, start: ServerStart<'_>) -> std::p
             .arg(nonce);
         if start.no_resurrect {
             command.arg("--no-resurrect");
+        }
+        if let Some(cwd) = start.cwd {
+            command.arg("--cwd").arg(cwd);
         }
     } else {
         debug_assert!(
@@ -262,10 +271,14 @@ fn base_server_command(exe: &Path, name: &str, start: ServerStart<'_>) -> std::p
     // pane it spawns; nothing else it starts should inherit it.
     command
         .env_remove(crate::pane::TERMINAL_MARKER_ENV)
+        .envs(
+            std::env::var_os(super::paths::ROZI_RUNTIME_DIR_ENV)
+                .map(|root| (super::paths::ROZI_RUNTIME_DIR_ENV, root)),
+        )
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    command
+    Ok(command)
 }
 
 #[cfg(unix)]
@@ -412,7 +425,7 @@ fn spawn_server_with_flags(
     flags: u32,
 ) -> io::Result<std::process::Child> {
     use std::os::windows::process::CommandExt;
-    let mut command = base_server_command(exe, name, start);
+    let mut command = base_server_command(exe, name, start)?;
     command.creation_flags(flags);
     command.spawn()
 }
@@ -801,7 +814,8 @@ mod tests {
 
     #[test]
     fn a_session_server_is_never_marked_as_running_in_a_pane() {
-        let command = base_server_command(Path::new("rozi"), "dev", ServerStart::default());
+        let command =
+            base_server_command(Path::new("rozi"), "dev", ServerStart::default()).unwrap();
         assert!(
             command
                 .get_envs()

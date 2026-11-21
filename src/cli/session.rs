@@ -14,10 +14,16 @@ pub(crate) fn run_server_cli(
     fresh: bool,
     startup_nonce: Option<String>,
     resurrect: bool,
+    cwd: Option<&str>,
 ) -> Result<()> {
     let report_nonce = startup_nonce.clone();
-    let result =
-        session::server::run_named_session_mode_with_nonce(name, fresh, startup_nonce, resurrect);
+    let result = session::server::run_named_session_mode_with_nonce(
+        name,
+        fresh,
+        startup_nonce,
+        resurrect,
+        cwd,
+    );
     if let (Some(nonce), Err(error)) = (&report_nonce, &result) {
         session::server::report_startup_error(nonce, &error.to_string());
     }
@@ -251,6 +257,7 @@ pub(crate) fn run_new_detached_session_cli(
     name: &str,
     resurrect: bool,
     remote: Option<&str>,
+    cwd: Option<&str>,
 ) -> Result<()> {
     if session::naming::is_shared_target(name) {
         return Err(std::io::Error::new(
@@ -260,15 +267,36 @@ pub(crate) fn run_new_detached_session_cli(
         .into());
     }
     let Some(remote) = remote else {
-        session::server::create_detached_session(name, resurrect)?;
+        // Same resolution and check as a local `sessions new --cwd`, and before the fresh server
+        // starts: that server deletes a saved snapshot as its first act.
+        let cwd = cwd.map(detached_local_cwd).transpose()?;
+        session::server::create_detached_session(name, resurrect, cwd.as_deref())?;
         return Ok(());
     };
     let target = session::remote::parse_remote_target(remote)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
     let config = crate::config::load_config().config.remote;
-    session::remote::create_remote_detached_session(&target, name, resurrect, &config)
+    session::remote::create_remote_detached_session(&target, name, resurrect, cwd, &config)
         .map_err(std::io::Error::other)?;
     Ok(())
+}
+
+/// Resolve a local detached `--cwd` the way `session::worktrees::host_path` does for a session
+/// opened in this process, and refuse anything that is not a directory.
+fn detached_local_cwd(raw: &str) -> std::io::Result<std::path::PathBuf> {
+    let path = crate::session::worktrees::host_path(raw).map_err(|err| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Invalid --cwd `{raw}`: {err}"),
+        )
+    })?;
+    if !path.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotADirectory,
+            format!("--cwd `{}` is not a directory.", path.display()),
+        ));
+    }
+    Ok(path)
 }
 
 pub(crate) fn run_restart_session_cli(
@@ -438,5 +466,35 @@ mod tests {
         }
         stripped.push_str(rest);
         assert_eq!(stripped, plain);
+    }
+
+    /// A typo or an empty `--cwd` is refused before a fresh server can delete a restorable session.
+    #[test]
+    fn a_bad_detached_cwd_leaves_a_saved_session_in_place() {
+        let name = "bad-detach-cwd";
+        struct Cleanup(&'static str, std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = crate::session::server::shutdown_named_session(self.0);
+                let _ = crate::session::server::delete_snapshot(self.0);
+                let _ = std::fs::remove_file(&self.1);
+            }
+        }
+        let file = std::env::temp_dir().join(format!("rozi-not-a-dir-{}", std::process::id()));
+        let _cleanup = Cleanup(name, file.clone());
+        std::fs::write(&file, b"x").unwrap();
+        crate::session::server::write_empty_snapshot_for_test(name);
+
+        let file_cwd = file.to_str().expect("temp path is unicode");
+        for (cwd, expected) in [("", "cannot be empty"), (file_cwd, "is not a directory")] {
+            let err =
+                run_new_detached_session_cli(name, true, None, Some(cwd)).expect_err("bad cwd");
+            let message = err.to_string();
+            assert!(message.contains(expected), "{cwd:?}: {message}");
+            assert!(
+                crate::session::server::has_snapshot(name),
+                "{cwd:?} discarded the saved session"
+            );
+        }
     }
 }

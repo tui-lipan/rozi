@@ -443,6 +443,7 @@ pub fn create_remote_detached_session(
     target: &RemoteTarget,
     session: &str,
     resurrect: bool,
+    cwd: Option<&str>,
     config: &RemoteConfig,
 ) -> Result<(), String> {
     if !crate::session::discovery::valid_session_name(session) {
@@ -451,6 +452,9 @@ pub fn create_remote_detached_session(
     let mut args = vec!["sessions", "new", session, "--detach"];
     if !resurrect {
         args.push("--no-resurrect");
+    }
+    if let Some(cwd) = cwd {
+        args.extend(["--cwd", cwd]);
     }
     run_remote_sessions_command(target, config, "new", &args).map(|_| ())
 }
@@ -610,7 +614,7 @@ mod tests {
         let target = RemoteTarget::Alias("workbox".to_string());
         let config = RemoteConfig::default();
         for session in ["dev;touch /tmp/pwned", "dev\nnext", "dev\u{1b}[31m"] {
-            let error = create_remote_detached_session(&target, session, true, &config)
+            let error = create_remote_detached_session(&target, session, true, None, &config)
                 .expect_err("hostile session must be rejected before ssh");
             assert_eq!(error, "invalid session name");
         }

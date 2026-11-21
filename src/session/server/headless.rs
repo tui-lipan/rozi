@@ -2129,6 +2129,31 @@ impl SessionServer {
             .collect()
     }
 
+    pub(super) fn start_detached_shell(&mut self, cwd: &str) -> std::io::Result<()> {
+        if !std::path::Path::new(cwd).is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotADirectory,
+                format!("first pane directory `{cwd}` is unavailable"),
+            ));
+        }
+        let mut broadcasts = Vec::new();
+        let response = self.session_new_pane(
+            SessionSpawn {
+                cwd: Some(cwd.to_owned()),
+                ..SessionSpawn::default()
+            },
+            &mut broadcasts,
+        );
+        if !response.ok {
+            return Err(std::io::Error::other(
+                response
+                    .error
+                    .unwrap_or_else(|| "could not start the first pane".into()),
+            ));
+        }
+        Ok(())
+    }
+
     fn session_new_pane(
         &mut self,
         spawn: SessionSpawn,
@@ -2479,6 +2504,7 @@ fn validate_agent_prompt_state(
 }
 
 /// What a headless `split` asked for.
+#[derive(Default)]
 struct SessionSpawn {
     /// Inherited from a verified caller pane; see [`SessionServer::caller_ssh_environment`].
     caller_env: Vec<(String, String)>,

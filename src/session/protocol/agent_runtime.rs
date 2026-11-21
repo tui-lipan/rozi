@@ -468,8 +468,8 @@ pub fn occupant_task(rows: &[PublishedRow], slot: Option<&RowKey>, label: &str) 
     (!title.is_empty() && !title.eq_ignore_ascii_case(label.trim())).then(|| title.to_string())
 }
 
-/// What one published agent row says it is working on, using the same identity label as
-/// [`agent_occupants`].
+/// What one published agent row says it is working on, normalized the same way rows present tasks
+/// so status decoration or agent prefixes do not read as a new task.
 pub fn published_row_task(
     row: &PublishedRow,
     detected_agent: Option<&DetectedAgent>,
@@ -480,8 +480,7 @@ pub fn published_row_task(
     let label = detected_agent
         .map(|detected| detected.agent.label.as_str())
         .unwrap_or_else(|| display_row_label(row));
-    let title = row.title.trim();
-    (!title.is_empty() && !title.eq_ignore_ascii_case(label.trim())).then(|| title.to_string())
+    super::agent_title::task_title(&row.title, label)
 }
 
 fn effective_single_status(

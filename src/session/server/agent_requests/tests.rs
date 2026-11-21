@@ -1479,9 +1479,9 @@ fn a_newer_published_row_title_supersedes_a_delivered_request_task() {
     };
     super::super::runtime::publish_rows_for_test(
         rig.server.panes.get_mut(&3).unwrap(),
-        vec![row("Implement parser", "idle")],
+        vec![row("✳ Implement parser", "idle")],
     );
-    assert_eq!(task(&rig).0.as_deref(), Some("Implement parser"));
+    assert_eq!(task(&rig).0.as_deref(), Some("✳ Implement parser"));
 
     let first = rig.ask(Some(2), 3, "Fix parser tests");
     assert_eq!(
@@ -1489,10 +1489,10 @@ fn a_newer_published_row_title_supersedes_a_delivered_request_task() {
         (Some("Fix parser tests".into()), first.delivered_at_unix_ms)
     );
 
-    // Republishing the row with the same title keeps the delivered request label.
+    // Republishing the row with only status decoration changed keeps the delivered request label.
     super::super::runtime::replace_pane_rows(
         rig.server.panes.get_mut(&3).unwrap(),
-        vec![row("Implement parser", "working")],
+        vec![row("⏺ Implement parser", "working")],
     );
     rig.server.pump_agent_requests();
     assert_eq!(
@@ -1500,15 +1500,15 @@ fn a_newer_published_row_title_supersedes_a_delivered_request_task() {
         (Some("Fix parser tests".into()), first.delivered_at_unix_ms)
     );
 
-    // Updating the row title reports a newer task from the publisher.
+    // Updating the semantic row task reports a newer task from the publisher.
     assert!(rig.reply(3, &first.id, "done").ok);
     super::super::runtime::replace_pane_rows(
         rig.server.panes.get_mut(&3).unwrap(),
-        vec![row("Review parser cleanup", "idle")],
+        vec![row("⏺ Review parser cleanup", "idle")],
     );
     rig.server.pump_agent_requests();
     let (label, updated_at) = task(&rig);
-    assert_eq!(label.as_deref(), Some("Review parser cleanup"));
+    assert_eq!(label.as_deref(), Some("⏺ Review parser cleanup"));
     assert!(updated_at >= first.delivered_at_unix_ms);
 
     // A subsequent delivered request supersedes the publisher title again.

@@ -436,7 +436,7 @@ once with a request id; the answer is collected for you:
 
 ```bash
 id=$(rozi agents ask --target 4 --format json -- "Review the parser changes" | jq -r .id)
-rozi agents await "$id" --timeout 10m
+rozi agents await "$id" --timeout 1h30m
 ```
 
 `--target <PANE>` asks the agent on screen in that pane; `--ref` from `agents list` asks one exact

@@ -1767,22 +1767,10 @@ fn require_png_for_scale(render: control::CaptureRender, scale: Option<u8>) -> R
     Ok(())
 }
 
-/// A duration such as `500ms`, `30s`, or `2m`, in milliseconds. A bare number is seconds.
+/// Parse the duration for a CLI flag, reporting which flag rejected the value.
 pub(super) fn parse_duration_ms(value: &str, flag: &str) -> Result<u64, String> {
-    let (number, multiplier) = if let Some(value) = value.strip_suffix("ms") {
-        (value, 1)
-    } else if let Some(value) = value.strip_suffix('s') {
-        (value, 1_000)
-    } else if let Some(value) = value.strip_suffix('m') {
-        (value, 60_000)
-    } else {
-        (value, 1_000)
-    };
-    number
-        .parse::<u64>()
-        .ok()
-        .and_then(|number| number.checked_mul(multiplier))
-        .ok_or_else(|| format!("{flag} requires a duration such as 30s, 500ms, or 2m"))
+    crate::recording::units::parse_duration_ms(value.strip_prefix('+').unwrap_or(value))
+        .map_err(|_| format!("{flag} requires a duration such as 30s, 6h, or 1h30m"))
 }
 
 /// `--wait-for`, `--settle`, and `--timeout`, which `capture-pane`, `send-text`, and `send-keys`

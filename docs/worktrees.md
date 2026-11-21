@@ -152,8 +152,9 @@ Removal follows these rules:
 - It refuses a locked checkout unless the lock is stale. On a stale lock, the confirming press
   unlocks and removes the checkout. To remove a checkout with any other lock,
   [unlock it](#unlock-a-worktree) first.
-- If Git refuses because the checkout has uncommitted changes, press `Ctrl+K` again to force the
-  removal. Forcing affects only that Git check, never a lock.
+- If the checkout has uncommitted changes or contains ignored files, rozi asks you to confirm again
+  before deleting them. The ignored-file check skips the top-level `target/` and `node_modules/`
+  directories.
 
 In the sidebar's Worktrees tab, the ✕ on a checkout follows the same rules.
 During removal, the checkout shows an animated spinner and `Removing…` in the picker and sidebar
@@ -218,7 +219,7 @@ rozi worktrees exclude                      # add the in-repository worktree dir
 | `list` | Lists checkouts, with `locked` or `stale-lock` in the state column. With `--format json`, prints a `worktrees` array; each entry includes the `sessions` whose recorded origin is that checkout, and a `lock` that is `null` or holds Git's lock `reason` and whether it is `stale`. |
 | `create <BRANCH>` | Checks out an existing local branch, or creates it from `--base` (`HEAD` by default). Without `--path`, uses the default location. Prints the new checkout's path, or a `worktree` object with `--format json`. `--open` then opens it like `open`, and cannot be combined with `--format json`. |
 | `open <CHECKOUT>` | Opens the checkout's session, or creates one. |
-| `remove <CHECKOUT>` | Removes a checkout under the same rules as the picker, except that it refuses every locked checkout, stale or not. `--force` only lets Git remove a dirty checkout. `--delete-branch local`, `remote`, or `local,remote` overrides `[worktrees] delete_branch` for this removal, and `--keep-branch` keeps every branch. Deleted branches are printed; a kept one is reported on stderr. |
+| `remove <CHECKOUT>` | Removes a checkout under the same rules as the picker and refuses every locked checkout, including stale locks. `--force` allows removal of dirty checkouts and ignored files. `--delete-branch local`, `remote`, or `local,remote` overrides `[worktrees] delete_branch` for this removal, and `--keep-branch` keeps every branch. Deleted branches are printed; a kept one is reported on stderr. |
 | `unlock <CHECKOUT>` | Removes the checkout's lock, whether or not the lock is stale. |
 | `exclude [DIR]` | Adds the relative `[worktrees] directory`, or `DIR`, to `.git/info/exclude`. |
 

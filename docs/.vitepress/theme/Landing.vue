@@ -55,9 +55,9 @@ const stats = theme.value.roziFacts;
    instead of a row of small sentences. */
 const facts: [string, string][] = [
   ["7", "layouts"],
-  [String(stats.themes), "themes"],
   [String(stats.commands), "rebindable commands"],
   [String(stats.agents), "agents detected"],
+  [String(stats.hookEvents), "hook events"],
   ["3", "supported platforms"],
 ];
 
@@ -280,7 +280,7 @@ const catalog: {
     link: "/customize",
     linkText: "Customize rozi",
     names: [
-      `${stats.themes} themes`,
+      "built-in themes",
       "system theme",
       "live reload",
       "host terminal colors",
@@ -765,7 +765,7 @@ restart = "on-failure"`);
             </p>
             <a class="lp-more" :href="withBase('/customize')">Customize rozi →</a>
             <a class="lp-more lp-more-next" :href="withBase('/themes')"
-              >{{ stats.themes }} themes →</a
+              >Browse themes →</a
             >
             <!-- Every tab's lines, stacked in one cell so the tallest sets
                  its height and a switch never moves the page. -->

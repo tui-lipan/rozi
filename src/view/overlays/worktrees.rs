@@ -30,9 +30,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
         .filter(|pending| selected.is_some_and(|tree| tree.path == pending.path))
         .map(|pending| pending.kind);
     let (remove_label, confirm) = match armed {
-        Some(PendingWorktreeRemoveKind::Dirty) => {
-            ("force remove", "again to force (dirty checkout)")
-        }
+        Some(PendingWorktreeRemoveKind::Force) => ("force remove", "again to force"),
         Some(PendingWorktreeRemoveKind::StaleLock) => (
             "unlock & remove",
             "again to unlock and remove (lock owner gone)",

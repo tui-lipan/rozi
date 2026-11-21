@@ -97,7 +97,7 @@ fn removal_confirmation_preserves_branch_padding_and_current_marker() {
 
             for kind in [
                 PendingWorktreeRemoveKind::Clean,
-                PendingWorktreeRemoveKind::Dirty,
+                PendingWorktreeRemoveKind::Force,
                 PendingWorktreeRemoveKind::StaleLock,
             ] {
                 let picker = backend.state_mut().worktree_picker.as_mut().unwrap();

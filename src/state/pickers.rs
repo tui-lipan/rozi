@@ -137,8 +137,8 @@ pub struct PendingWorktreeRemove {
 pub enum PendingWorktreeRemoveKind {
     /// The first press on a removable checkout; the next press removes it.
     Clean,
-    /// Git refused a dirty checkout; the next press forces it.
-    Dirty,
+    /// Removal requires force; the next press confirms it.
+    Force,
     /// The checkout's lock is stale; the next press lifts it and removes the checkout.
     StaleLock,
 }

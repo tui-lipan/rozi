@@ -55,9 +55,7 @@ const ROZI_VERSION = (() => {
 
 /**
  * The counts the landing page advertises, taken from the source instead of
- * written down. Same reason as the version above: a theme count typed into a
- * template is a claim nothing checks, and the first person to add a theme has
- * no way of knowing the site disagrees with the binary.
+ * written down. This keeps the landing page in sync with the binary.
  *
  * Every pattern points at a load-bearing constant, and a miss throws rather
  * than falling back to a number - a build that fails naming the file that
@@ -96,13 +94,6 @@ const ROZI_FACTS = (() => {
       read("../../src/agent_detection/builtin.toml"),
       /^\[\[agents\]\]/gm,
       "[[agents]] tables",
-    ),
-    // `ThemePreset::all` includes the hidden ANSI fallback but not the selectable
-    // `system` theme, so those two sides cancel in the public theme total.
-    themes: one(
-      read("../../src/state/appearance.rs"),
-      /impl ThemePreset \{\s*pub fn all\(\) -> \[Self; (\d+)\]/,
-      "the ThemePreset::all length",
     ),
   };
 })();

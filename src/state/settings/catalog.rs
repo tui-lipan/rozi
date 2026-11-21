@@ -19,8 +19,8 @@ use crate::layout::anim::{
 use crate::layout::model::LayoutKind;
 use crate::pane::chrome::PaneBorderMode;
 use crate::state::{
-    AlertMode, AlertPaint, PaneAlertPaint, PaneBorderStyle, badge_cap_styles, cap_style_id,
-    cap_style_label,
+    AlertMode, AlertPaint, PaneAlertPaint, PaneBorderStyle, badge_cap_styles, cap_style_label,
+    named_cap_style_id,
 };
 
 use super::{SettingsAction, SettingsChoiceRing, SettingsTab};
@@ -1531,7 +1531,7 @@ const fn cap_choice(
         choices,
         field,
         cap_style_label,
-        ChoiceSave::Key(key, cap_style_id),
+        ChoiceSave::Key(key, named_cap_style_id),
     )
     .previewed()
 }

@@ -601,13 +601,13 @@ fn workbar_with_caps(
         .state
         .config
         .effective_cap_style(ctx.state.config.pane.workbar_style)
-        .glyphs()
+        .chars()
     else {
         return row;
     };
     let backdrop = ctx.state.theme.surface.backdrop;
-    let cap = |glyph: &'static str, color: Color| {
-        Text::new(glyph)
+    let cap = |glyph: char, color: Color| {
+        Text::new(String::from(glyph))
             .style(
                 Style::new()
                     .fg(color)
@@ -681,7 +681,7 @@ fn workbar_badge(
     };
     // A cap glyph is drawn in the badge color over the color behind it, so the fill it shows is the
     // glyph's foreground. Same-color seams are a contrast glyph over the neighbor's fill and stay put.
-    let glyphs = cap_style.glyphs().is_some();
+    let glyphs = cap_style.chars().is_some();
     let left_cap = glyphs && !same_color && matches!(cap_sides, CapSides::Both | CapSides::Left);
     let right_cap =
         glyphs && (closing.is_some() || matches!(cap_sides, CapSides::Both | CapSides::Right));
@@ -1163,8 +1163,7 @@ fn workspace_tabs(ctx: &Context<AppRoot>) -> DraggableTabBar {
         .state
         .config
         .effective_cap_style(ctx.state.config.pane.workbar_tab_style)
-        .glyphs()
-        .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
+        .chars();
     let fill = workbar_fill(ctx);
 
     super::scrolling_tab_bar(theme, fill)
@@ -1988,7 +1987,7 @@ mod tests {
             config.pane.workbar_badge_style = tui_lipan::prelude::CapStyle::Round;
             config.pane.workbar_powerline = false;
             let (_, right_cap) = tui_lipan::prelude::CapStyle::Round
-                .glyphs()
+                .chars()
                 .expect("round caps");
             let (width, resting) = frame_cells(&mut backend);
             let lift = crate::view::HOVER_LIFT;
@@ -1997,7 +1996,11 @@ mod tests {
                 let (x, y) = find_run(&resting, width, needle).expect("badge label");
                 let cap_x = x + needle.len() as u16;
                 let cap = &resting[y as usize * width as usize + cap_x as usize];
-                assert_eq!(cap.symbol, right_cap, "{needle} badge should end in a cap");
+                assert_eq!(
+                    cap.symbol,
+                    right_cap.to_string(),
+                    "{needle} badge should end in a cap"
+                );
                 let body = cell_bg(&resting, width, x, y);
 
                 hover(&mut backend, x, y);

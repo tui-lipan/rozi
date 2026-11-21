@@ -1327,7 +1327,7 @@ fn load_config_from_text_with_extensions(
         match parse_cap_style(title_style) {
             Some(style) => config.pane.title_style = style,
             None => warnings.push(format!(
-                "Ignored unknown pane.title_style \"{title_style}\" (expected one of: padded, half, round, arrow)"
+                "Ignored unknown pane.title_style \"{title_style}\" (expected one of: padded, half, round, arrow, slant, trapezoid, or two single-width characters)"
             )),
         }
     }

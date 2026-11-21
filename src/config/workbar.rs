@@ -158,7 +158,7 @@ pub(super) fn apply_workbar_style_config(
                 }
             }
             None => warnings.push(format!(
-                "Ignored unknown pane.workbar_badge_style \"{workbar_badge_style}\" (expected one of: padded, round, arrow)"
+                "Ignored unknown pane.workbar_badge_style \"{workbar_badge_style}\" (expected one of: padded, round, arrow, slant, trapezoid, or two single-width characters)"
             )),
         }
     }
@@ -169,7 +169,7 @@ pub(super) fn apply_workbar_style_config(
             )),
             Some(style) => config.workbar_tab_style = style,
             None => warnings.push(format!(
-                "Ignored unknown pane.workbar_tab_style \"{workbar_tab_style}\" (expected one of: padded, round, arrow)"
+                "Ignored unknown pane.workbar_tab_style \"{workbar_tab_style}\" (expected one of: padded, round, arrow, slant, trapezoid, or two single-width characters)"
             )),
         }
     }
@@ -177,7 +177,7 @@ pub(super) fn apply_workbar_style_config(
         match parse_cap_style(workbar_style) {
             Some(style) => config.workbar_style = style,
             None => warnings.push(format!(
-                "Ignored unknown pane.workbar_style \"{workbar_style}\" (expected one of: padded, half, round, arrow)"
+                "Ignored unknown pane.workbar_style \"{workbar_style}\" (expected one of: padded, half, round, arrow, slant, trapezoid, or two single-width characters)"
             )),
         }
     }
@@ -221,7 +221,7 @@ pub(super) fn apply_picker_style_config(
             )),
             Some(style) => config.picker_tab_style = style,
             None => warnings.push(format!(
-                "Ignored unknown pane.picker_tab_style \"{picker_tab_style}\" (expected one of: padded, round, arrow)"
+                "Ignored unknown pane.picker_tab_style \"{picker_tab_style}\" (expected one of: padded, round, arrow, slant, trapezoid, or two single-width characters)"
             )),
         }
     }
@@ -232,7 +232,7 @@ pub(super) fn apply_picker_style_config(
             )),
             Some(style) => config.picker_selection_style = style,
             None => warnings.push(format!(
-                "Ignored unknown pane.picker_selection_style \"{picker_selection_style}\" (expected one of: padded, round, arrow)"
+                "Ignored unknown pane.picker_selection_style \"{picker_selection_style}\" (expected one of: padded, round, arrow, slant, trapezoid, or two single-width characters)"
             )),
         }
     }

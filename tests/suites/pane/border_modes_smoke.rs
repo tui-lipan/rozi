@@ -840,7 +840,8 @@ fn floating_title_caps_clear_underlying_terminal_attributes() {
             backend.state_mut().current_mut().workspaces[0].focused_pane = Some(11);
             backend.render();
             let frame = backend.capture_frame();
-            let (left, right) = caps.glyphs().expect("capped style");
+            let (left, right) = caps.chars().expect("capped style");
+            let (left, right) = (left.to_string(), right.to_string());
             let mut found = 0;
             for y in 3..9 {
                 for x in 7..33 {

@@ -825,7 +825,7 @@ fn keycap_pills(ctx: &Context<AppRoot>, keys: &str, style: Style) -> Vec<Span> {
         .state
         .config
         .effective_cap_style(ctx.state.config.pane.workbar_tab_style)
-        .glyphs();
+        .chars();
     let behind = ctx.state.theme.surface.element;
     let cap_style = Style::new()
         .fg(style.bg.map_or(behind, |bg| bg.color()))
@@ -839,9 +839,9 @@ fn keycap_pills(ctx: &Context<AppRoot>, keys: &str, style: Style) -> Vec<Span> {
         let label = Span::new(keycap_inner(key, caps.is_some())).style(style);
         match caps {
             Some((left, right)) => {
-                spans.push(Span::new(left).style(cap_style));
+                spans.push(Span::new(String::from(left)).style(cap_style));
                 spans.push(label);
-                spans.push(Span::new(right).style(cap_style));
+                spans.push(Span::new(String::from(right)).style(cap_style));
             }
             None => spans.push(label),
         }

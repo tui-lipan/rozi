@@ -528,6 +528,10 @@ pub struct AgentScratch {
     /// The latest rows of each agent publisher waiting for another client's copy of it to stop
     /// speaking for the pane, by qualified publisher. One takes over when that copy goes away.
     standby_rows: HashMap<String, runtime::StandbyPublisher>,
+    /// Stream epoch of each live agent publisher currently in `runtime.rows`, by qualified
+    /// publisher. Distinguishes a lingering stream from a restarted incarnation reusing the same
+    /// publisher ID without withdrawing first.
+    publisher_epochs: HashMap<String, u64>,
     /// The rows a publisher last withdrew, by qualified publisher, until the pane's program changes.
     /// A service closes its stream when its window moves to another session, and the agent runs on:
     /// reporting the same rows on return continues their runs rather than starting new ones.
@@ -589,10 +593,91 @@ pub struct AgentScratch {
     /// The conversation this pane would resume, kept when the published rows that named it were
     /// withdrawn because their window left the session. See [`RetainedResume`].
     pub retained_resume: Option<RetainedResume>,
+    /// Which agent owns the pane's current published agent rows for session restore. See
+    /// [`RowResumeOwner`].
+    pub row_resume: RowResumeOwner,
     /// Which OSC 7501 reports the agent running now made, rather than one launched here before it.
     /// Survives [`Self::reset_detection`](super::AgentScratch::reset_detection) with
     /// [`Self::launches`], since the screen and its records outlive the program behind them.
     pub program_fence: runtime::ProgramFence,
+}
+
+/// Which agent identity owns the pane's current published agent rows for session restore.
+///
+/// Rows can arrive before the first process sweep identifies the agent, so [`Self::Unbound`] lets
+/// that sweep claim them. Once an agent exits, relaunches, or is replaced while those rows linger,
+/// the active/standby publisher incarnations `(publisher, epoch)` become [`Self::Stale`] so a
+/// stale `native_session` cannot be paired with a different agent's resume command until those
+/// incarnations withdraw or are replaced by a newer stream epoch.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum RowResumeOwner {
+    /// No agent has owned the current agent rows yet.
+    #[default]
+    Unbound,
+    /// The current agent rows belong to this agent id.
+    Bound(String),
+    /// Publisher incarnations (`publisher -> epoch`) whose agent rows lingered across an agent
+    /// exit, relaunch, or replacement.
+    Stale(HashMap<String, u64>),
+}
+
+impl RowResumeOwner {
+    fn is_stale(&self, publisher: &str, publisher_epochs: &HashMap<String, u64>) -> bool {
+        let Self::Stale(stale) = self else {
+            return false;
+        };
+        let current = publisher_epochs.get(publisher).copied().unwrap_or(0);
+        stale.get(publisher).is_some_and(|&epoch| epoch == current)
+    }
+
+    /// The first active agent row whose publisher incarnation has not been marked stale by an
+    /// agent exit, relaunch, or replacement.
+    fn active_agent_row<'a>(
+        &self,
+        rows: &'a [protocol::PublishedRow],
+        publisher_epochs: &HashMap<String, u64>,
+    ) -> Option<&'a protocol::PublishedRow> {
+        rows.iter().find(|row| {
+            row.is_agent() && row.active && !self.is_stale(&row.publisher, publisher_epochs)
+        })
+    }
+
+    fn mark_stale(&mut self, publishers: impl IntoIterator<Item = (String, u64)>) {
+        match self {
+            Self::Stale(stale) => stale.extend(publishers),
+            owner => *owner = Self::Stale(publishers.into_iter().collect()),
+        }
+    }
+
+    fn prune_stale(
+        &mut self,
+        rows: &[protocol::PublishedRow],
+        standby: &HashMap<String, runtime::StandbyPublisher>,
+        publisher_epochs: &HashMap<String, u64>,
+        identity: Option<&str>,
+    ) {
+        let Self::Stale(stale) = self else {
+            return;
+        };
+        stale.retain(|publisher, &mut epoch| {
+            let live_same_epoch = rows
+                .iter()
+                .any(|row| row.is_agent() && row.publisher == *publisher)
+                && publisher_epochs.get(publisher).copied().unwrap_or(0) == epoch;
+            let standby_same_epoch = standby
+                .get(publisher)
+                .is_some_and(|entry| entry.epoch == epoch);
+            live_same_epoch || standby_same_epoch
+        });
+        if stale.is_empty() {
+            let has_agent_rows = rows.iter().any(protocol::PublishedRow::is_agent);
+            *self = if has_agent_rows {
+                identity.map_or(Self::Unbound, |id| Self::Bound(id.to_string()))
+            } else {
+                Self::Unbound
+            };
+        }
+    }
 }
 
 /// A native conversation a pane's agent rows named, outliving those rows.

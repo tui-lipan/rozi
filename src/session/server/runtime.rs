@@ -512,10 +512,12 @@ impl AgentScratch {
         let launches = self.launches;
         let program_fence = self.program_fence;
         let retained_resume = self.retained_resume.take();
+        let row_resume = std::mem::take(&mut self.row_resume);
         // A row report belongs to another process than the one detection follows, so a change in
         // what the pane runs says nothing about it.
         let row_reports = std::mem::take(&mut self.row_reports);
         let standby_rows = std::mem::take(&mut self.standby_rows);
+        let publisher_epochs = std::mem::take(&mut self.publisher_epochs);
         *self = Self {
             references,
             next_incarnation,
@@ -524,8 +526,10 @@ impl AgentScratch {
             launches,
             program_fence,
             retained_resume,
+            row_resume,
             row_reports,
             standby_rows,
+            publisher_epochs,
             ..Self::default()
         };
     }
@@ -710,7 +714,10 @@ fn program_report(
         .iter()
         .any(protocol::PublishedRow::is_agent)
     {
-        let row = protocol::active_agent_row(&pane.runtime.rows)?;
+        let row = pane
+            .agent
+            .row_resume
+            .active_agent_row(&pane.runtime.rows, &pane.agent.publisher_epochs)?;
         Some(agent_reporting_session(row)?.to_string())
     } else {
         None
@@ -1329,9 +1336,22 @@ impl SessionServer {
         if publisher.kind == protocol::PublisherKind::Agent {
             if !rows.is_empty() && another_client_speaks(&pane.runtime.rows, &publisher.id) {
                 record_standby_update(pane, publisher, rows);
+                pane.agent.row_resume.prune_stale(
+                    &pane.runtime.rows,
+                    &pane.agent.standby_rows,
+                    &pane.agent.publisher_epochs,
+                    pane.agent.identity.as_deref(),
+                );
                 return Ok(None);
             }
-            pane.agent.standby_rows.remove(&publisher.id);
+            if pane.agent.standby_rows.remove(&publisher.id).is_some() {
+                pane.agent.row_resume.prune_stale(
+                    &pane.runtime.rows,
+                    &pane.agent.standby_rows,
+                    &pane.agent.publisher_epochs,
+                    pane.agent.identity.as_deref(),
+                );
+            }
         }
         // The UI refuses a publisher beyond the limit when its stream opens; this only stops a
         // client that did not.
@@ -1396,7 +1416,30 @@ impl SessionServer {
             }
         }
         let next = splice_publisher_rows(&pane.runtime.rows, &publisher.id, rows);
+        let is_agent_publisher = publisher.kind == protocol::PublisherKind::Agent;
         if next == pane.runtime.rows {
+            if is_agent_publisher {
+                let resume_before = super::resurrect::resume_target(pane);
+                if pane
+                    .runtime
+                    .rows
+                    .iter()
+                    .any(|row| row.is_agent() && row.publisher == publisher.id)
+                {
+                    pane.agent
+                        .publisher_epochs
+                        .insert(publisher.id.clone(), publisher.epoch);
+                    pane.agent.row_resume.prune_stale(
+                        &pane.runtime.rows,
+                        &pane.agent.standby_rows,
+                        &pane.agent.publisher_epochs,
+                        pane.agent.identity.as_deref(),
+                    );
+                }
+                if super::resurrect::resume_target(pane) != resume_before {
+                    self.mark_dirty();
+                }
+            }
             self.store_published_responses(owner, pane_id, &publisher);
             if let Some(promoted) = &promoted {
                 self.store_published_responses(owner, pane_id, promoted);
@@ -1408,6 +1451,20 @@ impl SessionServer {
             .is_none()
             .then(|| events::PaneRuntimeBaseline::capture(&session_instance, pane_id, pane));
         let resume_before = super::resurrect::resume_target(pane);
+        if is_agent_publisher {
+            if let Some(promoted) = &promoted {
+                pane.agent
+                    .publisher_epochs
+                    .insert(promoted.id.clone(), promoted.epoch);
+            } else if next
+                .iter()
+                .any(|row| row.is_agent() && row.publisher == publisher.id)
+            {
+                pane.agent
+                    .publisher_epochs
+                    .insert(publisher.id.clone(), publisher.epoch);
+            }
+        }
         let mut handoffs: Vec<_> = pane
             .agent
             .handoff_detected_row(&pane.runtime, &next)
@@ -1486,6 +1543,12 @@ impl SessionServer {
             pane.agent
                 .standby_rows
                 .retain(|publisher, _| !departs(publisher));
+            pane.agent.row_resume.prune_stale(
+                &pane.runtime.rows,
+                &pane.agent.standby_rows,
+                &pane.agent.publisher_epochs,
+                pane.agent.identity.as_deref(),
+            );
             let mut next: Vec<_> = pane
                 .runtime
                 .rows
@@ -1524,6 +1587,11 @@ impl SessionServer {
             // not its own rows name a conversation.
             let target_before = super::resurrect::resume_target(pane);
             let before = super::resurrect::live_agent_resume(pane);
+            for promoted in &promoted_publishers {
+                pane.agent
+                    .publisher_epochs
+                    .insert(promoted.id.clone(), promoted.epoch);
+            }
             let others_speak = next.iter().any(protocol::PublishedRow::is_agent);
             let pane_handoffs = replace_pane_rows(pane, next);
             handoffs.extend(
@@ -1859,7 +1927,15 @@ impl SessionServer {
             return;
         }
         self.settings.agents = agents;
-        for pane in self.panes.values_mut() {
+        let tracks_snapshot_agents = self.settings.resurrect
+            && self.settings.resurrect_agents != crate::config::RestoreMode::Never;
+        // Captured before clearing `detected_agent`, so a catalog reload that stops recognizing an
+        // agent still dirties a clean snapshot carrying a row-derived resume target.
+        let mut previous_resumes = Vec::new();
+        for (&id, pane) in &mut self.panes {
+            if tracks_snapshot_agents {
+                previous_resumes.push((id, super::resurrect::resume_target(pane)));
+            }
             pane.agent.clear_runtime_identity();
             pane.agent.reset_detection();
             // Whatever is named next was running before this reload; holding back its work as a
@@ -1879,6 +1955,13 @@ impl SessionServer {
             .collect();
         for (id, generation) in panes {
             self.sync_pane_runtime_inner(None, id, generation, true, &mut scan);
+        }
+        if previous_resumes.into_iter().any(|(id, before)| {
+            self.panes
+                .get(&id)
+                .is_some_and(|pane| super::resurrect::resume_target(pane) != before)
+        }) {
+            self.mark_dirty();
         }
     }
 
@@ -1966,6 +2049,8 @@ impl SessionServer {
         let tracks_snapshot = owner.is_none() && self.settings.resurrect;
         let tracks_snapshot_foreground = tracks_snapshot
             && self.settings.resurrect_foreground != crate::config::RestoreMode::Never;
+        let tracks_snapshot_agents =
+            tracks_snapshot && self.settings.resurrect_agents != crate::config::RestoreMode::Never;
         let history_leased = owner.is_none() && self.agent_history.contains_key(&pane_id);
         let Some(pane) = self.pane_mut(owner, pane_id) else {
             return;
@@ -1973,6 +2058,9 @@ impl SessionServer {
         if pane.generation != generation {
             return;
         }
+        // Captured before `compute_pane_runtime`, because a process sweep can invalidate
+        // `row_resume` or clear `retained_resume` even when `pane.runtime` stays equal.
+        let saved_resume = tracks_snapshot_agents.then(|| super::resurrect::resume_target(pane));
         pane.agent.history_frozen = history_leased;
         let inspector = PlatformProcessInspector::default();
         let pane_ref = protocol::PaneRef {
@@ -2013,7 +2101,9 @@ impl SessionServer {
             pane.agent.retained_resume = None;
         }
         if next == pane.runtime {
-            if resume_ended {
+            let snapshot_resume_changed =
+                saved_resume.is_some_and(|saved| saved != super::resurrect::resume_target(pane));
+            if resume_ended || snapshot_resume_changed {
                 self.mark_dirty();
             }
             return;
@@ -2032,6 +2122,8 @@ impl SessionServer {
         pane.agent.observe(before, &next);
         pane.runtime = next.clone();
         let snapshot_cwd_changed = saved_cwd.is_some_and(|saved| saved != pane.spawnable_cwd());
+        let snapshot_resume_changed =
+            saved_resume.is_some_and(|saved| saved != super::resurrect::resume_target(pane));
         let message = self.finish_pane_runtime_change(owner, pane_id, generation, next, baseline);
         if let Some(owner) = owner {
             self.enqueue(owner, Target::Client(owner), message);
@@ -2040,13 +2132,14 @@ impl SessionServer {
         }
         if snapshot_foreground_changed
             || snapshot_cwd_changed
+            || snapshot_resume_changed
             || integration_replaced
             || resume_ended
         {
             // PTY output normally dirties a snapshot first, but the process inspector can learn
-            // the command or its argv after that output has already been persisted. Keep the
-            // metadata change dirty so a later detach or shutdown cannot retain the earlier,
-            // command-less snapshot.
+            // the command, its argv, or the agent identity under already-published rows after that
+            // output has already been persisted. Keep the metadata change dirty so a later detach
+            // or shutdown cannot retain the earlier, incomplete snapshot.
             self.mark_dirty();
         }
         self.resolve_agent_waits();
@@ -2151,20 +2244,22 @@ pub(super) fn derive_detected_agent(
         pane.agent.read = None;
         let blocker = read_screen_blocker(pane, agents);
         let aggregate = crate::session::protocol::aggregate_row_state(&agent_rows);
-        let agent = pane
-            .runtime
-            .detected_agent
-            .as_ref()
-            .map(|previous| previous.agent.clone())
-            .or_else(|| {
-                agents.and_then(|agents| {
-                    pane.agent
-                        .identity
-                        .as_deref()
-                        .and_then(|id| agents.by_id(id))
-                        .map(|definition| definition.identity.clone())
-                })
-            });
+        // Resolve the agent from the process sweep's current identity rather than reusing
+        // `runtime.detected_agent`: rows can arrive before the first sweep runs (for example, in
+        // a detached session), and an agent can exit or change while stale rows still linger.
+        let agent = match agents {
+            Some(agents) => pane
+                .agent
+                .identity
+                .as_deref()
+                .and_then(|id| agents.by_id(id))
+                .map(|definition| definition.identity.clone()),
+            None => pane
+                .runtime
+                .detected_agent
+                .as_ref()
+                .map(|previous| previous.agent.clone()),
+        };
         return agent.zip(aggregate).map(|(agent, state)| DetectedAgent {
             blocker,
             agent,
@@ -2195,6 +2290,7 @@ fn refresh_agent_identity(
     let launched = identity != pane.agent.identity || relaunched;
     if launched {
         pane.agent.withdrawn_rows.clear();
+        update_row_resume_on_launch(pane, identity.as_deref(), relaunched);
         let launch = identity.is_some() && !adopting;
         // A prompt on the command line is a run from the start, loading screen and all.
         pane.agent.launch = (launch && !prompted).then(super::AgentLaunch::default);
@@ -2215,6 +2311,52 @@ fn refresh_agent_identity(
     let anchored = !launched && pane.agent.process.as_ref().is_some_and(|p| p.pid != 0);
     if !anchored {
         pane.agent.process = named.map(|named| named.process);
+    }
+}
+
+/// Bind unclaimed pre-sweep agent rows to the first agent discovered in the pane, or mark
+/// lingering agent-row publishers stale once an agent exits, relaunches, or changes.
+fn update_row_resume_on_launch(
+    pane: &mut ServerPane,
+    next_identity: Option<&str>,
+    relaunched: bool,
+) {
+    let mut publishers: HashMap<String, u64> = pane
+        .runtime
+        .rows
+        .iter()
+        .filter(|row| row.is_agent())
+        .map(|row| {
+            let epoch = pane
+                .agent
+                .publisher_epochs
+                .get(&row.publisher)
+                .copied()
+                .unwrap_or(0);
+            (row.publisher.clone(), epoch)
+        })
+        .collect();
+    for (id, standby) in &pane.agent.standby_rows {
+        publishers.entry(id.clone()).or_insert(standby.epoch);
+    }
+    if publishers.is_empty() {
+        pane.agent.row_resume = super::RowResumeOwner::Unbound;
+        return;
+    }
+    let invalidated = relaunched
+        || pane.agent.identity.is_some()
+        || matches!(
+            &pane.agent.row_resume,
+            super::RowResumeOwner::Bound(bound) if next_identity != Some(bound.as_str())
+        );
+    if invalidated {
+        pane.agent.row_resume.mark_stale(publishers);
+        return;
+    }
+    if matches!(pane.agent.row_resume, super::RowResumeOwner::Unbound)
+        && let Some(id) = next_identity
+    {
+        pane.agent.row_resume = super::RowResumeOwner::Bound(id.to_string());
     }
 }
 
@@ -3056,6 +3198,39 @@ pub(super) fn replace_pane_rows(
     // Live agent rows speak for the pane's conversations again.
     if has_agent_rows {
         pane.agent.retained_resume = None;
+    }
+    pane.agent.publisher_epochs.retain(|publisher, _| {
+        pane.runtime
+            .rows
+            .iter()
+            .any(|row| row.is_agent() && row.publisher == *publisher)
+    });
+    let agent_rows_changed = previous.iter().filter(|row| row.is_agent()).ne(pane
+        .runtime
+        .rows
+        .iter()
+        .filter(|row| row.is_agent()));
+    if agent_rows_changed {
+        match &pane.agent.row_resume {
+            super::RowResumeOwner::Stale(_) => {
+                pane.agent.row_resume.prune_stale(
+                    &pane.runtime.rows,
+                    &pane.agent.standby_rows,
+                    &pane.agent.publisher_epochs,
+                    pane.agent.identity.as_deref(),
+                );
+            }
+            _ => {
+                pane.agent.row_resume = if has_agent_rows {
+                    pane.agent
+                        .identity
+                        .clone()
+                        .map_or(super::RowResumeOwner::Unbound, super::RowResumeOwner::Bound)
+                } else {
+                    super::RowResumeOwner::Unbound
+                };
+            }
+        }
     }
     end_launch_under_a_working_row(pane);
     pane.agent.observe(before, &pane.runtime);
@@ -6451,6 +6626,595 @@ mod tests {
             Some("Usage limit reached · resets 2pm")
         );
         assert_eq!(summaries[1].blocker, None);
+    }
+
+    /// A pane whose agent rows arrive before the first process sweep (such as a client started in
+    /// a detached session) still gains its agent identity once a sweep sees its process, drops it
+    /// if the process later exits under lingering rows, and marks the session snapshot dirty when
+    /// a sweep makes an active row resumable.
+    #[test]
+    fn an_agent_publishing_rows_before_first_sweep_gets_its_identity_and_resume() {
+        use crate::session::protocol::DetectedAgentState;
+
+        let active_row = || crate::session::protocol::PublishedRow {
+            id: "thread-1".into(),
+            title: "Fix restore".into(),
+            status: "working".into(),
+            reason: None,
+            active: true,
+            publisher: "0/publish:sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some("thread-1".into()),
+            live_session: None,
+            reported: false,
+        };
+
+        let mut pane = make_pane();
+        pane.runtime.rows.push(active_row());
+        assert!(pane.runtime.detected_agent.is_none());
+        assert!(super::super::resurrect::live_agent_resume(&pane).is_none());
+
+        let job = agent_job(100, &[(100, "claude")]);
+        pane.runtime.detected_agent = derive_detected_agent(
+            &mut pane,
+            Some(&catalog()),
+            None,
+            Some(&AgentProcessSet::from_foreground_job(&job)),
+            true,
+        );
+        let detected = pane
+            .runtime
+            .detected_agent
+            .as_ref()
+            .expect("sweep identifies the agent even under published rows");
+        assert_eq!(detected.agent.id, "claude");
+        assert_eq!(detected.state, DetectedAgentState::Working);
+
+        let resume = super::super::resurrect::live_agent_resume(&pane)
+            .expect("active row becomes resumable once identity is known");
+        assert_eq!(resume.agent, "claude");
+        assert_eq!(resume.session, "thread-1");
+
+        // If the agent process exits before its publisher withdraws stale rows, the sweep drops
+        // its identity immediately, and a different agent starting before those rows are withdrawn
+        // must not inherit the old agent's native session (whether directly or after an idle sweep).
+        pane.runtime.detected_agent =
+            derive_detected_agent(&mut pane, Some(&catalog()), None, None, true);
+        assert!(pane.runtime.detected_agent.is_none());
+        assert!(super::super::resurrect::live_agent_resume(&pane).is_none());
+
+        let codex = agent_job(200, &[(200, "codex")]);
+        pane.runtime.detected_agent = derive_detected_agent(
+            &mut pane,
+            Some(&catalog()),
+            None,
+            Some(&AgentProcessSet::from_foreground_job(&codex)),
+            true,
+        );
+        assert_eq!(
+            pane.runtime
+                .detected_agent
+                .as_ref()
+                .map(|detected| detected.agent.id.as_str()),
+            Some("codex")
+        );
+        assert!(
+            super::super::resurrect::live_agent_resume(&pane).is_none(),
+            "codex must not inherit claude's stale row after an intervening exit sweep"
+        );
+
+        // Direct agent replacement (Claude -> Codex in one sweep) also invalidates lingering rows
+        // until the stale publisher withdraws them, even if that publisher sends another update.
+        let mut direct = make_pane();
+        let mut claude_row = active_row();
+        claude_row.publisher = "1/claude".into();
+        claude_row.native_session = Some("claude-thread".into());
+        replace_pane_rows(&mut direct, vec![claude_row.clone()]);
+        direct.runtime.detected_agent = derive_detected_agent(
+            &mut direct,
+            Some(&catalog()),
+            None,
+            Some(&AgentProcessSet::from_foreground_job(&job)),
+            true,
+        );
+        assert_eq!(
+            super::super::resurrect::live_agent_resume(&direct)
+                .map(|resume| (resume.agent, resume.session)),
+            Some(("claude".into(), "claude-thread".into()))
+        );
+
+        direct.runtime.detected_agent = derive_detected_agent(
+            &mut direct,
+            Some(&catalog()),
+            None,
+            Some(&AgentProcessSet::from_foreground_job(&codex)),
+            true,
+        );
+        assert_eq!(
+            direct
+                .runtime
+                .detected_agent
+                .as_ref()
+                .map(|detected| detected.agent.id.as_str()),
+            Some("codex")
+        );
+        assert!(
+            super::super::resurrect::live_agent_resume(&direct).is_none(),
+            "direct Claude -> Codex switch must not pair codex with claude's session"
+        );
+
+        // A lingering status update from the stale publisher keeps the row invalid.
+        claude_row.status = "idle".into();
+        replace_pane_rows(&mut direct, vec![claude_row.clone()]);
+        assert!(super::super::resurrect::live_agent_resume(&direct).is_none());
+
+        // A fresh active publisher arriving while the stale publisher is still listed first must
+        // not be masked by the stale row for either resume or OSC 7501 reporting.
+        let mut codex_row = active_row();
+        codex_row.id = "codex-thread".into();
+        codex_row.publisher = "2/codex".into();
+        codex_row.native_session = Some("codex-thread".into());
+        replace_pane_rows(&mut direct, vec![claude_row, codex_row.clone()]);
+        assert_eq!(
+            super::super::resurrect::live_agent_resume(&direct)
+                .map(|resume| (resume.agent, resume.session)),
+            Some(("codex".into(), "codex-thread".into())),
+            "a stale earlier publisher must not mask a later fresh active publisher"
+        );
+        direct.screen_mut().set_program_status_enabled(true);
+        direct
+            .screen_mut()
+            .process_bytes(b"\x1b]7501;state=working:app=codex\x07");
+        let pane_ref = protocol::PaneRef {
+            session_instance: protocol::SessionInstanceId::for_test("dev"),
+            pane_id: 1,
+            generation: direct.generation,
+        };
+        let detected_codex = direct.runtime.detected_agent.clone();
+        let report = program_report(&mut direct, pane_ref, detected_codex.as_ref())
+            .expect("OSC 7501 binds to the fresh active row despite the stale earlier row");
+        assert_eq!(report.native_session.as_deref(), Some("codex-thread"));
+
+        // Withdrawing the stale publisher leaves the fresh publisher resumable as well.
+        replace_pane_rows(&mut direct, vec![codex_row]);
+        assert_eq!(
+            super::super::resurrect::live_agent_resume(&direct)
+                .map(|resume| (resume.agent, resume.session)),
+            Some(("codex".into(), "codex-thread".into()))
+        );
+
+        // When a runtime sweep learns the agent identity under already-published rows, or
+        // invalidates a lingering row on agent replacement, the server marks the snapshot dirty
+        // if agent resurrection is enabled and leaves it clean otherwise.
+        for (resurrect_agents, expects_dirty) in [
+            (crate::config::RestoreMode::Auto, true),
+            (crate::config::RestoreMode::Never, false),
+        ] {
+            let mut server = SessionServer::new_named_with_settings(
+                "dev",
+                ServerSettings {
+                    resurrect: true,
+                    resurrect_foreground: crate::config::RestoreMode::Never,
+                    resurrect_agents,
+                    ..ServerSettings::default()
+                },
+            );
+            let mut pane = make_pane();
+            pane.env.push(("ROZI_AGENT".into(), "claude".into()));
+            pane.agent.adopting = true;
+            pane.runtime.rows.push(active_row());
+            let generation = pane.generation;
+            server.panes.insert(1, pane);
+            server.snapshot_generation = server.dirty_generation;
+
+            let mut scan = LazyProcessScan::default();
+            server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                Some(("claude".into(), "thread-1".into(), false))
+            );
+            assert_eq!(
+                server.snapshot_dirty(),
+                expects_dirty,
+                "resurrect_agents={resurrect_agents:?}"
+            );
+
+            // Switching to Codex while Claude's row lingers drops the resume target and dirties
+            // the snapshot (when agent resurrection is enabled) so the old conversation is cleared.
+            server.snapshot_generation = server.dirty_generation;
+            let pane = server.panes.get_mut(&1).unwrap();
+            pane.env = vec![("ROZI_AGENT".into(), "codex".into())];
+            pane.agent.probe = None;
+            server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                None
+            );
+            assert_eq!(
+                server.snapshot_dirty(),
+                expects_dirty,
+                "agent replacement under lingering rows: resurrect_agents={resurrect_agents:?}"
+            );
+
+            // A fresh OSC 7501 status from the new agent must not borrow the stale row's session
+            // back into a synthesized integration report and reintroduce a resume target.
+            let screen = server.panes.get_mut(&1).unwrap().screen_mut();
+            screen.set_program_status_enabled(true);
+            screen.process_bytes(b"\x1b]7501;state=working:app=codex\x07");
+            server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
+            assert!(
+                server.panes[&1].runtime.integration.is_none(),
+                "OSC 7501 must not bind to a stale row's conversation"
+            );
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                None
+            );
+        }
+
+        // Standby promotion: two windows publish the same Claude conversation before Codex
+        // replaces Claude. When the speaking window detaches, promoting the standby copy must
+        // keep the conversation stale rather than rebinding it to Codex.
+        {
+            let mut server = SessionServer::new_named_with_settings(
+                "dev",
+                ServerSettings {
+                    resurrect: true,
+                    ..ServerSettings::default()
+                },
+            );
+            let mut pane = make_pane();
+            pane.env.push(("ROZI_AGENT".into(), "claude".into()));
+            pane.agent.adopting = true;
+            let generation = pane.generation;
+            server.panes.insert(1, pane);
+
+            let publish = |server: &mut SessionServer, client: ClientId| {
+                let mut row = active_row();
+                row.native_session = Some("claude-thread".into());
+                server
+                    .apply_pane_rows(
+                        client,
+                        None,
+                        1,
+                        generation,
+                        PanePublisher {
+                            id: format!("{client}/sessions"),
+                            epoch: 1,
+                            kind: protocol::PublisherKind::Agent,
+                            responses: Vec::new(),
+                        },
+                        vec![row],
+                    )
+                    .expect("publish succeeds");
+            };
+            publish(&mut server, 1);
+            publish(&mut server, 2);
+            assert!(
+                server.panes[&1]
+                    .agent
+                    .standby_rows
+                    .contains_key("2/sessions")
+            );
+
+            let mut scan = LazyProcessScan::default();
+            server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                Some(("claude".into(), "claude-thread".into(), false))
+            );
+
+            // Codex replaces Claude while both publishers' copies are still alive.
+            let pane = server.panes.get_mut(&1).unwrap();
+            pane.env = vec![("ROZI_AGENT".into(), "codex".into())];
+            pane.agent.probe = None;
+            server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                None
+            );
+
+            // Client 1 detaches and promotes client 2's cached standby row.
+            server.withdraw_client_rows(1);
+            assert_eq!(
+                server.panes[&1]
+                    .runtime
+                    .rows
+                    .first()
+                    .map(|row| row.publisher.as_str()),
+                Some("2/sessions")
+            );
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                None,
+                "promoted standby copy of Claude's row must stay stale under Codex"
+            );
+
+            // Once client 2 also withdraws and a fresh publisher reports Codex's session, resume
+            // works again.
+            server.withdraw_client_rows(2);
+            let mut codex_row = active_row();
+            codex_row.id = "codex-thread".into();
+            codex_row.native_session = Some("codex-thread".into());
+            server
+                .apply_pane_rows(
+                    3,
+                    None,
+                    1,
+                    generation,
+                    PanePublisher {
+                        id: "3/sessions".into(),
+                        epoch: 1,
+                        kind: protocol::PublisherKind::Agent,
+                        responses: Vec::new(),
+                    },
+                    vec![codex_row],
+                )
+                .expect("fresh publish succeeds");
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                Some(("codex".into(), "codex-thread".into(), false))
+            );
+        }
+
+        // Post-replacement standby: client 2 starts publishing fresh Codex rows into standby
+        // *after* Codex replaces Claude while stale client 1 still speaks. When client 1
+        // withdraws and promotes client 2, client 2 must remain fresh and resumable.
+        {
+            let mut server = SessionServer::new_named_with_settings(
+                "dev",
+                ServerSettings {
+                    resurrect: true,
+                    ..ServerSettings::default()
+                },
+            );
+            let mut pane = make_pane();
+            pane.env.push(("ROZI_AGENT".into(), "claude".into()));
+            pane.agent.adopting = true;
+            let generation = pane.generation;
+            server.panes.insert(1, pane);
+
+            let mut claude_row = active_row();
+            claude_row.native_session = Some("claude-thread".into());
+            server
+                .apply_pane_rows(
+                    1,
+                    None,
+                    1,
+                    generation,
+                    PanePublisher {
+                        id: "1/sessions".into(),
+                        epoch: 1,
+                        kind: protocol::PublisherKind::Agent,
+                        responses: Vec::new(),
+                    },
+                    vec![claude_row],
+                )
+                .expect("client 1 publish succeeds");
+
+            let mut scan = LazyProcessScan::default();
+            server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                Some(("claude".into(), "claude-thread".into(), false))
+            );
+
+            // Codex replaces Claude while client 1 still speaks.
+            let pane = server.panes.get_mut(&1).unwrap();
+            pane.env = vec![("ROZI_AGENT".into(), "codex".into())];
+            pane.agent.probe = None;
+            server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                None
+            );
+
+            // Client 2 starts publishing fresh Codex rows into standby after replacement.
+            let mut codex_row = active_row();
+            codex_row.id = "codex-thread".into();
+            codex_row.native_session = Some("codex-thread".into());
+            server
+                .apply_pane_rows(
+                    2,
+                    None,
+                    1,
+                    generation,
+                    PanePublisher {
+                        id: "2/sessions".into(),
+                        epoch: 1,
+                        kind: protocol::PublisherKind::Agent,
+                        responses: Vec::new(),
+                    },
+                    vec![codex_row],
+                )
+                .expect("client 2 standby publish succeeds");
+            assert!(
+                server.panes[&1]
+                    .agent
+                    .standby_rows
+                    .contains_key("2/sessions")
+            );
+
+            // Client 1 withdraws and promotes client 2's fresh post-replacement rows.
+            server.snapshot_generation = server.dirty_generation;
+            server.withdraw_client_rows(1);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                Some(("codex".into(), "codex-thread".into(), false)),
+                "post-replacement standby must stay fresh on promotion"
+            );
+            assert!(server.snapshot_dirty());
+        }
+
+        // Restarted publisher with the same ID and a new stream epoch (without an intermediate
+        // empty update) replaces the stale incarnation and becomes resumable immediately, while a
+        // lingering update on the old epoch stays stale.
+        {
+            let mut server = SessionServer::new_named_with_settings(
+                "dev",
+                ServerSettings {
+                    resurrect: true,
+                    ..ServerSettings::default()
+                },
+            );
+            let mut pane = make_pane();
+            pane.env.push(("ROZI_AGENT".into(), "claude".into()));
+            pane.agent.adopting = true;
+            let generation = pane.generation;
+            server.panes.insert(1, pane);
+
+            let mut claude_row = active_row();
+            claude_row.native_session = Some("claude-thread".into());
+            server
+                .apply_pane_rows(
+                    0,
+                    None,
+                    1,
+                    generation,
+                    PanePublisher {
+                        id: "0/sessions".into(),
+                        epoch: 1,
+                        kind: protocol::PublisherKind::Agent,
+                        responses: Vec::new(),
+                    },
+                    vec![claude_row.clone()],
+                )
+                .expect("epoch 1 publish succeeds");
+
+            let mut scan = LazyProcessScan::default();
+            server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                Some(("claude".into(), "claude-thread".into(), false))
+            );
+
+            // Codex replaces Claude while `0/sessions` epoch 1 is live.
+            let pane = server.panes.get_mut(&1).unwrap();
+            pane.env = vec![("ROZI_AGENT".into(), "codex".into())];
+            pane.agent.probe = None;
+            server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                None
+            );
+
+            // Another update on the same stale epoch (1) stays stale.
+            claude_row.status = "idle".into();
+            server
+                .apply_pane_rows(
+                    0,
+                    None,
+                    1,
+                    generation,
+                    PanePublisher {
+                        id: "0/sessions".into(),
+                        epoch: 1,
+                        kind: protocol::PublisherKind::Agent,
+                        responses: Vec::new(),
+                    },
+                    vec![claude_row],
+                )
+                .expect("lingering epoch 1 update succeeds");
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                None,
+                "updates on the stale stream epoch must stay stale"
+            );
+
+            // A restarted stream reusing `"0/sessions"` with epoch 2 publishes a fresh Codex row
+            // directly without an empty update in between.
+            server.snapshot_generation = server.dirty_generation;
+            let mut codex_row = active_row();
+            codex_row.id = "codex-thread".into();
+            codex_row.native_session = Some("codex-thread".into());
+            server
+                .apply_pane_rows(
+                    0,
+                    None,
+                    1,
+                    generation,
+                    PanePublisher {
+                        id: "0/sessions".into(),
+                        epoch: 2,
+                        kind: protocol::PublisherKind::Agent,
+                        responses: Vec::new(),
+                    },
+                    vec![codex_row],
+                )
+                .expect("epoch 2 publish succeeds");
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                Some(("codex".into(), "codex-thread".into(), false)),
+                "a newer stream epoch for the same publisher ID must clear staleness"
+            );
+            assert!(server.snapshot_dirty());
+        }
+
+        // Catalog reload from a clean snapshot: stopping recognition of an agent erases its
+        // row-derived resume target and must mark the snapshot dirty.
+        {
+            let mut warnings = Vec::new();
+            let definitions = crate::agent_detection::build_definitions(
+                toml::from_str::<toml::Table>(
+                    r#"
+                    [[agents]]
+                    id = "mycoolagent"
+                    label = "My Cool Agent"
+                    match = { names = ["mca"] }
+                    "#,
+                )
+                .expect("parses")
+                .remove("agents")
+                .expect("agents array")
+                .try_into::<Vec<crate::agent_detection::AgentSpec>>()
+                .expect("specs parse"),
+                crate::agent_detection::AgentOrigin::Config,
+                &[],
+                &mut warnings,
+            );
+            assert!(warnings.is_empty(), "{warnings:?}");
+            let mut server = SessionServer::new_named_with_settings(
+                "dev",
+                ServerSettings {
+                    resurrect: true,
+                    resurrect_foreground: crate::config::RestoreMode::Never,
+                    agents: std::sync::Arc::new(
+                        crate::agent_detection::AgentCatalog::with_definitions(definitions),
+                    ),
+                    ..ServerSettings::default()
+                },
+            );
+            let mut pane = make_pane();
+            pane.env.push(("ROZI_AGENT".into(), "mca".into()));
+            pane.agent.adopting = true;
+            pane.runtime.rows.push(active_row());
+            let generation = pane.generation;
+            server.panes.insert(1, pane);
+
+            let mut scan = LazyProcessScan::default();
+            server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                Some(("mycoolagent".into(), "thread-1".into(), false))
+            );
+            server.snapshot_generation = server.dirty_generation;
+            assert!(!server.snapshot_dirty());
+
+            server.apply_agent_definitions(std::sync::Arc::new(
+                crate::agent_detection::AgentCatalog::with_definitions(Vec::new()),
+            ));
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                None
+            );
+            assert!(
+                server.snapshot_dirty(),
+                "erasing a row-derived resume target on catalog reload must dirty a clean snapshot"
+            );
+        }
     }
 
     /// `ROZI_AGENT` names the agent from the pane's environment, so it is named while the shell

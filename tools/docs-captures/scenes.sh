@@ -179,7 +179,7 @@ PROFILE=web scene sidebar-manager "$focus" 4500 "$open_settings; type:sidebar ta
 PROFILE=web scene sidebar-manager-compact 80x24 4500 "$open_settings; type:sidebar tabs; key:enter; wait:500" "$sidebar_visibility"
 PROFILE=web scene sidebar-settings "$focus" 4500 "$open_settings; type:sidebar; wait:400" "$sidebar_visibility"
 PROFILE=web scene sidebar-panels "$focus" 4500 "$open_settings; type:left panels; key:enter; wait:400" "$sidebar_visibility"
-PROFILE=web scene sidebar-startup "$focus" 4500 "$open_settings; type:open sidebars at startup; key:enter; wait:400" "$sidebar_visibility"
+PROFILE=web scene sidebar-startup "$focus" 4500 "$open_settings; type:open at startup; key:enter; wait:400" "$sidebar_visibility"
 PROFILE=web scene sidebar-commands "$focus" 4500 "key:ctrl+a; type:p; wait:300; type:sidebar; wait:400" "$sidebar_visibility"
 PROFILE=web scene sidebar-keys "$focus" 4500 "key:ctrl+a; key:shift+b; type:?; wait:400" "$sidebar_visibility"
 # Focus Right, return to the pane, hide Right, then focus the still-shown Left dock.

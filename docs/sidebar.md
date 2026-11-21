@@ -31,13 +31,13 @@ at a time. They have no default keys; bind them as `toggle-left-sidebar` and
 `toggle-right-sidebar`. The `b` command key hides whichever docks are shown and later brings back
 the same ones.
 
-Both docks start hidden. Turn on **Open sidebars at startup** in Settings to reopen the docks that
+Both docks start hidden. Turn on **Bars › Sidebar › Open at startup** in Settings to reopen the docks that
 were open when you left; `b` brings them back either way.
 
 <CaptureGallery title="Sidebar settings" mode="steps">
-<img src="./assets/captures/sidebar-settings.webp" alt="Settings filtered to the sidebar, with Left panels, Right panels, Open sidebars at startup, and Sidebar tabs entries" data-label="Settings" data-caption="Configure panel counts and startup visibility independently.">
+<img src="./assets/captures/sidebar-settings.webp" alt="Settings filtered to the sidebar, with Left panels, Right panels, Open at startup, and Tabs entries" data-label="Settings" data-caption="Configure panel counts and startup visibility independently.">
 <img src="./assets/captures/sidebar-panels.webp" alt="Left panel count choices: 1 panel, 2 panels, and 3 panels" data-label="Panels" data-caption="Enter applies a panel count; Escape cancels without rearranging the workspace.">
-<img src="./assets/captures/sidebar-startup.webp" alt="Open sidebars at startup disabled in Settings while both docks stay visible" data-label="Startup" data-caption="Disable automatic opening while keeping your remembered sidebars for the next launch.">
+<img src="./assets/captures/sidebar-startup.webp" alt="Open at startup disabled in Settings while both docks stay visible" data-label="Startup" data-caption="Disable automatic opening while keeping your remembered sidebars for the next launch.">
 </CaptureGallery>
 
 Clicking a row runs its action and leaves keyboard focus in the pane.
@@ -414,7 +414,7 @@ rozi remembers which rows you expanded or collapsed until the client exits.
 <img src="./assets/captures/sidebar-manager.webp" alt="The searchable Sidebar tabs picker with symbols and dimmed disabled tabs" data-caption="Enter enables or disables a tab while preserving its placement.">
 </CaptureGallery>
 
-Open **Settings… → Bars → Sidebar tabs…** to choose which tabs appear. Search by name and press
+Open **Settings… → Bars → Tabs…** to choose which tabs appear. Search by name and press
 `Enter` to turn a tab on or off. A tab with [settings](#tab-settings) counts them beside its status,
 as in `Enabled · 5 settings`, and `Ctrl+E` opens them. A tab from an extension that is not loaded
 stays listed with a dash and keeps its place.
@@ -423,7 +423,7 @@ Arrange tabs by dragging them, or with the focused-sidebar keys above. Drop a ta
 panel's body to add it at the end, or on its tab bar to choose its position. A tab you turn off and
 on again returns to where it was.
 
-When extensions provide presets, **Settings… → Bars → Sidebar layout preset…** offers them alongside
+When extensions provide presets, **Settings… → Bars → Layout preset…** offers them alongside
 the default layout.
 
 ```toml

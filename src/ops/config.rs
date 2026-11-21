@@ -202,10 +202,6 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     let had_workbar_tick = ctx.state.config.workbar.has_clock();
     let start_workbar_tick = !had_workbar_tick && new_config.workbar.has_clock();
 
-    // And again for the release check. A changed `interval_hours` needs no kick: the loop reads
-    // the interval each time it reschedules, so the next tick already uses the new one.
-    let had_update_check = ctx.state.config.updates.check;
-
     // `sidebar.startup` is a startup default only. A reload deliberately does not reapply it:
     // visibility is client-local view chrome, so the file must not reach in and open or close a
     // running client's sidebar - not on an unrelated edit, and not on an edit to the key itself.
@@ -238,9 +234,9 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
     crate::ops::command_visibility::forget_retired(&mut ctx.state);
     ctx.state.config = new_config;
     crate::ops::theme::apply_resolved_theme(ctx, resolved.theme);
-    let update_check_interval = (!had_update_check)
-        .then(|| ctx.state.update_check_interval())
-        .flatten();
+    // And again for the release check. A changed `interval_hours` needs no kick: the loop reads
+    // the interval each time it reschedules, so the next tick already uses the new one.
+    let update_check_interval = ctx.state.arm_update_check();
     crate::ops::extensions_manager::config_reloaded(ctx);
     // Agent detection runs in the session server against the server's own config load, so the
     // reload has to be forwarded rather than applied here. Only the controller may: `detected_agent`

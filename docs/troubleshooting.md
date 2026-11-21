@@ -208,7 +208,7 @@ Set your terminal to a Nerd Font, or turn the icons off:
 nerd_icons = false
 ```
 
-The same switch is in Settings › General. The `round` and `arrow` tab styles and sidebar file icons
+The same switch is in Settings › Appearance. The `round` and `arrow` tab styles and sidebar file icons
 also need it. See [Top-level keys](configuration.md#top-level-keys).
 
 ### New panes don't open in my current directory

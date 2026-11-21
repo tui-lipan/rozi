@@ -806,7 +806,7 @@ removal, and reinstallation. Unavailable tabs remain listed in **Sidebar tabs…
 Extensions may also declare `[[sidebar_presets]]` with `name`, `label`, and `layout`. The layout uses
 the same `left`, `right`, and `hidden` fields as `[sidebar] layout`. Names of this extension's tabs
 are automatically namespaced inside panel tab lists. Preset names become `<extension>.<name>`.
-Users select and apply a preset through **Settings… → Bars → Sidebar layout preset…**; installing
+Users select and apply a preset through **Settings… → Bars → Layout preset…**; installing
 or reloading an extension never applies one. Applying copies the preset into user preferences, preserving saved
 assignments omitted by the preset. Presets leave client visibility and startup preferences unchanged.
 Later edits belong to the user.

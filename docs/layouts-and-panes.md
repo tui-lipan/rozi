@@ -145,7 +145,7 @@ the old one returns to its place.
 
 ## Pane open and close animation styles
 
-Set `[animations].pane_open_style` and `pane_close_style`, or use **General › Animations ›
+Set `[animations].pane_open_style` and `pane_close_style`, or use **Motion › Animations ›
 Pane open** and **Pane close** in Settings, to choose how panes appear and disappear independently.
 
 | Style | Effect |
@@ -209,7 +209,7 @@ See [Configuration](configuration.md#pane).
 ## Dim unfocused panes
 
 To make the focused pane stand out, fade the content of the others toward the canvas. Set
-**Panes › Background › Unfocused dim** in Settings as a percentage, or set the same amount as a
+**Appearance › Background › Unfocused dim** in Settings as a percentage, or set the same amount as a
 fraction:
 
 ```toml
@@ -252,7 +252,7 @@ right and lower-numbered ones from the left. Jumping several workspaces shows on
 the destination. The workbar, sidebar, and overlays stay still, and pane sizes do not change during
 the slide.
 
-To turn the slide off, use **General › Animations › Workspace switching** in Settings, or set
+To turn the slide off, use **Motion › Animations › Workspace switching** in Settings, or set
 `[animations] workspace = false`. `workspace_ms` sets the duration (default 220 ms). The master
 `[animations] enabled` switch also turns it off.
 

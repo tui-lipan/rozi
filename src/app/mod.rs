@@ -370,7 +370,10 @@ impl Component for AppRoot {
         ops::drag_and_drop::sync(ctx);
         let tasks = StartupTasks {
             enabled: self.startup_tasks,
-            update_check_interval: ctx.state.update_check_interval(),
+            update_check_interval: self
+                .startup_tasks
+                .then(|| ctx.state.arm_update_check())
+                .flatten(),
             count_usage: ctx.state.usage_count_enabled(),
             watch_hangup: self.watch_hangup,
             control_listener: self.control_listener.take(),

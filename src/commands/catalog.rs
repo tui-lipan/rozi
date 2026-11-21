@@ -629,7 +629,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     },
     BuiltinCommand {
         action: Action::OpenAppearance,
-        label: "Change appearance…",
+        label: "Appearance…",
         category: "Settings",
         default_keys: &[],
         palette: false,

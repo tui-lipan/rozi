@@ -31,11 +31,12 @@ Settings is divided into categories:
 
 | Category | Contains |
 | --- | --- |
-| General | Theme, cursor blink, nerd icons, which-key, focus on hover, scroll multiplier, animations, clipboard, and pickers |
-| Panes | Background, borders, and titlebar |
+| Appearance | Theme, nerd icons, pane background, borders, and titlebar, and picker chrome |
 | Bars | Workbar and sidebar |
-| Alerts | Pane border and workspace tab effects, workspace markers, desktop notifications, and sounds |
-| Sessions | Startup, layout autosave, resurrection, and commands and agents after restart |
+| Motion | Animations and the cursor trail |
+| Input | Mouse pointer, which-key, focus on hover, scroll multiplier, cursor blink, and clipboard |
+| Alerts | Pane and workspace tab effects, workspace markers, desktop notifications, and sounds |
+| Sessions | Startup, resurrection, default layout, confirmations, and updates |
 | All | Every setting |
 
 To change a setting:
@@ -45,7 +46,7 @@ To change a setting:
    group, and highlights it. Select a setting with `Up` and `Down`.
 2. Press `Enter`. A setting with two values toggles. A setting with more values shows `…` after its
    label and opens a list of them.
-3. Move through the list. Static appearance choices, such as borders and tab styles, preview live
+3. Move through the list. Static appearance choices, such as borders and tab shapes, preview live
    behind the picker. Animation, alert, clipboard, input, and session behavior choices apply only
    when confirmed.
 4. Press `Enter` to apply and save the highlighted value, or `Esc` to cancel and undo any preview.
@@ -138,7 +139,7 @@ The `m` command key cycles the current workspace through the layouts. A
 
 ## Shape the panes
 
-Most of rozi's look comes from a handful of `[pane]` keys. All of them are in **Settings › Panes**.
+Most of rozi's look comes from a handful of `[pane]` keys. All of them are in **Settings › Appearance**.
 
 ### Borders
 
@@ -240,7 +241,7 @@ You can add your own sidebar tabs that launch commands or list a command's outpu
 
 rozi animates panes opening and closing, workspace and session switches, toasts, and focus
 changes, and can draw a trail behind the cursor when it jumps. The master switch turns everything
-off at once; **Settings › General › Animations** holds the same controls.
+off at once; **Settings › Motion** holds the same controls.
 
 ```toml
 [animations]
@@ -259,7 +260,7 @@ style = "smear"         # smear, sparks, or tint
 The cursor trail smears the cursor from where it was to where it lands, and snaps it back into
 place. `"focus"` draws it when you move to another pane or a prompt; `"jump"` also draws it when
 the cursor jumps far inside one pane, for example to another line in an editor. It is off by
-default; **Settings › General › Cursor** holds it next to cursor blinking. Its spring settings work
+default; **Settings › Motion › Cursor trail** holds it. Its spring settings work
 like smear-cursor.nvim's; see [Cursor trail](configuration.md#cursor-trail) for every setting. If
 your editor or terminal draws its own cursor trail, leave this off to avoid two trails.
 

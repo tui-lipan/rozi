@@ -16,6 +16,7 @@ use crate::layout::anim::{
     CursorTrailMode, CursorTrailStyle, PaneAnimationStyle, PickerAnimationStyle,
     SessionAnimationStyle, ToastAnimationStyle,
 };
+use crate::layout::model::LayoutKind;
 use crate::pane::chrome::PaneBorderMode;
 use crate::state::{
     AlertMode, AlertPaint, PaneAlertPaint, PaneBorderStyle, badge_cap_styles, cap_style_id,
@@ -24,62 +25,76 @@ use crate::state::{
 
 use super::{SettingsAction, SettingsChoiceRing, SettingsTab};
 
-/// A titled run of Settings rows, browsed under one tab.
+/// A titled run of Settings rows, browsed under one tab. A group named like its tab opens the tab
+/// without a heading of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SettingsGroup {
-    General,
-    Cursor,
-    Animations,
-    Clipboard,
-    Pickers,
+    Appearance,
     Background,
     Borders,
     Titlebar,
+    Pickers,
     Workbar,
     Sidebar,
+    Animations,
+    CursorTrail,
+    Input,
+    Clipboard,
     Alerts,
     Highlights,
-    Marks,
+    WorkspaceMarkers,
     DesktopNotifications,
     Sounds,
     Sessions,
+    Workspaces,
+    Confirmations,
+    Updates,
 }
 
 impl SettingsGroup {
     pub const fn label(self) -> &'static str {
         match self {
-            Self::General => "General",
-            Self::Cursor => "Cursor",
-            Self::Animations => "Animations",
-            Self::Clipboard => "Clipboard",
-            Self::Pickers => "Pickers",
+            Self::Appearance => "Appearance",
             Self::Background => "Background",
             Self::Borders => "Borders",
             Self::Titlebar => "Titlebar",
+            Self::Pickers => "Pickers",
             Self::Workbar => "Workbar",
             Self::Sidebar => "Sidebar",
+            Self::Animations => "Animations",
+            Self::CursorTrail => "Cursor trail",
+            Self::Input => "Input",
+            Self::Clipboard => "Clipboard",
             Self::Alerts => "Alerts",
             Self::Highlights => "Highlights",
-            Self::Marks => "Marks",
+            Self::WorkspaceMarkers => "Workspace markers",
             Self::DesktopNotifications => "Desktop notifications",
             Self::Sounds => "Sounds",
             Self::Sessions => "Sessions",
+            Self::Workspaces => "Workspaces",
+            Self::Confirmations => "Confirmations",
+            Self::Updates => "Updates",
         }
     }
 
     pub const fn tab(self) -> SettingsTab {
         match self {
-            Self::General | Self::Cursor | Self::Animations | Self::Clipboard | Self::Pickers => {
-                SettingsTab::General
-            }
-            Self::Background | Self::Borders | Self::Titlebar => SettingsTab::Panes,
+            Self::Appearance
+            | Self::Background
+            | Self::Borders
+            | Self::Titlebar
+            | Self::Pickers => SettingsTab::Appearance,
             Self::Workbar | Self::Sidebar => SettingsTab::Bars,
+            Self::Animations | Self::CursorTrail => SettingsTab::Motion,
+            Self::Input | Self::Clipboard => SettingsTab::Input,
             Self::Alerts
             | Self::Highlights
-            | Self::Marks
+            | Self::WorkspaceMarkers
             | Self::DesktopNotifications
             | Self::Sounds => SettingsTab::Alerts,
-            Self::Sessions => SettingsTab::Sessions,
+            Self::Sessions | Self::Workspaces | Self::Confirmations | Self::Updates => {
+                SettingsTab::Sessions
+            }
         }
     }
 }
@@ -162,6 +177,8 @@ pub enum SettingEffect {
     WhichKeyDelay,
     /// The session servers' sleep inhibition, which they read from the saved file.
     SleepPolicy,
+    /// The release check, which has to be armed again when it is turned back on.
+    UpdateCheck,
 }
 
 impl SettingEffect {
@@ -342,6 +359,10 @@ fn save_pane_animation_styles(config: &Config) -> Result<PathBuf, String> {
     )
 }
 
+fn save_default_layout(config: &Config) -> Result<PathBuf, String> {
+    crate::config::persist_layout_default(config.layout.default)
+}
+
 fn pane_alert_status(config: &Config) -> String {
     let animations = &config.animations;
     config
@@ -370,30 +391,17 @@ pub static SETTINGS: &[SettingSpec] = {
     use SettingsGroup as G;
 
     &[
-        // General
+        // Appearance: the theme and the glyphs everything is drawn with.
         row(
             Theme,
-            G::General,
+            G::Appearance,
             "Theme",
             &["color scheme", "colour scheme"],
             Custom,
         ),
         row(
-            CycleMousePointer,
-            G::General,
-            "Mouse pointer",
-            &["cursor", "hover", "hand", "resize", "OSC 22", "pane apps"],
-            Choice(&EnumChoice::new(
-                "Mouse pointer",
-                Choices::Fixed(MousePointer::all),
-                config_field!(cursor.pointer),
-                MousePointer::label,
-                ChoiceSave::Key(ConfigKey::new("cursor", "pointer"), MousePointer::id),
-            )),
-        ),
-        row(
             ToggleNerdIcons,
-            G::General,
+            G::Appearance,
             "Nerd icons",
             &["nerd font", "patched font", "glyphs"],
             ActionToggle {
@@ -401,83 +409,346 @@ pub static SETTINGS: &[SettingSpec] = {
                 action: Action::ToggleNerdIcons,
             },
         ),
+        // Panes: background
         row(
-            CycleWhichKey,
-            G::General,
-            "Which-key",
-            &["prefix hints", "key hints", "chord panel"],
-            Choice(
-                &EnumChoice::new(
-                    "Which-key",
-                    Choices::Fixed(WhichKey::all),
-                    config_field!(input.which_key),
-                    WhichKey::label,
-                    ChoiceSave::Key(ConfigKey::new("input", "which_key"), WhichKey::id),
-                )
-                .with_effect(SettingEffect::WhichKeyDelay),
-            ),
-        ),
-        row(
-            ToggleFocusOnHover,
-            G::General,
-            "Focus on hover",
-            &["mouse"],
+            ToggleBackgroundFollowsTerminal,
+            G::Background,
+            "Follows terminal",
+            &["match terminal"],
             ActionToggle {
-                value: |config| config.pane.focus_on_hover,
-                action: Action::ToggleFocusOnHover,
+                value: |config| config.pane.background_follows_terminal,
+                action: Action::ToggleBackgroundFollowsTerminal,
             },
         ),
         row(
-            EditScrollMultiplier,
-            G::General,
-            "Scroll multiplier",
-            &["mouse", "wheel", "scrollback", "scroll speed"],
+            ToggleHighlightFocusedBackground,
+            G::Background,
+            "Highlight focused",
+            &["active", "highlight"],
+            ActionToggle {
+                value: |config| config.pane.highlight_focused_background,
+                action: Action::ToggleHighlightFocusedBackground,
+            },
+        ),
+        row(
+            EditPadding,
+            G::Background,
+            "Terminal padding",
+            &["margins", "insets", "spacing"],
             Custom,
         ),
-        // The text cursor: how it blinks and the trail that follows it.
         row(
-            CycleCursorBlink,
-            G::Cursor,
-            "Blink",
-            &["caret", "steady", "static", "blinking", "inherit"],
-            Choice(&EnumChoice::new(
-                "Cursor blink",
-                Choices::Fixed(CursorBlink::all),
-                config_field!(cursor.blink),
-                CursorBlink::label,
-                ChoiceSave::Key(ConfigKey::new("cursor", "blink"), CursorBlink::id),
+            EditUnfocusedDim,
+            G::Background,
+            "Unfocused dim",
+            &["inactive", "fade", "focus", "opacity"],
+            Custom,
+        ),
+        // Panes: borders
+        row(
+            CycleBorderMode,
+            G::Borders,
+            "Mode",
+            &["merge", "borderless", "dividers"],
+            Choice(
+                &EnumChoice::new(
+                    "Border mode",
+                    Choices::Fixed(PaneBorderMode::all),
+                    config_field!(pane.border_mode),
+                    PaneBorderMode::label,
+                    ChoiceSave::Key(ConfigKey::new("pane", "border_mode"), PaneBorderMode::id),
+                )
+                .previewed(),
+            ),
+        ),
+        row(
+            CycleBorderStyle,
+            G::Borders,
+            "Style",
+            &["tiled", "rounded", "square", "dashed"],
+            Choice(&border_choice(
+                "Border style",
+                config_field!(pane.border_style),
+                "border_style",
             )),
         ),
         row(
-            CycleCursorTrailAnimation,
-            G::Cursor,
-            "Trail",
-            &["smear", "animation", "focus", "jump"],
-            Choice(&EnumChoice::new(
-                "Cursor trail",
-                Choices::Fixed(CursorTrailMode::all),
-                config_field!(animations.cursor_trail.mode),
-                CursorTrailMode::label,
-                ChoiceSave::Key(
-                    ConfigKey::new("animations.cursor_trail", "mode"),
-                    CursorTrailMode::id,
-                ),
+            ToggleHighlightFocusedBorder,
+            G::Borders,
+            "Highlight focused",
+            &["active", "highlight"],
+            ActionToggle {
+                value: |config| config.pane.highlight_focused_border,
+                action: Action::ToggleHighlightFocusedBorder,
+            },
+        ),
+        row(
+            CycleFloatBorderStyle,
+            G::Borders,
+            "Floating",
+            &["float", "popup"],
+            Choice(&border_choice(
+                "Floating border",
+                config_field!(pane.float_border_style),
+                "float_border_style",
             )),
         ),
         row(
-            CycleCursorTrailStyle,
-            G::Cursor,
-            "Trail style",
-            &["smear", "tint", "sparks", "particles"],
-            Choice(&EnumChoice::new(
-                "Cursor trail style",
-                Choices::Fixed(CursorTrailStyle::all),
-                config_field!(animations.cursor_trail.style),
-                CursorTrailStyle::label,
-                ChoiceSave::Key(
-                    ConfigKey::new("animations.cursor_trail", "style"),
-                    CursorTrailStyle::id,
-                ),
+            CycleScratchBorderStyle,
+            G::Borders,
+            "Scratchpad",
+            &["scratch", "dropdown"],
+            Choice(&border_choice(
+                "Scratchpad border",
+                config_field!(pane.scratch_border_style),
+                "scratch_border_style",
+            )),
+        ),
+        row(
+            CycleFullscreenBorderStyle,
+            G::Borders,
+            "Fullscreen",
+            &["full screen", "maximized", "maximised"],
+            Choice(&border_choice(
+                "Fullscreen border",
+                config_field!(pane.fullscreen_border_style),
+                "fullscreen_border_style",
+            )),
+        ),
+        // Panes: titlebar
+        row(
+            ChooseTitlebar,
+            G::Titlebar,
+            "Layout",
+            &["title bar", "show titles", "integrated", "inset"],
+            Custom,
+        ),
+        row(
+            CycleTitleStyle,
+            G::Titlebar,
+            "Shape",
+            &["caps", "style", "pill"],
+            Choice(&cap_choice(
+                "Titlebar shape",
+                Choices::Fixed(CapStyle::all),
+                config_field!(pane.title_style),
+                ConfigKey::new("pane", "title_style"),
+            )),
+        ),
+        row(
+            ToggleHighlightFocusedTitlebar,
+            G::Titlebar,
+            "Highlight focused",
+            &["active", "highlight"],
+            ActionToggle {
+                value: |config| config.pane.highlight_focused_titlebar,
+                action: Action::ToggleHighlightFocusedTitlebar,
+            },
+        ),
+        // Pickers
+        row(
+            CyclePickerBorderStyle,
+            G::Pickers,
+            "Border",
+            &["palette", "modal", "overlay"],
+            Choice(
+                &EnumChoice::new(
+                    "Picker border",
+                    Choices::Fixed(PaneBorderStyle::all),
+                    config_field!(pane.picker_border_style),
+                    PaneBorderStyle::label,
+                    ChoiceSave::Key(
+                        ConfigKey::new("pane", "picker_border_style"),
+                        PaneBorderStyle::id,
+                    ),
+                )
+                .previewed(),
+            ),
+        ),
+        row(
+            TogglePickerTabBackground,
+            G::Pickers,
+            "Tab bar fill",
+            &["palette", "tab strip", "tab bar", "background"],
+            ActionToggle {
+                value: |config| config.pane.picker_tab_background,
+                action: Action::TogglePickerTabBackground,
+            },
+        ),
+        row(
+            CyclePickerTabStyle,
+            G::Pickers,
+            "Tab shape",
+            &["palette", "caps", "style"],
+            Choice(&cap_choice(
+                "Picker tab shape",
+                Choices::Fixed(badge_cap_styles),
+                config_field!(pane.picker_tab_style),
+                ConfigKey::new("pane", "picker_tab_style"),
+            )),
+        ),
+        row(
+            CyclePickerSelectionStyle,
+            G::Pickers,
+            "Selection shape",
+            &["palette", "highlight", "caps", "style", "pill"],
+            Choice(&cap_choice(
+                "Picker selection shape",
+                Choices::Fixed(badge_cap_styles),
+                config_field!(pane.picker_selection_style),
+                ConfigKey::new("pane", "picker_selection_style"),
+            )),
+        ),
+        // Workbar. Position comes first: hiding the bar greys out the rows below it.
+        row(
+            ChooseWorkbar,
+            G::Workbar,
+            "Position",
+            &["show", "hide", "top", "bottom"],
+            Custom,
+        ),
+        row(
+            ToggleWorkbarGap,
+            G::Workbar,
+            "Gap",
+            &["spacing"],
+            ActionToggle {
+                value: |config| config.pane.workbar_gap,
+                action: Action::ToggleWorkbarGap,
+            },
+        ),
+        row(
+            ToggleWorkbarBackground,
+            G::Workbar,
+            "Bar fill",
+            &["strip", "background"],
+            ActionToggle {
+                value: |config| config.pane.workbar_background,
+                action: Action::ToggleWorkbarBackground,
+            },
+        ),
+        row(
+            CycleWorkbarStyle,
+            G::Workbar,
+            "Bar shape",
+            &["caps", "style", "pill"],
+            Choice(&cap_choice(
+                "Workbar shape",
+                Choices::Fixed(CapStyle::all),
+                config_field!(pane.workbar_style),
+                ConfigKey::new("pane", "workbar_style"),
+            )),
+        ),
+        row(
+            CycleWorkbarBadgeStyle,
+            G::Workbar,
+            "Badge shape",
+            &["badges", "chips", "caps", "style"],
+            Choice(&cap_choice(
+                "Workbar badge shape",
+                Choices::Fixed(badge_cap_styles),
+                config_field!(pane.workbar_badge_style),
+                ConfigKey::new("pane", "workbar_badge_style"),
+            )),
+        ),
+        row(
+            CycleWorkbarTabStyle,
+            G::Workbar,
+            "Tab shape",
+            &["workspace tabs", "caps", "style"],
+            Choice(&cap_choice(
+                "Workbar tab shape",
+                Choices::Fixed(badge_cap_styles),
+                config_field!(pane.workbar_tab_style),
+                ConfigKey::new("pane", "workbar_tab_style"),
+            )),
+        ),
+        row(
+            ToggleWorkbarPowerline,
+            G::Workbar,
+            "Powerline",
+            &["badge chain"],
+            ActionToggle {
+                value: |config| config.pane.workbar_powerline,
+                action: Action::ToggleWorkbarPowerline,
+            },
+        ),
+        // Sidebar
+        row(
+            LeftSidebarPanels,
+            G::Sidebar,
+            "Left panels",
+            &["sidebar", "panels", "dock"],
+            Custom,
+        ),
+        row(
+            RightSidebarPanels,
+            G::Sidebar,
+            "Right panels",
+            &["sidebar", "panels", "dock"],
+            Custom,
+        ),
+        row(
+            ToggleSidebarStartup,
+            G::Sidebar,
+            "Open at startup",
+            &["sidebar", "startup", "launch", "visibility"],
+            Custom,
+        ),
+        row(
+            SidebarTabs,
+            G::Sidebar,
+            "Tabs",
+            &["sidebar", "tabs", "visibility"],
+            Custom,
+        ),
+        row(
+            SidebarLayoutPreset,
+            G::Sidebar,
+            "Layout preset",
+            &["sidebar", "layout", "preset"],
+            Custom,
+        ),
+        row(
+            ToggleSidebarBackgroundFollowsCanvas,
+            G::Sidebar,
+            "Follows canvas",
+            &["match canvas", "app background"],
+            ActionToggle {
+                value: |config| config.sidebar.background_follows_canvas,
+                action: Action::ToggleSidebarBackgroundFollowsCanvas,
+            },
+        ),
+        row(
+            ToggleSidebarGap,
+            G::Sidebar,
+            "Gap",
+            &["spacing"],
+            ActionToggle {
+                value: |config| config.sidebar.gap,
+                action: Action::ToggleSidebarGap,
+            },
+        ),
+        row(
+            ToggleSidebarBackground,
+            G::Sidebar,
+            "Tab bar fill",
+            &["tab strip", "background", "tab bar"],
+            ActionToggle {
+                value: |config| config.sidebar.background,
+                action: Action::ToggleSidebarBackground,
+            },
+        ),
+        row(
+            CycleSidebarTabStyle,
+            G::Sidebar,
+            "Tab shape",
+            &["caps", "style"],
+            Choice(&cap_choice(
+                "Sidebar tab shape",
+                Choices::Fixed(badge_cap_styles),
+                config_field!(sidebar.tab_style),
+                ConfigKey::new("sidebar", "tab_style"),
             )),
         ),
         // Every motion control in one place, the master switch first: the rows below it grey out
@@ -522,7 +793,7 @@ pub static SETTINGS: &[SettingSpec] = {
         row(
             CyclePickerAnimation,
             G::Animations,
-            "Pickers",
+            "Picker transitions",
             &["palette", "modal", "fade", "portal", "scan"],
             Choice(&EnumChoice::new(
                 "Picker animation",
@@ -586,6 +857,99 @@ pub static SETTINGS: &[SettingSpec] = {
                 config_field!(animations.pane_close_style),
                 PaneAnimationStyle::label,
                 ChoiceSave::With(save_pane_animation_styles),
+            )),
+        ),
+        // The cursor trail, which also answers to the animation switch.
+        row(
+            CycleCursorTrailAnimation,
+            G::CursorTrail,
+            "Mode",
+            &["smear", "trail", "animation", "focus", "jump"],
+            Choice(&EnumChoice::new(
+                "Cursor trail",
+                Choices::Fixed(CursorTrailMode::all),
+                config_field!(animations.cursor_trail.mode),
+                CursorTrailMode::label,
+                ChoiceSave::Key(
+                    ConfigKey::new("animations.cursor_trail", "mode"),
+                    CursorTrailMode::id,
+                ),
+            )),
+        ),
+        row(
+            CycleCursorTrailStyle,
+            G::CursorTrail,
+            "Style",
+            &["smear", "trail", "tint", "sparks", "particles"],
+            Choice(&EnumChoice::new(
+                "Cursor trail style",
+                Choices::Fixed(CursorTrailStyle::all),
+                config_field!(animations.cursor_trail.style),
+                CursorTrailStyle::label,
+                ChoiceSave::Key(
+                    ConfigKey::new("animations.cursor_trail", "style"),
+                    CursorTrailStyle::id,
+                ),
+            )),
+        ),
+        // Input: the pointer, the keyboard, and the text cursor.
+        row(
+            CycleMousePointer,
+            G::Input,
+            "Mouse pointer",
+            &["cursor", "hover", "hand", "resize", "OSC 22", "pane apps"],
+            Choice(&EnumChoice::new(
+                "Mouse pointer",
+                Choices::Fixed(MousePointer::all),
+                config_field!(cursor.pointer),
+                MousePointer::label,
+                ChoiceSave::Key(ConfigKey::new("cursor", "pointer"), MousePointer::id),
+            )),
+        ),
+        row(
+            CycleWhichKey,
+            G::Input,
+            "Which-key",
+            &["prefix hints", "key hints", "chord panel"],
+            Choice(
+                &EnumChoice::new(
+                    "Which-key",
+                    Choices::Fixed(WhichKey::all),
+                    config_field!(input.which_key),
+                    WhichKey::label,
+                    ChoiceSave::Key(ConfigKey::new("input", "which_key"), WhichKey::id),
+                )
+                .with_effect(SettingEffect::WhichKeyDelay),
+            ),
+        ),
+        row(
+            ToggleFocusOnHover,
+            G::Input,
+            "Focus on hover",
+            &["mouse"],
+            ActionToggle {
+                value: |config| config.pane.focus_on_hover,
+                action: Action::ToggleFocusOnHover,
+            },
+        ),
+        row(
+            EditScrollMultiplier,
+            G::Input,
+            "Scroll multiplier",
+            &["mouse", "wheel", "scrollback", "scroll speed"],
+            Custom,
+        ),
+        row(
+            CycleCursorBlink,
+            G::Input,
+            "Cursor blink",
+            &["caret", "steady", "static", "blinking", "inherit"],
+            Choice(&EnumChoice::new(
+                "Cursor blink",
+                Choices::Fixed(CursorBlink::all),
+                config_field!(cursor.blink),
+                CursorBlink::label,
+                ChoiceSave::Key(ConfigKey::new("cursor", "blink"), CursorBlink::id),
             )),
         ),
         // Clipboard
@@ -698,347 +1062,16 @@ pub static SETTINGS: &[SettingSpec] = {
                 effect: Some(SettingEffect::Clipboard),
             },
         ),
-        // Pickers
         row(
-            CyclePickerBorderStyle,
-            G::Pickers,
-            "Border",
-            &["palette", "modal", "overlay"],
-            Choice(
-                &EnumChoice::new(
-                    "Picker border",
-                    Choices::Fixed(PaneBorderStyle::all),
-                    config_field!(pane.picker_border_style),
-                    PaneBorderStyle::label,
-                    ChoiceSave::Key(
-                        ConfigKey::new("pane", "picker_border_style"),
-                        PaneBorderStyle::id,
-                    ),
-                )
-                .previewed(),
+            ToggleDragAndDrop,
+            G::Clipboard,
+            "Drag and drop",
+            &["drop", "files", "kitty"],
+            toggle(
+                config_field!(clipboard.drag_and_drop),
+                "clipboard",
+                "drag_and_drop",
             ),
-        ),
-        row(
-            TogglePickerTabBackground,
-            G::Pickers,
-            "Tab strip",
-            &["palette", "tab bar"],
-            ActionToggle {
-                value: |config| config.pane.picker_tab_background,
-                action: Action::TogglePickerTabBackground,
-            },
-        ),
-        row(
-            CyclePickerTabStyle,
-            G::Pickers,
-            "Tab style",
-            &["palette", "caps"],
-            Choice(&cap_choice(
-                "Picker tab style",
-                Choices::Fixed(badge_cap_styles),
-                config_field!(pane.picker_tab_style),
-                ConfigKey::new("pane", "picker_tab_style"),
-            )),
-        ),
-        row(
-            CyclePickerSelectionStyle,
-            G::Pickers,
-            "Selection style",
-            &["palette", "highlight", "caps", "pill"],
-            Choice(&cap_choice(
-                "Picker selection style",
-                Choices::Fixed(badge_cap_styles),
-                config_field!(pane.picker_selection_style),
-                ConfigKey::new("pane", "picker_selection_style"),
-            )),
-        ),
-        // Panes: background
-        row(
-            ToggleBackgroundFollowsTerminal,
-            G::Background,
-            "Follows terminal",
-            &["match terminal"],
-            ActionToggle {
-                value: |config| config.pane.background_follows_terminal,
-                action: Action::ToggleBackgroundFollowsTerminal,
-            },
-        ),
-        row(
-            ToggleHighlightFocusedBackground,
-            G::Background,
-            "Focused",
-            &["active", "highlight"],
-            ActionToggle {
-                value: |config| config.pane.highlight_focused_background,
-                action: Action::ToggleHighlightFocusedBackground,
-            },
-        ),
-        row(
-            EditPadding,
-            G::Background,
-            "Terminal padding",
-            &["margins", "insets", "spacing"],
-            Custom,
-        ),
-        row(
-            EditUnfocusedDim,
-            G::Background,
-            "Unfocused dim",
-            &["inactive", "fade", "focus", "opacity"],
-            Custom,
-        ),
-        // Panes: borders
-        row(
-            CycleBorderMode,
-            G::Borders,
-            "Mode",
-            &["merge", "borderless", "dividers"],
-            Choice(
-                &EnumChoice::new(
-                    "Border mode",
-                    Choices::Fixed(PaneBorderMode::all),
-                    config_field!(pane.border_mode),
-                    PaneBorderMode::label,
-                    ChoiceSave::Key(ConfigKey::new("pane", "border_mode"), PaneBorderMode::id),
-                )
-                .previewed(),
-            ),
-        ),
-        row(
-            CycleBorderStyle,
-            G::Borders,
-            "Style",
-            &["tiled", "rounded", "square", "dashed"],
-            Choice(&border_choice(
-                "Border style",
-                config_field!(pane.border_style),
-                "border_style",
-            )),
-        ),
-        row(
-            ToggleHighlightFocusedBorder,
-            G::Borders,
-            "Focused",
-            &["active", "highlight"],
-            ActionToggle {
-                value: |config| config.pane.highlight_focused_border,
-                action: Action::ToggleHighlightFocusedBorder,
-            },
-        ),
-        row(
-            CycleFloatBorderStyle,
-            G::Borders,
-            "Floating",
-            &["float", "popup"],
-            Choice(&border_choice(
-                "Floating border",
-                config_field!(pane.float_border_style),
-                "float_border_style",
-            )),
-        ),
-        row(
-            CycleScratchBorderStyle,
-            G::Borders,
-            "Scratchpad",
-            &["scratch", "dropdown"],
-            Choice(&border_choice(
-                "Scratchpad border",
-                config_field!(pane.scratch_border_style),
-                "scratch_border_style",
-            )),
-        ),
-        row(
-            CycleFullscreenBorderStyle,
-            G::Borders,
-            "Fullscreen",
-            &["full screen", "maximized", "maximised"],
-            Choice(&border_choice(
-                "Fullscreen border",
-                config_field!(pane.fullscreen_border_style),
-                "fullscreen_border_style",
-            )),
-        ),
-        // Panes: titlebar
-        row(
-            ChooseTitlebar,
-            G::Titlebar,
-            "Layout",
-            &["title bar", "show titles", "integrated", "inset"],
-            Custom,
-        ),
-        row(
-            CycleTitleStyle,
-            G::Titlebar,
-            "Style",
-            &["caps", "pill"],
-            Choice(&cap_choice(
-                "Titlebar style",
-                Choices::Fixed(CapStyle::all),
-                config_field!(pane.title_style),
-                ConfigKey::new("pane", "title_style"),
-            )),
-        ),
-        row(
-            ToggleHighlightFocusedTitlebar,
-            G::Titlebar,
-            "Focused",
-            &["active", "highlight"],
-            ActionToggle {
-                value: |config| config.pane.highlight_focused_titlebar,
-                action: Action::ToggleHighlightFocusedTitlebar,
-            },
-        ),
-        // Workbar
-        row(
-            ChooseWorkbar,
-            G::Workbar,
-            "Position",
-            &["show", "hide", "top", "bottom"],
-            Custom,
-        ),
-        row(
-            ToggleWorkbarGap,
-            G::Workbar,
-            "Gap",
-            &["spacing"],
-            ActionToggle {
-                value: |config| config.pane.workbar_gap,
-                action: Action::ToggleWorkbarGap,
-            },
-        ),
-        row(
-            ToggleWorkbarBackground,
-            G::Workbar,
-            "Background",
-            &["strip", "fill"],
-            ActionToggle {
-                value: |config| config.pane.workbar_background,
-                action: Action::ToggleWorkbarBackground,
-            },
-        ),
-        row(
-            CycleWorkbarStyle,
-            G::Workbar,
-            "Style",
-            &["caps", "pill"],
-            Choice(&cap_choice(
-                "Workbar style",
-                Choices::Fixed(CapStyle::all),
-                config_field!(pane.workbar_style),
-                ConfigKey::new("pane", "workbar_style"),
-            )),
-        ),
-        row(
-            CycleWorkbarBadgeStyle,
-            G::Workbar,
-            "Badge style",
-            &["badges", "chips"],
-            Choice(&cap_choice(
-                "Workbar badge style",
-                Choices::Fixed(badge_cap_styles),
-                config_field!(pane.workbar_badge_style),
-                ConfigKey::new("pane", "workbar_badge_style"),
-            )),
-        ),
-        row(
-            CycleWorkbarTabStyle,
-            G::Workbar,
-            "Tab style",
-            &["workspace tabs"],
-            Choice(&cap_choice(
-                "Workbar tab style",
-                Choices::Fixed(badge_cap_styles),
-                config_field!(pane.workbar_tab_style),
-                ConfigKey::new("pane", "workbar_tab_style"),
-            )),
-        ),
-        row(
-            ToggleWorkbarPowerline,
-            G::Workbar,
-            "Powerline",
-            &["badge chain"],
-            ActionToggle {
-                value: |config| config.pane.workbar_powerline,
-                action: Action::ToggleWorkbarPowerline,
-            },
-        ),
-        // Sidebar
-        row(
-            LeftSidebarPanels,
-            G::Sidebar,
-            "Left panels",
-            &["sidebar", "panels", "dock"],
-            Custom,
-        ),
-        row(
-            RightSidebarPanels,
-            G::Sidebar,
-            "Right panels",
-            &["sidebar", "panels", "dock"],
-            Custom,
-        ),
-        row(
-            ToggleSidebarStartup,
-            G::Sidebar,
-            "Open sidebars at startup",
-            &["sidebar", "startup", "launch", "visibility"],
-            Custom,
-        ),
-        row(
-            SidebarTabs,
-            G::Sidebar,
-            "Sidebar tabs",
-            &["sidebar", "tabs", "visibility"],
-            Custom,
-        ),
-        row(
-            SidebarLayoutPreset,
-            G::Sidebar,
-            "Sidebar layout preset",
-            &["sidebar", "layout", "preset"],
-            Custom,
-        ),
-        row(
-            ToggleSidebarBackgroundFollowsCanvas,
-            G::Sidebar,
-            "Background follows canvas",
-            &["match canvas", "app background"],
-            ActionToggle {
-                value: |config| config.sidebar.background_follows_canvas,
-                action: Action::ToggleSidebarBackgroundFollowsCanvas,
-            },
-        ),
-        row(
-            ToggleSidebarGap,
-            G::Sidebar,
-            "Gap",
-            &["spacing"],
-            ActionToggle {
-                value: |config| config.sidebar.gap,
-                action: Action::ToggleSidebarGap,
-            },
-        ),
-        row(
-            ToggleSidebarBackground,
-            G::Sidebar,
-            "Tab strip",
-            &["background", "tab bar"],
-            ActionToggle {
-                value: |config| config.sidebar.background,
-                action: Action::ToggleSidebarBackground,
-            },
-        ),
-        row(
-            CycleSidebarTabStyle,
-            G::Sidebar,
-            "Tab style",
-            &["caps"],
-            Choice(&cap_choice(
-                "Sidebar tab style",
-                Choices::Fixed(badge_cap_styles),
-                config_field!(sidebar.tab_style),
-                ConfigKey::new("sidebar", "tab_style"),
-            )),
         ),
         // Alerts
         row(
@@ -1111,14 +1144,14 @@ pub static SETTINGS: &[SettingSpec] = {
         // marker surface and its `workbar.alert` keys.
         row(
             ToggleMarkBell,
-            G::Marks,
+            G::WorkspaceMarkers,
             "Bell",
             &["marker"],
             toggle(config_field!(workbar.alert.bell), "workbar.alert", "bell"),
         ),
         row(
             ToggleMarkBlocked,
-            G::Marks,
+            G::WorkspaceMarkers,
             "Blocked",
             &["marker", "waiting"],
             toggle(
@@ -1128,15 +1161,8 @@ pub static SETTINGS: &[SettingSpec] = {
             ),
         ),
         row(
-            ToggleMarkError,
-            G::Marks,
-            "Error",
-            &["marker", "failed", "failure"],
-            toggle(config_field!(workbar.alert.error), "workbar.alert", "error"),
-        ),
-        row(
             ToggleMarkFinished,
-            G::Marks,
+            G::WorkspaceMarkers,
             "Finished",
             &["marker", "done", "completed"],
             toggle(
@@ -1146,8 +1172,15 @@ pub static SETTINGS: &[SettingSpec] = {
             ),
         ),
         row(
+            ToggleMarkError,
+            G::WorkspaceMarkers,
+            "Failed",
+            &["marker", "error", "failure"],
+            toggle(config_field!(workbar.alert.error), "workbar.alert", "error"),
+        ),
+        row(
             ToggleMarkWorking,
-            G::Marks,
+            G::WorkspaceMarkers,
             "Working",
             &["marker", "busy", "running"],
             toggle(
@@ -1158,7 +1191,7 @@ pub static SETTINGS: &[SettingSpec] = {
         ),
         row(
             ToggleMarkIdle,
-            G::Marks,
+            G::WorkspaceMarkers,
             "Idle",
             &["marker", "quiet"],
             toggle(config_field!(workbar.alert.idle), "workbar.alert", "idle"),
@@ -1262,8 +1295,8 @@ pub static SETTINGS: &[SettingSpec] = {
         row(
             ToggleSoundError,
             G::Sounds,
-            "Exit with error",
-            &["failure", "non-zero", "crash"],
+            "Failed",
+            &["error", "failure", "exit with error", "non-zero", "crash"],
             toggle(config_field!(sounds.error), "sounds", "error"),
         ),
         // Session startup, attach behavior, and server policies.
@@ -1368,6 +1401,120 @@ pub static SETTINGS: &[SettingSpec] = {
                     RestoreMode::as_str,
                 ),
             )),
+        ),
+        // Workspaces
+        row(
+            CycleDefaultLayout,
+            G::Workspaces,
+            "Default layout",
+            &[
+                "new workspace",
+                "tiling",
+                "dwindle",
+                "master",
+                "grid",
+                "monocle",
+            ],
+            Choice(&EnumChoice::new(
+                "Default layout",
+                Choices::Fixed(LayoutKind::all),
+                config_field!(layout.default),
+                LayoutKind::title,
+                ChoiceSave::With(save_default_layout),
+            )),
+        ),
+        row(
+            ToggleHoldOnExit,
+            G::Workspaces,
+            "Keep exited shells",
+            &["hold on exit", "exited", "dead pane", "close"],
+            toggle(config_field!(pane.hold_on_exit), "pane", "hold_on_exit"),
+        ),
+        // Confirmations: whether rozi asks before a destructive action.
+        row(
+            ToggleConfirmClosePane,
+            G::Confirmations,
+            "Close running pane",
+            &["ask", "prompt", "kill pane"],
+            toggle(config_field!(confirm.close_pane), "confirm", "close_pane"),
+        ),
+        row(
+            ToggleConfirmKillWorkspace,
+            G::Confirmations,
+            "Kill workspace",
+            &["ask", "prompt"],
+            toggle(
+                config_field!(confirm.kill_workspace),
+                "confirm",
+                "kill_workspace",
+            ),
+        ),
+        row(
+            ToggleConfirmKillSession,
+            G::Confirmations,
+            "Kill session",
+            &["ask", "prompt"],
+            toggle(
+                config_field!(confirm.kill_session),
+                "confirm",
+                "kill_session",
+            ),
+        ),
+        row(
+            ToggleConfirmQuitEphemeral,
+            G::Confirmations,
+            "Close temporary session",
+            &["ask", "prompt", "ephemeral", "leave"],
+            toggle(
+                config_field!(confirm.quit_ephemeral),
+                "confirm",
+                "quit_ephemeral",
+            ),
+        ),
+        row(
+            ToggleConfirmNewTemporarySession,
+            G::Confirmations,
+            "Replace temporary session",
+            &["ask", "prompt", "ephemeral", "new"],
+            toggle(
+                config_field!(confirm.new_temporary_session),
+                "confirm",
+                "new_temporary_session",
+            ),
+        ),
+        row(
+            ToggleConfirmLoadProfile,
+            G::Confirmations,
+            "Load profile",
+            &["ask", "prompt", "replace"],
+            toggle(
+                config_field!(confirm.load_profile),
+                "confirm",
+                "load_profile",
+            ),
+        ),
+        // Updates
+        row(
+            ToggleUpdateCheck,
+            G::Updates,
+            "Check for updates",
+            &["release", "new version", "upgrade", "network"],
+            SettingControl::Toggle {
+                field: config_field!(updates.check),
+                key: ConfigKey::new("updates", "check"),
+                effect: Some(SettingEffect::UpdateCheck),
+            },
+        ),
+        row(
+            ToggleReleaseNotes,
+            G::Updates,
+            "Release notes",
+            &["what's new", "changelog", "after update"],
+            toggle(
+                config_field!(updates.release_notes),
+                "updates",
+                "release_notes",
+            ),
         ),
     ]
 };

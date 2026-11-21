@@ -118,6 +118,19 @@ impl LayoutKind {
         }
     }
 
+    /// The layout's name as Settings shows it.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Dwindle => "Dwindle",
+            Self::Master => "Master",
+            Self::Grid => "Grid",
+            Self::Columns => "Columns",
+            Self::Rows => "Rows",
+            Self::Scrollable => "Scrollable",
+            Self::Monocle => "Monocle",
+        }
+    }
+
     /// Parse a config `[layout] default` spelling back into a mode. Matching is
     /// case-insensitive against [`Self::label`]; unknown names yield `None` so the caller can
     /// warn and keep the built-in default.

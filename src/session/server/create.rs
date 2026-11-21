@@ -1,4 +1,5 @@
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::platform::ipc::IpcEndpoint;
@@ -8,6 +9,7 @@ use crate::session::protocol::{self, ClientMessage, ServerMessage};
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
 const READY_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(500);
+const MAX_STARTUP_REPORT_BYTES: u64 = 4096;
 
 /// Start a new named session server and return once it answers, without leaving a client attached.
 ///
@@ -29,6 +31,8 @@ fn start_detached_session(name: &str, resurrect: bool, fresh: bool) -> io::Resul
             "invalid session name",
         ));
     }
+    let endpoint = super::session_endpoint(name)?;
+    endpoint.validate_bind_path()?;
     if crate::session::discovery::discover_session(name)?.is_some() {
         return Err(already_running(name));
     }
@@ -40,6 +44,7 @@ fn start_detached_session(name: &str, resurrect: bool, fresh: bool) -> io::Resul
         ));
     }
     let nonce = crate::session::remote::fresh_server_nonce();
+    let startup_report = StartupReport::create(&nonce)?;
     let child = crate::platform::server_lifecycle::spawn_detached_server(
         &exe,
         name,
@@ -56,7 +61,6 @@ fn start_detached_session(name: &str, resurrect: bool, fresh: bool) -> io::Resul
         ))
     })?;
     let mut spawned = SpawnedServer(Some(child));
-    let endpoint = super::session_endpoint(name)?;
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
         match prove_ownership(&endpoint, name, &nonce) {
@@ -74,7 +78,10 @@ fn start_detached_session(name: &str, resurrect: bool, fresh: bool) -> io::Resul
             Err(_) => {}
         }
         if let Some(status) = spawned.try_wait()? {
-            // The server's stderr goes nowhere, so name the one refusal a user can act on.
+            // The server words its refusal to stand alone.
+            if let Some(reason) = startup_report.read() {
+                return Err(io::Error::other(reason));
+            }
             if !fresh
                 && resurrect
                 && let Some(reason) = super::unrestorable_snapshot(name)
@@ -201,6 +208,63 @@ fn prove_ownership(endpoint: &IpcEndpoint, name: &str, nonce: &str) -> io::Resul
             "unexpected handshake reply: {other:?}"
         ))),
     }
+}
+
+/// Where a server started with `nonce` explains a failed start. The launcher creates the file
+/// and removes it once the start is settled; a server writes to it only if it exists, so a
+/// launcher that does not ask for a report never gets one left behind.
+fn startup_report_path(nonce: &str) -> io::Result<PathBuf> {
+    if nonce.is_empty() || !nonce.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid startup nonce",
+        ));
+    }
+    Ok(crate::control::runtime_dir()?.join(format!("startup-{nonce}.err")))
+}
+
+struct StartupReport(PathBuf);
+
+impl StartupReport {
+    fn create(nonce: &str) -> io::Result<Self> {
+        let path = startup_report_path(nonce)?;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        Ok(Self(path))
+    }
+
+    fn read(&self) -> Option<String> {
+        let mut bytes = Vec::new();
+        std::fs::File::open(&self.0)
+            .ok()?
+            .take(MAX_STARTUP_REPORT_BYTES)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        let reason = String::from_utf8_lossy(&bytes);
+        let reason = reason.trim();
+        (!reason.is_empty()).then(|| reason.to_owned())
+    }
+}
+
+impl Drop for StartupReport {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Write why a server started with `nonce` failed, when its launcher asked for a report.
+pub(crate) fn report_startup_error(nonce: &str, message: &str) {
+    let Ok(path) = startup_report_path(nonce) else {
+        return;
+    };
+    // Never create the file: an unasked-for report would outlive the launcher.
+    let Ok(mut report) = std::fs::OpenOptions::new().write(true).open(path) else {
+        return;
+    };
+    let len = message.len().min(MAX_STARTUP_REPORT_BYTES as usize);
+    let _ = report.write_all(&message.as_bytes()[..len]);
 }
 
 fn write_startup_notifications(

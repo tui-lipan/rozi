@@ -79,3 +79,60 @@ fn a_fresh_server_starts_with_only_the_platforms_own_user_directories() {
     drop(client);
     server.wait_for_exit();
 }
+
+#[cfg(unix)]
+#[test]
+fn detached_start_reports_the_socket_limit_and_the_servers_startup_error() {
+    let root = tempfile::tempdir_in(rozi::test_support::socket_safe_temp_dir()).unwrap();
+    let root = root.path();
+    let long_runtime = root.join("long".repeat(32));
+    std::fs::create_dir(&long_runtime).unwrap();
+    let runtime = root.join("run");
+    std::fs::create_dir(&runtime).unwrap();
+    let state_file = root.join("state");
+    std::fs::write(&state_file, "").unwrap();
+    let run = |runtime: &std::path::Path| {
+        let output = Command::new(env!("CARGO_BIN_EXE_rozi"))
+            .args(["sessions", "new", "test-startup", "--detach"])
+            .env("XDG_RUNTIME_DIR", runtime)
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("XDG_STATE_HOME", &state_file)
+            .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("ROZI_CONFIG", root.join("config.toml"))
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{output:?}");
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+    let message = run(&long_runtime);
+    assert!(
+        message.contains("socket path is") && message.contains("Use a shorter runtime directory"),
+        "{message}"
+    );
+
+    let message = run(&runtime);
+    assert_eq!(
+        message
+            .to_lowercase()
+            .matches("session `test-startup`")
+            .count(),
+        1,
+        "{message}"
+    );
+    assert!(
+        message.contains("was not started because its saved session could not be cleared"),
+        "{message}"
+    );
+    assert!(
+        !subprocess_endpoint(&runtime, "test-startup")
+            .path()
+            .exists()
+    );
+    let leftover_reports = std::fs::read_dir(runtime.join("rozi"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("startup-"))
+        .count();
+    assert_eq!(leftover_reports, 0, "the startup report outlived the start");
+}

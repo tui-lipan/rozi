@@ -417,8 +417,9 @@ Like any named session, a detached session is saved for [resurrection](#resurrec
 in the picker as `Restorable` if its server stops before `sessions kill`. Add `--no-resurrect` for
 throwaway work: the session is never saved.
 
-Put `--runtime-dir <DIR>` first to keep the session's sockets, config, and state under a separate
-private directory. Use the same prefix on commands that reach it from outside its panes.
+Put `--runtime-dir <DIR>` first to keep this machine's sockets, config, and state for the session
+under a separate private directory. Use the same prefix on commands that reach it from outside its
+panes. `--remote` starts the session in the remote host's own directories.
 
 `rozi sessions restart <NAME>` ends a running session's panes and starts it again without a UI, on
 the build you ran it with. It keeps [deployed extensions](extensions.md#deploy-to-a-session), and

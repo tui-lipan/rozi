@@ -319,7 +319,7 @@ pub(crate) enum SessionsCommand {
         remote: Option<String>,
         config_path: Option<String>,
     },
-    /// `sessions new <NAME> --detach [--no-resurrect] [--remote <HOST>]`.
+    /// `sessions new <NAME> --detach [--cwd <DIR>] [--no-resurrect] [--remote <HOST>]`.
     NewDetached {
         name: String,
         cwd: Option<String>,

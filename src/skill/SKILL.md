@@ -466,7 +466,7 @@ the extension itself.
 rozi sessions list --format json
 rozi sessions attach <NAME> [--read-only | --follow | --take-control]
 rozi sessions new <NAME> [--profile <PROFILE> | --cwd <DIR>]
-rozi sessions new <NAME> --detach [--cwd <DIR>] [--no-resurrect]
+rozi sessions new <NAME> --detach [--cwd <DIR>] [--no-resurrect] [--remote <HOST>]
 rozi sessions kill <NAME>
 ```
 

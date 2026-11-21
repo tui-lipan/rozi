@@ -38,7 +38,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Create a session whose first pane starts in DIR",
             ),
             row(
-                "new <NAME> --detach [--cwd <DIR>] [--no-resurrect]",
+                "new <NAME> --detach [--cwd <DIR>] [--no-resurrect] [--remote <HOST>]",
                 "Start without a UI, optionally never saved",
             ),
             row(

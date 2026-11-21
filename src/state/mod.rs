@@ -451,6 +451,9 @@ pub struct State {
     /// in a client that is allowed to check, but no config edit can turn it on in an integration
     /// app that must stay off the network.
     pub update_checks_allowed: bool,
+    /// Whether a release check tick is pending. Turning checks off ends the loop at its next tick,
+    /// so turning them back on arms a new tick only once that one has gone.
+    pub(crate) update_check_armed: bool,
     /// The newest release a check found, kept for the rest of this client's life so **Update rozi**
     /// stays in Commands after its toast is gone.
     pub(crate) available_update: Option<crate::ops::update_check::AvailableUpdate>,
@@ -653,6 +656,17 @@ impl State {
             .then(|| self.config.updates.interval())
     }
 
+    /// The interval to arm a release check tick with, when checks are on and no tick is pending.
+    /// Marks the loop armed, so the caller must schedule the tick.
+    pub(crate) fn arm_update_check(&mut self) -> Option<std::time::Duration> {
+        if self.update_check_armed {
+            return None;
+        }
+        let interval = self.update_check_interval()?;
+        self.update_check_armed = true;
+        Some(interval)
+    }
+
     /// Whether this client's release checks also take part in the anonymous weekly usage count.
     /// Asked on every check, so a config reload takes effect at the next one.
     pub(crate) fn usage_count_enabled(&self) -> bool {
@@ -824,6 +838,7 @@ impl State {
             popup_return_focus: None,
             control_socket_path: None,
             update_checks_allowed: false,
+            update_check_armed: false,
             available_update: None,
             update_started: false,
             release_notes: None,

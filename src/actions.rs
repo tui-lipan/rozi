@@ -614,13 +614,8 @@ fn closes_settings(action: Action) -> bool {
 fn open_settings(ctx: &mut Context<AppRoot>, selected: crate::state::SettingsAction) -> Update {
     clear_non_settings_overlays(ctx);
     ctx.state.show_settings = true;
-    ctx.state.settings_navigation = crate::state::SettingsNavigation::with_tab(
-        if selected == crate::state::SettingsAction::ToggleBellUrgency {
-            crate::state::SettingsTab::Alerts
-        } else {
-            crate::state::SettingsTab::General
-        },
-    );
+    ctx.state.settings_navigation =
+        crate::state::SettingsNavigation::with_tab(selected.spec().group.tab());
     crate::state::assign_settings_selection(&mut ctx.state, Some(selected));
     ctx.state.commands_dirty = true;
     ctx.request_focus(crate::view::settings_palette_key());

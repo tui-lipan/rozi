@@ -61,7 +61,7 @@ The editor runs directly, not through a shell. Quotes around a path that contain
 
 ## Cursor blinking
 
-Choose **Blink** in Settings under General › Cursor, or set `[cursor]` in `config.toml`.
+Choose **Cursor blink** in Settings under Input, or set `[cursor]` in `config.toml`.
 Changes apply immediately to pickers, prompts, text editors, and terminal panes.
 
 | Key | Type | Default | Description |
@@ -74,7 +74,7 @@ still control cursor shape and visibility.
 
 ## Mouse pointer
 
-Choose **Mouse pointer** in Settings under General. Changes apply immediately and leave mouse
+Choose **Mouse pointer** in Settings under Input. Changes apply immediately and leave mouse
 clicks, selection, and dragging enabled. The host terminal must support mouse pointer shapes.
 
 | Key | Type | Default | Description |
@@ -316,14 +316,14 @@ the failed row.
 | `tile_float` | bool | `true` | Animates tile and float transitions. |
 | `axis_change` | bool | `true` | Animates split-axis changes. |
 | `sidebar` | bool | `true` | Animates sidebar movement. |
-| `workspace` | bool | `true` | Slides workspace content horizontally when switching. In Settings: General › Animations › Workspace switching. |
+| `workspace` | bool | `true` | Slides workspace content horizontally when switching. In Settings: Motion › Animations › Workspace switching. |
 | `workspace_ms` | integer | `220` | Workspace slide duration in milliseconds. `0` switches instantly. |
-| `session` | string or bool | `"portal"` | `"portal"`, `"wave"`, `"fade"`, or `"off"`; `true` means `"portal"` and `false` means `"off"`. Described below. In Settings: General › Animations › Session switching. |
+| `session` | string or bool | `"portal"` | `"portal"`, `"wave"`, `"fade"`, or `"off"`; `true` means `"portal"` and `false` means `"off"`. Described below. In Settings: Motion › Animations › Session switching. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
-| `agent_handoff` | bool | `true` | Runs light along the borders of panes whose agents send or receive a request or an answer; see [Watch agents talk](agents.md#watch-agents-talk). In Settings: General › Animations › Agent handoffs. |
+| `agent_handoff` | bool | `true` | Runs light along the borders of panes whose agents send or receive a request or an answer; see [Watch agents talk](agents.md#watch-agents-talk). In Settings: Motion › Animations › Agent handoffs. |
 | `cursor_trail` | table | | A smear that follows the cursor when it jumps. See [Cursor trail](#cursor-trail). |
-| `picker` | string | `"fade"` | `"off"`, `"fade"`, `"portal"`, or `"scan"`, case-insensitive. Applies to searchable pickers, Settings, and their nested cards. A picker that opens in place of another appears at once. In Settings: General › Animations › Pickers. |
-| `toast` | string | `"slide"` | `"off"`, `"fade"`, or `"slide"`, case-insensitive. Slide brings a toast in from the right edge; Fade fades it in place. In Settings: General › Animations › Toasts. |
+| `picker` | string | `"fade"` | `"off"`, `"fade"`, `"portal"`, or `"scan"`, case-insensitive. Applies to searchable pickers, Settings, and their nested cards. A picker that opens in place of another appears at once. In Settings: Motion › Animations › Picker transitions. |
+| `toast` | string | `"slide"` | `"off"`, `"fade"`, or `"slide"`, case-insensitive. Slide brings a toast in from the right edge; Fade fades it in place. In Settings: Motion › Animations › Toasts. |
 | `pane_open_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. |
 | `pane_close_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. |
 | `geometry_ms` | integer | `220` | Base duration of pane geometry animations, in milliseconds. |
@@ -346,7 +346,7 @@ switch sessions, when a session finishes connecting, or when you drop to the lau
 Pane geometry always snaps and the sidebar stays still. The value is case-insensitive.
 
 Choose opening and closing independently with `pane_open_style` and `pane_close_style`, or use
-**General › Animations › Pane open** and **Pane close** in Settings. For example, use `slide` to
+**Motion › Animations › Pane open** and **Pane close** in Settings. For example, use `slide` to
 open and `particles` to close. Both default to `scale`.
 
 An `off` style shows or hides a pane at once, with no fade. Opening with `off` also skips the spawn
@@ -400,7 +400,7 @@ See [Pane open and close animation styles](layouts-and-panes.md#pane-open-and-cl
 ### Cursor trail
 
 `[animations.cursor_trail]` draws a smear that follows the cursor when it jumps. It is off until you
-set `mode`. In Settings, **General › Cursor › Trail** chooses when it shows and **Trail style** how
+set `mode`. In Settings, **Motion › Cursor trail › Mode** chooses when it shows and **Style** how
 it looks.
 
 ```toml
@@ -415,8 +415,8 @@ draws at once.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `mode` | string | `"off"` | `"off"`, `"focus"`, or `"jump"`, case-insensitive. `"focus"` draws a smear when focus moves to another pane or prompt; `"jump"` also draws one when the cursor moves at least 8 columns or 2 rows inside a pane. In Settings: General › Cursor › Trail. |
-| `style` | string | `"smear"` | `"smear"` is a solid smear in the trail color; `"sparks"` is the smear throwing sparks; `"tint"` is a fainter smear that never covers text or the cursor. In Settings: General › Cursor › Trail style. |
+| `mode` | string | `"off"` | `"off"`, `"focus"`, or `"jump"`, case-insensitive. `"focus"` draws a smear when focus moves to another pane or prompt; `"jump"` also draws one when the cursor moves at least 8 columns or 2 rows inside a pane. In Settings: Motion › Cursor trail › Mode. |
+| `style` | string | `"smear"` | `"smear"` is a solid smear in the trail color; `"sparks"` is the smear throwing sparks; `"tint"` is a fainter smear that never covers text or the cursor. In Settings: Motion › Cursor trail › Style. |
 | `motion` | string | `"spring"` | `"spring"` stretches the smear out behind the cursor and snaps it in; `"glide"` keeps the front on the cursor and eases the tail in over `glide_ms`. |
 | `color` | string | `"cursor"` | `"cursor"` uses the cursor's color (the theme's [`caret`](themes.md#top-level-fields), else the terminal's cursor color, else its text color); `"accent"` uses the theme's focused-border color; or give a `"#rrggbb"` value. |
 | `stiffness` | float | `0.5` | Spring pull on the front of the smear, from 0 to 1. |

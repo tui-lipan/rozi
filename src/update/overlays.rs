@@ -426,6 +426,13 @@ fn apply_setting_effect(ctx: &mut Context<AppRoot>, effect: crate::state::Settin
             ctx.set_command_chord_reveal_delay(ctx.state.config.input.which_key.reveal_delay());
         }
         SettingEffect::SleepPolicy => crate::ops::config::reload_sleep_policy(ctx),
+        SettingEffect::UpdateCheck => {
+            if let Some(interval) = ctx.state.arm_update_check()
+                && let Some(link) = ctx.state.command_link.clone()
+            {
+                link.send_after(interval, Msg::UpdateCheckTick);
+            }
+        }
     }
 }
 
@@ -727,14 +734,18 @@ pub(super) fn workbar_tick(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 /// Re-check for a newer release. Turning `[updates] check` off stops the loop here rather than
-/// cancelling the tick in flight; `crate::ops::config` arms a fresh one when it comes back on.
+/// cancelling the tick in flight; [`crate::state::State::arm_update_check`] arms a fresh one when
+/// it comes back on after the loop has stopped.
 pub(super) fn update_check_tick(ctx: &mut Context<AppRoot>) -> Update {
     match ctx.state.update_check_interval() {
         Some(interval) => Update::command_only(crate::check_for_update_and_reschedule(
             interval,
             ctx.state.usage_count_enabled(),
         )),
-        None => Update::none(),
+        None => {
+            ctx.state.update_check_armed = false;
+            Update::none()
+        }
     }
 }
 
@@ -1163,6 +1174,32 @@ mod tests {
         });
     }
 
+    /// Turning checks back on from Settings starts the loop again only once the old one has ended,
+    /// so the release host never gets two loops from one client.
+    #[test]
+    fn turning_update_checks_back_on_arms_exactly_one_loop() {
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let _config = crate::test_support::lock_config_file();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().update_checks_allowed = true;
+            backend.state_mut().update_check_armed = true;
+            let toggle = crate::state::SettingsAction::ToggleUpdateCheck;
+
+            // Off and on again before the pending tick fires: that tick carries the loop on.
+            backend.dispatch(Msg::SettingsActivate(toggle)).unwrap();
+            backend.dispatch(Msg::SettingsActivate(toggle)).unwrap();
+            assert!(backend.state().config.updates.check);
+            assert_eq!(backend.state_mut().arm_update_check(), None);
+
+            backend.dispatch(Msg::SettingsActivate(toggle)).unwrap();
+            backend.dispatch(Msg::UpdateCheckTick).unwrap();
+            assert!(!backend.state().update_check_armed, "the loop ended");
+            backend.dispatch(Msg::SettingsActivate(toggle)).unwrap();
+            assert!(backend.state().update_check_armed, "a new loop is armed");
+        });
+    }
+
     #[test]
     fn the_usage_count_notice_waits_for_the_welcome_and_says_how_to_opt_out() {
         crate::test_support::on_large_stack(|| {
@@ -1293,6 +1330,10 @@ mod tests {
             assert_eq!(
                 backend.state().settings_selected,
                 Some(crate::state::SettingsAction::Theme)
+            );
+            assert_eq!(
+                backend.state().settings_navigation.tab,
+                crate::state::SettingsTab::Appearance
             );
         });
     }
@@ -1824,7 +1865,7 @@ mod tests {
                 let state = backend.state_mut();
                 state.config.animations.picker = crate::layout::anim::PickerAnimationStyle::Off;
                 state.show_settings = true;
-                state.settings_navigation.tab = crate::state::SettingsTab::Panes;
+                state.settings_navigation.tab = crate::state::SettingsTab::Appearance;
             }
             backend.render();
             backend

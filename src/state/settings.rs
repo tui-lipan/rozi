@@ -1,6 +1,7 @@
 use tui_lipan::prelude::TextInput;
 
 use crate::config::Config;
+use crate::state::AlertMode;
 
 use crate::pane::chrome::{PaneBorderMode, PaneTitlebarMode};
 
@@ -12,19 +13,21 @@ pub use catalog::*;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SettingsTab {
     #[default]
-    General,
-    Panes,
+    Appearance,
     Bars,
+    Motion,
+    Input,
     Alerts,
     Sessions,
     All,
 }
 
 impl SettingsTab {
-    pub const ALL: [Self; 6] = [
-        Self::General,
-        Self::Panes,
+    pub const ALL: [Self; 7] = [
+        Self::Appearance,
         Self::Bars,
+        Self::Motion,
+        Self::Input,
         Self::Alerts,
         Self::Sessions,
         Self::All,
@@ -32,9 +35,10 @@ impl SettingsTab {
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::General => "General",
-            Self::Panes => "Panes",
+            Self::Appearance => "Appearance",
             Self::Bars => "Bars",
+            Self::Motion => "Motion",
+            Self::Input => "Input",
             Self::Alerts => "Alerts",
             Self::Sessions => "Sessions",
             Self::All => "All",
@@ -191,6 +195,17 @@ settings_actions! {
     CycleResurrectForeground,
     CycleResurrectAgents,
     CycleSessionOnAttach,
+    CycleDefaultLayout,
+    ToggleHoldOnExit,
+    ToggleDragAndDrop,
+    ToggleConfirmClosePane,
+    ToggleConfirmKillWorkspace,
+    ToggleConfirmKillSession,
+    ToggleConfirmQuitEphemeral,
+    ToggleConfirmNewTemporarySession,
+    ToggleConfirmLoadProfile,
+    ToggleUpdateCheck,
+    ToggleReleaseNotes,
 }
 
 impl SettingsAction {
@@ -220,7 +235,7 @@ impl SettingsAction {
                 ))
             }
             Self::SidebarLayoutPreset => Some(SettingsChoiceRing {
-                title: "Sidebar layout preset",
+                title: "Layout preset",
                 options: std::iter::once("Default layout".to_string())
                     .chain(
                         config
@@ -384,6 +399,26 @@ impl SettingsAction {
                 if !pane.show_workbar =>
             {
                 Some("Needs workbar")
+            }
+            // With the tab effect off, no workspace tab is marked or painted at all.
+            Self::CycleWorkbarAlertPaint
+            | Self::ToggleMarkBell
+            | Self::ToggleMarkBlocked
+            | Self::ToggleMarkError
+            | Self::ToggleMarkFinished
+            | Self::ToggleMarkWorking
+            | Self::ToggleMarkIdle
+                if config.workbar.alert.mode == AlertMode::Off =>
+            {
+                Some("Needs workspace tab effect")
+            }
+            Self::CycleAlertPaint if pane.alert_border == AlertMode::Off => {
+                Some("Needs pane effect")
+            }
+            Self::ToggleCopyFeedbackOnSelect
+                if config.clipboard.copy_feedback == crate::config::CopyFeedback::Off =>
+            {
+                Some("Needs copy feedback")
             }
             Self::ToggleDesktopBlocked
             | Self::ToggleDesktopDone
@@ -943,6 +978,29 @@ mod tests {
         assert_eq!(
             SettingsAction::ToggleWorkbarBackground.disabled_reason(&config),
             None
+        );
+
+        // Rows whose effect is drawn by another row's surface grey out with it.
+        config.workbar.alert.mode = AlertMode::Off;
+        for action in [
+            SettingsAction::ToggleMarkWorking,
+            SettingsAction::CycleWorkbarAlertPaint,
+        ] {
+            assert_eq!(
+                action.disabled_reason(&config),
+                Some("Needs workspace tab effect"),
+                "{action:?}"
+            );
+        }
+        config.pane.alert_border = AlertMode::Off;
+        assert_eq!(
+            SettingsAction::CycleAlertPaint.disabled_reason(&config),
+            Some("Needs pane effect")
+        );
+        config.clipboard.copy_feedback = crate::config::CopyFeedback::Off;
+        assert_eq!(
+            SettingsAction::ToggleCopyFeedbackOnSelect.disabled_reason(&config),
+            Some("Needs copy feedback")
         );
     }
 

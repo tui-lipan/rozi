@@ -166,7 +166,7 @@ when no other client has claimed it. `Ctrl+W` in the picker disconnects a backgr
 An untouched temporary session is discarded when you switch away. A temporary session you have used
 stays in the background.
 
-Change the switch animation in **Settings** › General › Animations › Session switching, or with
+Change the switch animation in **Settings** › Motion › Animations › Session switching, or with
 `session` in [`[animations]`](configuration.md#animations).
 
 ## Go to an agent

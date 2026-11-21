@@ -75,7 +75,7 @@ colors. If the terminal does not answer rozi's color query, rozi warns and uses 
 run. `system` stays configured, and rozi tries again at the next launch.
 
 To keep your chosen theme but use the host terminal's background behind panes, turn on
-**Panes › Background › Follows terminal** in Settings, or set:
+**Appearance › Background › Follows terminal** in Settings, or set:
 
 ```toml
 [pane]
@@ -88,7 +88,7 @@ rozi watches the host terminal's colors while it runs. When you change the host 
 the foreground, background, and all 16 ANSI colors update without restarting rozi.
 
 The sidebar normally uses the theme's raised element color. To give it the same backdrop as the
-panes instead, turn on **Bars › Sidebar › Background follows canvas** in Settings, or set:
+panes instead, turn on **Bars › Sidebar › Follows canvas** in Settings, or set:
 
 ```toml
 [sidebar]

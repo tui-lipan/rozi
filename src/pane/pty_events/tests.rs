@@ -1435,6 +1435,7 @@ mod finished_rows_notice {
             },
         );
         pane.terminal.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new("claude", "Claude Code").into(),
             state: DetectedAgentState::Idle,
         });

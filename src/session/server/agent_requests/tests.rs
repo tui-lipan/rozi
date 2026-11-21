@@ -31,6 +31,7 @@ impl Rig {
             let mut pane = test_pane(1);
             pane.pty = Some(pty);
             pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+                blocker: None,
                 agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
                 state: DetectedAgentState::Idle,
             });

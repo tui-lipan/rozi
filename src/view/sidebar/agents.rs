@@ -45,6 +45,8 @@ pub(crate) struct AgentRow {
     pub task: Option<String>,
     /// Why the occupant is in its state, as it said (`Permission required`).
     pub reason: Option<String>,
+    /// A blocker recognized in the live screen.
+    pub blocker: Option<std::sync::Arc<crate::session::protocol::AgentBlocker>>,
     /// Position among its pane's occupants, so one pane's rows keep the projection's order.
     pub order: usize,
     /// What a pane's own agent shows as its terminal title, when that says more than its name or
@@ -370,6 +372,7 @@ pub(crate) fn attachment_agent_rows(
                                     })
                                     .or(reported_title),
                                 reason: occupant.reason.clone(),
+                                blocker: occupant.blocker.clone(),
                                 identity: occupant.agent.clone(),
                                 order,
                                 screen_title,
@@ -1410,6 +1413,7 @@ mod tests {
             },
         );
         pane.terminal.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new("claude", "Claude Code").into(),
             state: DetectedAgentState::Idle,
         });
@@ -1802,6 +1806,7 @@ mod tests {
         state.current_mut().session_name = Some("dev".into());
         let mut codex = pane(1, None, false);
         codex.terminal.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new("codex", "Codex").into(),
             state: DetectedAgentState::Working,
         });
@@ -2264,6 +2269,7 @@ mod tests {
         state.current_mut().workspaces[0].panes[0]
             .terminal
             .detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new("opencode", "OpenCode").into(),
             state: DetectedAgentState::Working,
         });
@@ -2868,6 +2874,7 @@ mod tests {
             identity: Some(AgentIdentity::new("claude", "Claude Code")),
             task: None,
             reason: None,
+            blocker: None,
             order: 0,
             screen_title: None,
         };
@@ -2938,6 +2945,7 @@ mod tests {
             identity: Some(AgentIdentity::new("claude", "Claude Code")),
             task: None,
             reason: None,
+            blocker: None,
             order: 0,
             screen_title: None,
         };
@@ -2985,6 +2993,7 @@ mod tests {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         let pane = &mut state.current_mut().workspaces[0].panes[0];
         pane.terminal.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: AgentIdentity::new("claude", "Claude Code").into(),
             state: DetectedAgentState::Working,
         });
@@ -3099,6 +3108,7 @@ mod tests {
             identity: Some(AgentIdentity::new("claude", "Claude Code")),
             task: Some("a task title long enough to fill the sidebar".into()),
             reason: Some("Thinking".into()),
+            blocker: None,
             order: 0,
             screen_title: None,
         };
@@ -3162,6 +3172,7 @@ mod tests {
             identity: Some(AgentIdentity::new("claude", "Claude Code")),
             task: task.map(str::to_string),
             reason: None,
+            blocker: None,
             order: 0,
             screen_title: None,
         };

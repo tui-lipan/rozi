@@ -215,6 +215,35 @@ pub struct DetectedAgent {
     #[serde(deserialize_with = "super::tolerant::deserialize")]
     #[cfg_attr(feature = "schema-gen", schemars(with = "DetectedAgentState"))]
     pub state: DetectedAgentState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<std::sync::Arc<AgentBlocker>>,
+}
+
+/// A reason the visible agent is waiting for input or capacity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct AgentBlocker {
+    /// The category the matching rule assigned, such as `trust` or `usage-limit`.
+    pub kind: String,
+    /// The reset time as the agent displayed it, in its own timezone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset: Option<String>,
+}
+
+impl AgentBlocker {
+    pub fn reason(&self) -> String {
+        match self.kind.as_str() {
+            "approval" => "Approval required".into(),
+            "trust" => "Folder trust required".into(),
+            "question" => "Waiting for an answer".into(),
+            "login" => "Sign-in required".into(),
+            "usage-limit" => self.reset.as_ref().map_or_else(
+                || "Usage limit reached".into(),
+                |reset| format!("Usage limit reached · resets {reset}"),
+            ),
+            kind => kind.to_string(),
+        }
+    }
 }
 
 pub(crate) fn detected_agent_status(detected: &DetectedAgent) -> &'static str {

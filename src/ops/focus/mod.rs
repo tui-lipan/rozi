@@ -2796,10 +2796,12 @@ mod tests {
         {
             let panes = &mut state.current_mut().workspaces[0].panes;
             panes[0].terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+                blocker: None,
                 agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
                 state: crate::session::protocol::DetectedAgentState::Blocked,
             });
             panes[1].terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+                blocker: None,
                 agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
                 state: crate::session::protocol::DetectedAgentState::Blocked,
             });

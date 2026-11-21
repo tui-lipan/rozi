@@ -2143,21 +2143,35 @@ pub(super) fn derive_detected_agent(
     }
     // An agent publisher's rows describe all its sessions, while screen detection sees only the
     // session in view. Activity rows say nothing about the pane's agent, so they leave it alone.
+    // Rows still own the state, while the live screen continues to supply blocker metadata for the
+    // active conversation on screen.
     let agent_rows = crate::session::protocol::agent_rows_with_integration(&pane.runtime);
     if !agent_rows.is_empty() {
         pane.agent.hold = None;
         pane.agent.read = None;
+        let blocker = read_screen_blocker(pane, agents);
         let aggregate = crate::session::protocol::aggregate_row_state(&agent_rows);
-        return pane
+        let agent = pane
             .runtime
             .detected_agent
             .as_ref()
-            .zip(aggregate)
-            .map(|(previous, state)| DetectedAgent {
-                agent: previous.agent.clone(),
-                state,
+            .map(|previous| previous.agent.clone())
+            .or_else(|| {
+                agents.and_then(|agents| {
+                    pane.agent
+                        .identity
+                        .as_deref()
+                        .and_then(|id| agents.by_id(id))
+                        .map(|definition| definition.identity.clone())
+                })
             });
+        return agent.zip(aggregate).map(|(agent, state)| DetectedAgent {
+            blocker,
+            agent,
+            state,
+        });
     }
+    pane.agent.blocker_read = None;
     let Some(agents) = agents else {
         return pane.runtime.detected_agent.clone();
     };
@@ -2190,6 +2204,7 @@ fn refresh_agent_identity(
         // What the screen said about the previous program does not describe this one. Held
         // over, its `working` would outlast the new loading screen and then end as a run.
         pane.agent.read = None;
+        pane.agent.blocker_read = None;
         pane.agent.hold = None;
         pane.agent.settled = None;
         pane.agent.identity = identity;
@@ -3391,6 +3406,7 @@ fn resolve_detected_agent(
             Some(DetectedAgent {
                 agent: observed.agent,
                 state,
+                blocker: observed.blocker,
             })
         }
         None => match hold
@@ -3398,12 +3414,14 @@ fn resolve_detected_agent(
             .map(|held| held.state)
         {
             Some(state) => Some(DetectedAgent {
+                blocker: None,
                 agent: observed.agent,
                 state,
             }),
             None => {
                 *hold = None;
                 Some(DetectedAgent {
+                    blocker: None,
                     agent: observed.agent,
                     state: crate::session::protocol::DetectedAgentState::Idle,
                 })
@@ -3594,6 +3612,57 @@ fn read_agent_state(pane: &mut ServerPane, agents: &AgentCatalog) -> Option<Dete
         }
     };
     settle_state_flicker(resolved, &mut pane.agent.settled, now)
+}
+
+/// Inspect the visible screen for blocker metadata while published rows own the pane's state.
+fn read_screen_blocker(
+    pane: &mut ServerPane,
+    agents: Option<&AgentCatalog>,
+) -> Option<std::sync::Arc<protocol::AgentBlocker>> {
+    if pane.agent.history_frozen {
+        return pane
+            .runtime
+            .detected_agent
+            .as_ref()
+            .and_then(|detected| detected.blocker.clone());
+    }
+    let Some(agents) = agents else {
+        return pane
+            .runtime
+            .detected_agent
+            .as_ref()
+            .and_then(|detected| detected.blocker.clone());
+    };
+    let Some(definition) = pane
+        .agent
+        .identity
+        .as_deref()
+        .and_then(|id| agents.by_id(id))
+    else {
+        pane.agent.blocker_read = None;
+        return None;
+    };
+    let title = pane.effective_title();
+    let screen = pane.screen_without_change().snapshot();
+    if let Some(last) = pane.agent.blocker_read.as_ref()
+        && std::sync::Arc::ptr_eq(&last.screen, &screen)
+        && last.title == title
+    {
+        return last.blocker.clone();
+    }
+    let blocker = crate::agent_detection::observe(
+        agents,
+        definition,
+        screen.as_ref(),
+        title.as_deref().unwrap_or_default(),
+    )
+    .blocker;
+    pane.agent.blocker_read = Some(super::AgentBlockerRead {
+        screen,
+        title,
+        blocker: blocker.clone(),
+    });
+    blocker
 }
 
 /// Follow a launch through to the agent being ready: its first settled idle after the loading
@@ -3810,6 +3879,7 @@ fn settle_state_flicker(
         && now.duration_since(since) < STATE_SETTLE_GRACE
     {
         return Some(DetectedAgent {
+            blocker: None,
             agent: detected.agent,
             state: held,
         });
@@ -3994,6 +4064,7 @@ mod tests {
         let mut scratch = AgentScratch::default();
         let runtime = |id: Option<&str>, state| PaneRuntimeState {
             detected_agent: id.map(|id| DetectedAgent {
+                blocker: None,
                 agent: crate::session::protocol::AgentIdentity::new(id, id).into(),
                 state,
             }),
@@ -4057,6 +4128,7 @@ mod tests {
             }))
         };
         let detected = |id: &str, state| DetectedAgent {
+            blocker: None,
             agent: crate::session::protocol::AgentIdentity::new(id, id).into(),
             state,
         };
@@ -4131,6 +4203,7 @@ mod tests {
         let mut scratch = AgentScratch::default();
         let runtime = |id: &str, state| PaneRuntimeState {
             detected_agent: Some(DetectedAgent {
+                blocker: None,
                 agent: crate::session::protocol::AgentIdentity::new(id, id).into(),
                 state,
             }),
@@ -4193,6 +4266,7 @@ mod tests {
                 set_at: 1,
             }),
             detected_agent: Some(DetectedAgent {
+                blocker: None,
                 agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
                 state: protocol::DetectedAgentState::Idle,
             }),
@@ -4414,6 +4488,7 @@ mod tests {
             &runtime
         ));
         runtime.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Idle,
         });
@@ -4435,6 +4510,7 @@ mod tests {
             &runtime
         ));
         runtime.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("codex", "Codex").into(),
             state: protocol::DetectedAgentState::Working,
         });
@@ -4753,6 +4829,7 @@ mod tests {
         assert!(scratch.references(pane_ref.clone()).is_empty());
 
         runtime.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("codex", "Codex").into(),
             state: protocol::DetectedAgentState::Working,
         });
@@ -4786,6 +4863,7 @@ mod tests {
     fn activity_updates_leave_the_agent_summary_time_alone() {
         let mut pane = make_pane();
         pane.runtime.detected_agent = Some(DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("codex", "Codex").into(),
             state: protocol::DetectedAgentState::Idle,
         });
@@ -4848,6 +4926,7 @@ mod tests {
         };
         let detected = |id: &str| {
             Some(DetectedAgent {
+                blocker: None,
                 agent: protocol::AgentIdentity::new(id, id).into(),
                 state: protocol::DetectedAgentState::Idle,
             })
@@ -5717,6 +5796,7 @@ mod tests {
         assert_eq!(
             detected.detected_agent,
             Some(crate::session::protocol::DetectedAgent {
+                blocker: None,
                 agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
                 state: crate::session::protocol::DetectedAgentState::Working,
             })
@@ -5778,6 +5858,7 @@ mod tests {
         assert_eq!(
             detected.detected_agent,
             Some(DetectedAgent {
+                blocker: None,
                 agent:
                     crate::session::protocol::AgentIdentity::new("mycoolagent", "My Cool Agent",)
                         .into(),
@@ -5802,6 +5883,7 @@ mod tests {
     fn inferred_agent_run_start_survives_block_and_resume() {
         let mut pane = make_pane();
         pane.runtime.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            blocker: None,
             agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
             state: crate::session::protocol::DetectedAgentState::Working,
         });
@@ -5850,10 +5932,12 @@ mod tests {
         let start = Instant::now();
         let mut hold = None;
         let working = AgentObservation {
+            blocker: None,
             agent: AgentIdentity::new("opencode", "OpenCode").into(),
             state: Some(DetectedAgentState::Working),
         };
         let silent = AgentObservation {
+            blocker: None,
             agent: AgentIdentity::new("opencode", "OpenCode").into(),
             state: None,
         };
@@ -6283,6 +6367,90 @@ mod tests {
             derive_detected_agent(&mut pane, Some(&catalog()), None, None, false),
             None
         );
+    }
+
+    /// Published conversation rows keep ownership of agent state, while the visible screen still
+    /// supplies blocker details for the active row only.
+    #[test]
+    fn published_rows_keep_screen_blocker_on_the_active_row() {
+        let mut pane = make_pane();
+        let catalog = crate::agent_detection::AgentCatalog::builtin();
+        derive_detected_agent(
+            &mut pane,
+            Some(&catalog),
+            None,
+            Some(&AgentProcessSet::from_foreground_job(&agent_job(
+                100,
+                &[(100, "claude")],
+            ))),
+            true,
+        );
+        pane.runtime.detected_agent =
+            derive_detected_agent(&mut pane, Some(&catalog), None, None, false);
+        pane.terminal.process_bytes(
+            "────────────────\r\n⚠ Usage limit reached · limit resets 2pm\r\n".as_bytes(),
+        );
+        let row = |id: &str, status: &str, active: bool| protocol::PublishedRow {
+            id: id.into(),
+            title: id.into(),
+            status: status.into(),
+            reason: None,
+            active,
+            publisher: "1/sessions".into(),
+            kind: protocol::PublisherKind::Agent,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+            live_session: None,
+            reported: false,
+        };
+        replace_pane_rows(
+            &mut pane,
+            vec![
+                row("active-conv", "idle", true),
+                row("bg-conv", "working", false),
+            ],
+        );
+
+        let detected = derive_detected_agent(&mut pane, Some(&catalog), None, None, false)
+            .expect("claude stays detected under published rows");
+        assert_eq!(detected.state, protocol::DetectedAgentState::Working);
+        let expected = protocol::AgentBlocker {
+            kind: "usage-limit".into(),
+            reset: Some("2pm".into()),
+        };
+        assert_eq!(detected.blocker.as_deref(), Some(&expected));
+        pane.runtime.detected_agent = Some(detected);
+
+        let pane_ref = protocol::PaneRef {
+            session_instance: protocol::SessionInstanceId::for_test("server"),
+            pane_id: 1,
+            generation: 1,
+        };
+        let runtimes =
+            protocol::effective_agent_runtimes(&pane.runtime, &pane.agent.records(pane_ref));
+        assert_eq!(runtimes.len(), 2);
+        assert_eq!(runtimes[0].state, protocol::AgentState::Idle);
+        assert_eq!(runtimes[0].blocker.as_deref(), Some(&expected));
+        assert_eq!(
+            runtimes[0].reason.as_deref(),
+            Some("Usage limit reached · resets 2pm")
+        );
+        assert_eq!(runtimes[1].state, protocol::AgentState::Working);
+        assert_eq!(runtimes[1].blocker, None);
+        assert_eq!(runtimes[1].reason, None);
+
+        let mut server = SessionServer::new_named_with_settings("dev", ServerSettings::default());
+        server.panes.insert(1, pane);
+        let summaries = server.agent_summaries();
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].blocker.as_deref(), Some(&expected));
+        assert_eq!(
+            summaries[0].reason.as_deref(),
+            Some("Usage limit reached · resets 2pm")
+        );
+        assert_eq!(summaries[1].blocker, None);
     }
 
     /// `ROZI_AGENT` names the agent from the pane's environment, so it is named while the shell
@@ -6737,6 +6905,7 @@ mod tests {
         let agent: std::sync::Arc<AgentIdentity> = AgentIdentity::new("grok", "Grok").into();
         let detected = |state| {
             Some(DetectedAgent {
+                blocker: None,
                 agent: agent.clone(),
                 state,
             })
@@ -6791,6 +6960,7 @@ mod tests {
         let agent: std::sync::Arc<AgentIdentity> = AgentIdentity::new("codex", "Codex").into();
         let detected = |state| {
             Some(DetectedAgent {
+                blocker: None,
                 agent: agent.clone(),
                 state,
             })
@@ -6885,6 +7055,7 @@ mod tests {
         let mut hold = None;
         resolve_detected_agent(
             Some(AgentObservation {
+                blocker: None,
                 agent: AgentIdentity::new("opencode", "OpenCode").into(),
                 state: Some(DetectedAgentState::Working),
             }),
@@ -6895,6 +7066,7 @@ mod tests {
         // finish by anything like `AGENT_HOLD_MAX`.
         let idle = resolve_detected_agent(
             Some(AgentObservation {
+                blocker: None,
                 agent: AgentIdentity::new("opencode", "OpenCode").into(),
                 state: Some(DetectedAgentState::Idle),
             }),
@@ -6913,6 +7085,7 @@ mod tests {
         let mut hold = None;
         resolve_detected_agent(
             Some(AgentObservation {
+                blocker: None,
                 agent: AgentIdentity::new("opencode", "OpenCode").into(),
                 state: Some(DetectedAgentState::Working),
             }),
@@ -6932,6 +7105,7 @@ mod tests {
     fn the_keep_open_shell_swap_forgets_the_previous_program() {
         let mut pane = make_pane();
         pane.runtime.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            blocker: None,
             agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
             state: crate::session::protocol::DetectedAgentState::Working,
         });
@@ -6976,6 +7150,7 @@ mod tests {
             set_at: 2,
         };
         let blocked = DetectedAgent {
+            blocker: None,
             agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
             state: crate::session::protocol::DetectedAgentState::Blocked,
         };

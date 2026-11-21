@@ -2559,6 +2559,7 @@ mod tests {
             .expect("status")
             .value = "idle".into();
         pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            blocker: None,
             agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
             state: crate::session::protocol::DetectedAgentState::Blocked,
         });
@@ -2640,6 +2641,7 @@ mod tests {
         assert_eq!(pane_alert(&pane, false, &config, &Default::default()), None);
         config.alert_colors.error = Some(BadgeColor::Error);
         pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            blocker: None,
             agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
             state: crate::session::protocol::DetectedAgentState::Working,
         });

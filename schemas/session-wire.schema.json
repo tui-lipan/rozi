@@ -1,5 +1,25 @@
 {
   "$defs": {
+    "AgentBlocker": {
+      "description": "A reason the visible agent is waiting for input or capacity.",
+      "properties": {
+        "kind": {
+          "description": "The category the matching rule assigned, such as `trust` or `usage-limit`.",
+          "type": "string"
+        },
+        "reset": {
+          "description": "The reset time as the agent displayed it, in its own timezone.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
     "AgentIdentity": {
       "description": "Who a detected agent is.\n\nOpen rather than an enum of the tools Rozi happens to know: `id` and `label` both come from the\n[`AgentDefinition`](crate::agent_detection::AgentDefinition) that matched, and a definition\ndeclared in `config.toml` or shipped by an extension produces one of these exactly as a built-in\ndoes. Nothing downstream may branch on a known set of ids - the sidebar renders `label`.",
       "properties": {
@@ -421,6 +441,17 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "blocker": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentBlocker"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A blocker recognized in the live screen."
         },
         "changed_at": {
           "description": "Unix milliseconds when this pane's semantic agent state last changed.",
@@ -4746,6 +4777,16 @@
         "agent": {
           "$ref": "#/$defs/AgentIdentity",
           "description": "Shared rather than owned: one definition's identity describes every pane running that\nagent, and this rides inside [`PaneRuntimeState`], which is recomputed per pane at the\nruntime poll rate and sits in the largest `Msg`/`ServerMessage` variants. Two inline\n`String`s here cost 48 bytes in each of them and an allocation per sweep."
+        },
+        "blocker": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentBlocker"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "state": {
           "$ref": "#/$defs/DetectedAgentState"

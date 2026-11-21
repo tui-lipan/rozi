@@ -576,6 +576,7 @@ mod tests {
             label: "Codex".into(),
             state: crate::session::protocol::AgentState::from_status(state),
             reason: None,
+            blocker: None,
             task: None,
             screen_title: None,
             completions: 0,

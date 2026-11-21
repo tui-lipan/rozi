@@ -420,6 +420,7 @@ mod tests {
             session: "dev".into(),
             status: "working".into(),
             reason: None,
+            blocker: None,
             finished_unseen: false,
             elapsed: Some(std::time::Duration::from_secs(240)),
             project: Some("api".into()),

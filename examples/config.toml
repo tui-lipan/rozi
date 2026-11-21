@@ -648,6 +648,7 @@
 # agent, learned nothing" - rozi holds the previous state instead of ending the run.
 #[[agents.states]]
 #state = "blocked"
+#blocker = "question"
 # all_of must all match, any_of needs one, none_of vetoes. Needles are matched against
 # lowercased text, so write them however the agent draws them.
 #screen = { all_of = ["esc dismiss"], any_of = ["enter submit", "enter toggle"] }

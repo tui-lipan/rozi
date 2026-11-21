@@ -2119,6 +2119,7 @@ fn reloading_agent_definitions_re_detects_and_every_client_converges() {
     ));
 
     let expected = protocol::DetectedAgent {
+        blocker: None,
         agent: protocol::AgentIdentity::new("mycoolagent", "My Cool Agent").into(),
         state: protocol::DetectedAgentState::Working,
     };
@@ -2932,6 +2933,7 @@ fn query_carries_agent_summaries_only_for_a_client_that_asked_for_them() {
     assert!(server.agent_summaries().is_empty());
     let pane = server.panes.get_mut(&1).unwrap();
     pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+        blocker: None,
         agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
         state: protocol::DetectedAgentState::Idle,
     });
@@ -2975,6 +2977,7 @@ fn a_pane_publishing_rows_contributes_one_named_summary_per_row() {
     let mut server = SessionServer::new_named("dev");
     let mut pane = test_pane(2);
     pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+        blocker: None,
         agent: protocol::AgentIdentity::new("codex", "Codex").into(),
         state: protocol::DetectedAgentState::Working,
     });
@@ -3037,6 +3040,7 @@ fn agent_summaries_carry_what_a_detected_agents_terminal_title_names() {
     let mut server = SessionServer::new_named("dev");
     let mut pane = test_pane(2);
     pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+        blocker: None,
         agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
         state: protocol::DetectedAgentState::Idle,
     });
@@ -6452,6 +6456,7 @@ fn sleep_policy_aggregates_semantic_states_across_shared_and_local_panes() {
     let mut server = SessionServer::new_named("dev");
     let mut pane = test_pane(2);
     pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+        blocker: None,
         agent: protocol::AgentIdentity::new("codex", "Codex").into(),
         state: protocol::DetectedAgentState::Working,
     });
@@ -6488,6 +6493,7 @@ fn sleep_policy_aggregates_semantic_states_across_shared_and_local_panes() {
     }
     let mut local = test_pane(3);
     local.runtime.detected_agent = Some(protocol::DetectedAgent {
+        blocker: None,
         agent: protocol::AgentIdentity::new("claude", "Claude").into(),
         state: protocol::DetectedAgentState::Working,
     });
@@ -6556,6 +6562,7 @@ fn sleep_policy_uses_integration_authority_including_for_published_rows() {
     let mut server = SessionServer::new_named("dev");
     let mut pane = test_pane(2);
     pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+        blocker: None,
         agent: protocol::AgentIdentity::new("claude", "Claude").into(),
         state: protocol::DetectedAgentState::Working,
     });
@@ -6627,6 +6634,7 @@ fn sleep_policy_uses_integration_authority_including_for_published_rows() {
 fn pane_with_session_rows(server: &mut SessionServer, id: PaneId) {
     let mut pane = test_pane(1);
     pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+        blocker: None,
         agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
         state: protocol::DetectedAgentState::Idle,
     });
@@ -6895,6 +6903,7 @@ fn pane_reporting(server: &mut SessionServer, agent: &str, screen: &str) {
     let pane = server.panes.get_mut(&7).unwrap();
     pane.agent.identity = Some(agent.into());
     pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+        blocker: None,
         agent: protocol::AgentIdentity::new(agent, agent).into(),
         state: protocol::DetectedAgentState::Idle,
     });
@@ -8986,6 +8995,7 @@ impl EventParityHarness {
         pane.cwd = Some("/work".to_string());
         pane.runtime.cwd = Some("/work".to_string());
         pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Idle,
         });

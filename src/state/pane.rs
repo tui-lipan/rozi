@@ -467,6 +467,7 @@ impl Pane {
                 .to_string(),
             state: crate::session::protocol::ActivityState::from_status(record.state.as_str()),
             reason: record.msg.as_deref().map(str::to_string),
+            blocker: None,
             source: crate::session::protocol::AgentAuthority::Reported,
             program_status: Some(record.clone()),
         });

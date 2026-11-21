@@ -403,19 +403,21 @@ impl SessionServer {
             }
             WaitSubject::Agent(reference) => reference,
         };
-        let state = self.panes.get(&reference.pane.pane_id).and_then(|pane| {
+        let agent = self.panes.get(&reference.pane.pane_id).and_then(|pane| {
             self.agent_runtimes_for(reference.pane.pane_id, pane)
                 .into_iter()
                 .find(|runtime| runtime.reference == *reference)
-                .map(|runtime| runtime.state)
         });
         let mut message = format!(
             "timed out waiting for agent {} in pane {} to become {until}",
             reference.incarnation, reference.pane.pane_id
         );
-        if let Some(state) = state {
-            message.push_str(&format!("; it is {}", state.as_str()));
-            if wait.until == AgentWaitCondition::Idle && state == protocol::AgentState::Done {
+        if let Some(agent) = agent {
+            message.push_str(&format!("; it is {}", agent.state.as_str()));
+            if let Some(reason) = agent.reason {
+                message.push_str(&format!(" ({reason})"));
+            }
+            if wait.until == AgentWaitCondition::Idle && agent.state == protocol::AgentState::Done {
                 message.push_str(" (`quiescent` accepts idle or done)");
             }
         }
@@ -1089,6 +1091,7 @@ mod tests {
         let mut server = SessionServer::new_named("dev");
         let mut pane = super::super::tests::test_pane(7);
         pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state,
         });
@@ -1126,6 +1129,7 @@ mod tests {
             .unwrap();
         let pane = server.panes.get_mut(&3).unwrap();
         pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("codex", "Codex").into(),
             state: protocol::DetectedAgentState::Idle,
         });
@@ -1216,6 +1220,7 @@ mod tests {
 
         let pane = server.panes.get_mut(&3).unwrap();
         pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Working,
         });
@@ -1228,6 +1233,7 @@ mod tests {
 
         let pane = server.panes.get_mut(&3).unwrap();
         pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Idle,
         });
@@ -1319,6 +1325,7 @@ mod tests {
         assert!(!server.agent_waits[&(1, 0)].turn.as_ref().unwrap().armed);
 
         server.panes.get_mut(&3).unwrap().runtime.detected_agent = Some(protocol::DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Working,
         });
@@ -1326,6 +1333,7 @@ mod tests {
         assert!(server.agent_waits[&(1, 0)].turn.as_ref().unwrap().armed);
 
         server.panes.get_mut(&3).unwrap().runtime.detected_agent = Some(protocol::DetectedAgent {
+            blocker: None,
             agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
             state: protocol::DetectedAgentState::Idle,
         });

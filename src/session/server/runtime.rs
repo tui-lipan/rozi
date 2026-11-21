@@ -6360,7 +6360,7 @@ mod tests {
         assert_eq!(runtimes[1].blocker, None);
         assert_eq!(runtimes[1].reason, None);
 
-        let mut server = SessionServer::new_named("dev");
+        let mut server = SessionServer::new_named_with_settings("dev", ServerSettings::default());
         server.panes.insert(1, pane);
         let summaries = server.agent_summaries();
         assert_eq!(summaries.len(), 2);

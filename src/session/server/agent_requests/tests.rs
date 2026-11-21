@@ -708,6 +708,35 @@ fn a_message_exits_the_queue_as_delivered_and_keeps_no_answer() {
 }
 
 #[test]
+fn a_queued_message_names_its_sender_after_that_agent_leaves() {
+    let mut rig = Rig::new(&[2, 3]);
+    rig.set_state(3, DetectedAgentState::Working);
+    let sender = rig.agent(2);
+    let queued = info(rig.server.ask_agent(
+        Some(sender.clone()),
+        AgentTarget::Pane(3),
+        "The base branch moved.".into(),
+        AskOptions {
+            parent: None,
+            follows: None,
+            asker_label: None,
+            now: false,
+            no_reply: true,
+        },
+    ));
+    assert_eq!(queued.state, AgentRequestState::Queued);
+    assert_eq!(queued.from_label.as_deref(), Some("Claude Code"));
+    rig.server.panes.get_mut(&2).unwrap().runtime.detected_agent = None;
+    assert!(rig.server.current_agent_runtime(&sender).is_err());
+    rig.set_state(3, DetectedAgentState::Idle);
+    assert_eq!(rig.request(&queued.id).state, AgentRequestState::Delivered);
+    assert!(
+        rig.typed_into(3, "Message from Claude Code in pane 2 (no reply needed)"),
+        "a departed sender is still named from the request"
+    );
+}
+
+#[test]
 fn requests_reach_a_target_one_turn_at_a_time() {
     let mut rig = Rig::new(&[2, 3, 4]);
 

@@ -102,7 +102,10 @@ pub(crate) fn handoffs<'a>(
         .filter_map(|request| {
             let before = old.iter().find(|previous| previous.id == request.id)?.state;
             match (before, request.state) {
-                (AgentRequestState::Queued, AgentRequestState::Active) => Some(Handoff {
+                (
+                    AgentRequestState::Queued,
+                    AgentRequestState::Active | AgentRequestState::Delivered,
+                ) => Some(Handoff {
                     sender: request.from.as_ref(),
                     receiver: &request.to,
                 }),
@@ -416,6 +419,7 @@ mod tests {
             request("b", Some(1), 3, AgentRequestState::Active),
             request("c", Some(2), 3, AgentRequestState::Active),
             request("d", None, 3, AgentRequestState::Active),
+            request("f", Some(4), 5, AgentRequestState::Queued),
         ];
         let after = [
             request("a", Some(1), 2, AgentRequestState::Active),
@@ -423,6 +427,7 @@ mod tests {
             request("c", Some(2), 3, AgentRequestState::Failed),
             request("d", None, 3, AgentRequestState::Answered),
             request("e", Some(3), 1, AgentRequestState::Active),
+            request("f", Some(4), 5, AgentRequestState::Delivered),
         ];
         let pairs: Vec<(Option<u32>, u32)> = handoffs(&before, &after)
             .into_iter()
@@ -434,8 +439,8 @@ mod tests {
             })
             .collect();
         // `a` delivered from 1 to 2; `b` answered by 3 back to 1; `d` answered to the CLI, which
-        // has no pane to receive it.
-        assert_eq!(pairs, [(Some(1), 2), (Some(3), 1)]);
+        // has no pane to receive it; `f` is a one-way message, delivered the same way as `a`.
+        assert_eq!(pairs, [(Some(1), 2), (Some(3), 1), (Some(4), 5)]);
         assert!(handoffs(&after, &after).is_empty());
     }
 

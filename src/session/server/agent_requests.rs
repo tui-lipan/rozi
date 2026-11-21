@@ -1878,16 +1878,25 @@ impl SessionServer {
 
     fn request_frame(&self, request: &AgentRequestInfo) -> String {
         let asker = match &request.from {
-            Some(from) => self
-                .current_agent_runtime(from)
-                .ok()
-                .map(|runtime| {
-                    format!(
-                        " from {} in pane {}",
-                        runtime.label, runtime.reference.pane.pane_id
-                    )
-                })
-                .unwrap_or_default(),
+            Some(from) => {
+                // A one-way message stays queued after its sender exits. The label was recorded
+                // when it was asked, and the reference still names that pane.
+                let (label, pane) = self
+                    .current_agent_runtime(from)
+                    .ok()
+                    .map(|runtime| (runtime.label, runtime.reference.pane.pane_id))
+                    .unwrap_or_else(|| {
+                        (
+                            request.from_label.clone().unwrap_or_default(),
+                            from.pane.pane_id,
+                        )
+                    });
+                if label.is_empty() {
+                    format!(" from pane {pane}")
+                } else {
+                    format!(" from {label} in pane {pane}")
+                }
+            }
             None => request
                 .from_label
                 .as_ref()

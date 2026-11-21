@@ -16,7 +16,7 @@ use crate::state::Mode;
 const PENDING_FILE: &str = "welcome-pending";
 
 /// Where the card's "open guide" action leads.
-pub(crate) const GUIDE_URL: &str = concat!(env!("CARGO_PKG_HOMEPAGE"), "/getting-started");
+pub(crate) const GUIDE_URL: &str = "https://rozi.tui-lipan.dev/getting-started";
 
 /// Decide at startup whether this launch should welcome the user once a session is on screen.
 ///

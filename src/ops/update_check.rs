@@ -79,7 +79,7 @@ impl AvailableUpdate {
             }
             (Some(command), _) => format!("run `{command}`"),
             (None, InstallSource::SystemPackage) => "update with your package manager".to_string(),
-            (None, _) => format!("see {}/installation", env!("CARGO_PKG_HOMEPAGE")),
+            (None, _) => "see https://rozi.tui-lipan.dev/installation".to_string(),
         };
         let mut lines = vec![format!("v{} → v{}", self.running, self.latest), how];
         lines.extend(self.compatibility_notes());

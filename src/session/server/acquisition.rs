@@ -57,12 +57,12 @@ impl Acquisitions {
             .unwrap_or(0)
             .checked_add(1)?;
         RETAINED_BYTES
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 n.checked_add(bytes).filter(|n| *n <= SERVER_BYTES)
             })
             .ok()?;
         if RETAINED_FILES
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 n.checked_add(files).filter(|n| *n <= SERVER_FILES)
             })
             .is_err()

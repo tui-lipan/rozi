@@ -1966,6 +1966,8 @@ impl SessionServer {
         let tracks_snapshot = owner.is_none() && self.settings.resurrect;
         let tracks_snapshot_foreground = tracks_snapshot
             && self.settings.resurrect_foreground != crate::config::RestoreMode::Never;
+        let tracks_snapshot_agents =
+            tracks_snapshot && self.settings.resurrect_agents != crate::config::RestoreMode::Never;
         let history_leased = owner.is_none() && self.agent_history.contains_key(&pane_id);
         let Some(pane) = self.pane_mut(owner, pane_id) else {
             return;
@@ -2029,9 +2031,12 @@ impl SessionServer {
         // whether its command is recorded, and process inspection can move it with nothing
         // printed. Compared as saved, so a change the snapshot would not write dirties nothing.
         let saved_cwd = tracks_snapshot.then(|| pane.spawnable_cwd());
+        let saved_resume = tracks_snapshot_agents.then(|| super::resurrect::resume_target(pane));
         pane.agent.observe(before, &next);
         pane.runtime = next.clone();
         let snapshot_cwd_changed = saved_cwd.is_some_and(|saved| saved != pane.spawnable_cwd());
+        let snapshot_resume_changed =
+            saved_resume.is_some_and(|saved| saved != super::resurrect::resume_target(pane));
         let message = self.finish_pane_runtime_change(owner, pane_id, generation, next, baseline);
         if let Some(owner) = owner {
             self.enqueue(owner, Target::Client(owner), message);
@@ -2040,13 +2045,14 @@ impl SessionServer {
         }
         if snapshot_foreground_changed
             || snapshot_cwd_changed
+            || snapshot_resume_changed
             || integration_replaced
             || resume_ended
         {
             // PTY output normally dirties a snapshot first, but the process inspector can learn
-            // the command or its argv after that output has already been persisted. Keep the
-            // metadata change dirty so a later detach or shutdown cannot retain the earlier,
-            // command-less snapshot.
+            // the command, its argv, or the agent identity under already-published rows after that
+            // output has already been persisted. Keep the metadata change dirty so a later detach
+            // or shutdown cannot retain the earlier, incomplete snapshot.
             self.mark_dirty();
         }
         self.resolve_agent_waits();
@@ -2151,20 +2157,22 @@ pub(super) fn derive_detected_agent(
         pane.agent.read = None;
         let blocker = read_screen_blocker(pane, agents);
         let aggregate = crate::session::protocol::aggregate_row_state(&agent_rows);
-        let agent = pane
-            .runtime
-            .detected_agent
-            .as_ref()
-            .map(|previous| previous.agent.clone())
-            .or_else(|| {
-                agents.and_then(|agents| {
-                    pane.agent
-                        .identity
-                        .as_deref()
-                        .and_then(|id| agents.by_id(id))
-                        .map(|definition| definition.identity.clone())
-                })
-            });
+        // Resolve the agent from the process sweep's current identity rather than reusing
+        // `runtime.detected_agent`: rows can arrive before the first sweep runs (for example, in
+        // a detached session), and an agent can exit or change while stale rows still linger.
+        let agent = match agents {
+            Some(agents) => pane
+                .agent
+                .identity
+                .as_deref()
+                .and_then(|id| agents.by_id(id))
+                .map(|definition| definition.identity.clone()),
+            None => pane
+                .runtime
+                .detected_agent
+                .as_ref()
+                .map(|previous| previous.agent.clone()),
+        };
         return agent.zip(aggregate).map(|(agent, state)| DetectedAgent {
             blocker,
             agent,
@@ -6451,6 +6459,100 @@ mod tests {
             Some("Usage limit reached · resets 2pm")
         );
         assert_eq!(summaries[1].blocker, None);
+    }
+
+    /// A pane whose agent rows arrive before the first process sweep (such as a client started in
+    /// a detached session) still gains its agent identity once a sweep sees its process, drops it
+    /// if the process later exits under lingering rows, and marks the session snapshot dirty when
+    /// a sweep makes an active row resumable.
+    #[test]
+    fn an_agent_publishing_rows_before_first_sweep_gets_its_identity_and_resume() {
+        use crate::session::protocol::DetectedAgentState;
+
+        let active_row = || crate::session::protocol::PublishedRow {
+            id: "thread-1".into(),
+            title: "Fix restore".into(),
+            status: "working".into(),
+            reason: None,
+            active: true,
+            publisher: "0/publish:sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: Some("thread-1".into()),
+            live_session: None,
+            reported: false,
+        };
+
+        let mut pane = make_pane();
+        pane.runtime.rows.push(active_row());
+        assert!(pane.runtime.detected_agent.is_none());
+        assert!(super::super::resurrect::live_agent_resume(&pane).is_none());
+
+        let job = agent_job(100, &[(100, "claude")]);
+        pane.runtime.detected_agent = derive_detected_agent(
+            &mut pane,
+            Some(&catalog()),
+            None,
+            Some(&AgentProcessSet::from_foreground_job(&job)),
+            true,
+        );
+        let detected = pane
+            .runtime
+            .detected_agent
+            .as_ref()
+            .expect("sweep identifies the agent even under published rows");
+        assert_eq!(detected.agent.id, "claude");
+        assert_eq!(detected.state, DetectedAgentState::Working);
+
+        let resume = super::super::resurrect::live_agent_resume(&pane)
+            .expect("active row becomes resumable once identity is known");
+        assert_eq!(resume.agent, "claude");
+        assert_eq!(resume.session, "thread-1");
+
+        // If the agent process exits before its publisher withdraws stale rows, the sweep drops
+        // its identity immediately rather than keeping the dead agent attached to those rows.
+        pane.runtime.detected_agent =
+            derive_detected_agent(&mut pane, Some(&catalog()), None, None, true);
+        assert!(pane.runtime.detected_agent.is_none());
+        assert!(super::super::resurrect::live_agent_resume(&pane).is_none());
+
+        // When a runtime sweep learns the agent identity under already-published rows, the server
+        // marks the snapshot dirty if agent resurrection is enabled, and leaves it clean otherwise.
+        for (resurrect_agents, expects_dirty) in [
+            (crate::config::RestoreMode::Auto, true),
+            (crate::config::RestoreMode::Never, false),
+        ] {
+            let mut server = SessionServer::new_named_with_settings(
+                "dev",
+                ServerSettings {
+                    resurrect: true,
+                    resurrect_foreground: crate::config::RestoreMode::Never,
+                    resurrect_agents,
+                    ..ServerSettings::default()
+                },
+            );
+            let mut pane = make_pane();
+            pane.env.push(("ROZI_AGENT".into(), "claude".into()));
+            pane.agent.adopting = true;
+            pane.runtime.rows.push(active_row());
+            let generation = pane.generation;
+            server.panes.insert(1, pane);
+            server.snapshot_generation = server.dirty_generation;
+
+            let mut scan = LazyProcessScan::default();
+            server.sync_pane_runtime_inner(None, 1, generation, true, &mut scan);
+            assert_eq!(
+                super::super::resurrect::resume_target(&server.panes[&1]),
+                Some(("claude".into(), "thread-1".into(), false))
+            );
+            assert_eq!(
+                server.snapshot_dirty(),
+                expects_dirty,
+                "resurrect_agents={resurrect_agents:?}"
+            );
+        }
     }
 
     /// `ROZI_AGENT` names the agent from the pane's environment, so it is named while the shell

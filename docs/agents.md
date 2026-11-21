@@ -469,7 +469,9 @@ it: `rozi agents reply <ID> --format text --stdin`, with the answer on stdin. If
 starts a turn nor shows the request within ten seconds, rozi types it once more when nothing on its
 screen changed, and otherwise fails it: a program still starting can drop what is typed into it.
 Without `--now`, an agent receives one request at a time. An approval dialog or usage-limit pause keeps an active
-request open. Without a reply, the answer is the agent's
+request open. A delivered request with a known native conversation stays open if its agent
+restarts in the same pane. Once the agent reports the original conversation in its slot or on
+screen, it can reply to the original request id. Without a reply, the answer is the agent's
 [integration response](#read-the-agents-response), or else its terminal
 once the turn has ended and the screen has settled, read the same way, including an
 alternate-screen transcript. An agent that will
@@ -495,7 +497,7 @@ responses answer those requests in order, the last response the last request.
 | `queued` | Not typed yet; `reason` says what it waits for. A reply answers it without typing it. |
 | `active` | Typed into the agent, or promised a later reply; `reason` says which. |
 | `answered` | `response` holds the answer. The first answer stands; a different reply is refused with `conflict`. |
-| `failed` | The agent exited, was replaced, or moved to another conversation before answering. |
+| `failed` | Delivery failed, the pane closed or was replaced, or the target could no longer answer from its original conversation. `reason` gives the cause. |
 | `cancelled` | Cancelled by whoever asked, or the asking agent left or changed conversation before delivery. |
 
 JSON gives each request that was typed in its `delivered_at_unix_ms`; a request cancelled after

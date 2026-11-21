@@ -1012,6 +1012,86 @@ fn an_agent_owing_several_requests_names_the_one_it_asks_for() {
 }
 
 #[test]
+fn an_active_reply_survives_an_agent_restart_only_in_its_original_conversation() {
+    for resumed_session in ["original", "different"] {
+        let mut rig = Rig::new(&[3]);
+        rig.move_to(3, "original");
+        let first = rig.agent(3);
+        let request = rig.ask(None, 3, "Wait for the long check and reply.");
+        assert_eq!(request.state, AgentRequestState::Active);
+
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        let detected = pane.runtime.detected_agent.take();
+        pane.runtime.integration = None;
+        pane.agent.sync_references(&pane.runtime);
+        rig.server.pump_agent_requests();
+        assert_eq!(
+            rig.request(&request.id).reason.as_deref(),
+            Some(WAITING_FOR_RESUME)
+        );
+
+        rig.server.panes.get_mut(&3).unwrap().runtime.detected_agent = detected;
+        rig.move_to(3, resumed_session);
+        rig.server.pump_agent_requests();
+        assert_ne!(rig.agent(3), first);
+        if resumed_session == "original" {
+            assert!(
+                !rig.server
+                    .reply_to_request(Some(first), &request.id, "stale answer".into())
+                    .ok
+            );
+            assert!(rig.reply(3, &request.id, "The check passed.").ok);
+            assert_eq!(rig.request(&request.id).state, AgentRequestState::Answered);
+        } else {
+            assert_eq!(rig.request(&request.id).state, AgentRequestState::Failed);
+            assert!(!rig.reply(3, &request.id, "wrong conversation").ok);
+        }
+    }
+}
+
+#[test]
+fn replacing_the_pane_generation_fails_requests_even_for_the_same_conversation() {
+    for deferred in [false, true] {
+        let mut rig = Rig::new(&[3]);
+        rig.move_to(3, "original");
+        let target = rig.agent(3);
+        let request = rig.ask(None, 3, "Wait for the check and reply.");
+        assert_eq!(request.state, AgentRequestState::Active);
+        if deferred {
+            assert!(rig.server.reply_later(Some(target.clone()), &request.id).ok);
+        }
+
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        pane.generation += 1;
+        pane.runtime.integration = None;
+        pane.agent.sync_references(&pane.runtime);
+        rig.move_to(3, "original");
+        let replacement = rig.agent(3);
+        assert_ne!(replacement.pane.generation, target.pane.generation);
+
+        rig.server.pump_agent_requests();
+        let failed = rig.request(&request.id);
+        assert_eq!(
+            failed.state,
+            AgentRequestState::Failed,
+            "deferred={deferred}"
+        );
+        assert_eq!(failed.to, target);
+        assert!(
+            failed
+                .reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("pane 3 has been replaced")
+        );
+        assert!(
+            !rig.reply(3, &request.id, "reply from the replacement pane")
+                .ok
+        );
+    }
+}
+
+#[test]
 fn a_promised_answer_fails_when_its_agent_changes_conversation() {
     let mut rig = Rig::new(&[3]);
     let request = rig.ask(None, 3, "run the slow suite");
@@ -1505,6 +1585,7 @@ fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
                 updated_at_unix_ms: 0,
                 delivered_at_unix_ms: Some(0),
             },
+            target_agent: "claude".into(),
             depth: 1,
             later: false,
         });

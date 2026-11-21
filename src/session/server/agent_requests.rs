@@ -14,6 +14,8 @@ use crate::control::{
     AgentResponseSource, AgentTarget, ControlErrorCode, ControlResponse,
 };
 
+const WAITING_FOR_RESUME: &str = "waiting for the agent to resume its conversation";
+
 const MAX_PROMPT_BYTES: usize = 64 * 1024;
 const MAX_DEPTH: usize = 8;
 const MAX_PER_ROOT: usize = 64;
@@ -113,6 +115,8 @@ impl Default for AgentRequestStore {
 
 struct StoredRequest {
     info: AgentRequestInfo,
+    /// Agent kind that can prove it resumed the recorded native conversation.
+    target_agent: String,
     /// 1 for a request asked outside any other.
     depth: usize,
     /// Its agent will reply after the turn it was delivered in, so that turn's end does not
@@ -824,7 +828,11 @@ impl SessionServer {
             Some(from) => label(from),
             None => outside_asker_label(asker_label),
         };
-        let to_label = label(&to);
+        let target_agent = match self.current_agent_runtime(&to) {
+            Ok(runtime) => runtime,
+            Err(response) => return response,
+        };
+        let to_label = Some(target_agent.label);
         let info = AgentRequestInfo {
             conversation: Some(conversation.unwrap_or_else(|| id.clone())),
             id: id.clone(),
@@ -847,6 +855,7 @@ impl SessionServer {
         self.agent_requests.revision += 1;
         self.agent_requests.requests.push(StoredRequest {
             info,
+            target_agent: target_agent.identity.id,
             depth,
             later: false,
         });
@@ -928,6 +937,7 @@ impl SessionServer {
         id: &str,
         text: String,
     ) -> ControlResponse {
+        self.refresh_deferred_request(id);
         let request = match self.agent_requests.lookup(id) {
             Ok(request) => request,
             Err(response) => return response,
@@ -1060,39 +1070,177 @@ impl SessionServer {
         ControlResponse::ok(deferred)
     }
 
-    /// Fail a request its agent promised to answer later once that agent can no longer reply.
+    /// Rebind a pending reply to a verified resume in its original pane.
+    fn resumed_request_target(
+        &self,
+        target: &protocol::AgentRef,
+        agent: &str,
+        native_session: &str,
+    ) -> std::result::Result<Option<protocol::AgentRef>, String> {
+        let pane_id = target.pane.pane_id;
+        let pane = self
+            .panes
+            .get(&pane_id)
+            .filter(|pane| pane.exited.is_none())
+            .ok_or_else(|| "the agent's pane has exited".to_string())?;
+        if pane.generation != target.pane.generation {
+            return Err(format!("pane {pane_id} has been replaced"));
+        }
+
+        let runtimes = self.agent_runtimes_for(pane_id, pane);
+        let candidate = if let Some(slot) = &target.slot {
+            // An explicit published slot can only resume in that slot. Existing row handoffs
+            // update the stored reference when the server has evidence that a slot moved.
+            runtimes
+                .into_iter()
+                .find(|runtime| runtime.reference.slot.as_ref() == Some(slot))
+        } else {
+            // A request to the pane's own agent may follow the conversation on screen.
+            match protocol::pane_agent(runtimes, &pane.runtime.rows) {
+                protocol::PaneAgent::One(runtime) => Some(*runtime),
+                protocol::PaneAgent::Missing => None,
+                protocol::PaneAgent::NoneOnScreen => {
+                    return Err("the pane no longer shows the requested conversation".into());
+                }
+            }
+        };
+        let Some(candidate) = candidate else {
+            return Ok(None);
+        };
+        if candidate.identity.id != agent {
+            return Err("the agent moved to another conversation".into());
+        }
+        match self
+            .response_native_session(&candidate.reference)
+            .as_deref()
+        {
+            Some(current) if current == native_session => Ok(Some(candidate.reference)),
+            Some(_) => Err("the agent moved to another conversation".into()),
+            None => Ok(None),
+        }
+    }
+
+    /// Keep delivered requests open for an explicit reply if the pane can still resume them.
+    fn suspend_request_slot(&mut self, target: &protocol::AgentRef) -> bool {
+        if self
+            .panes
+            .get(&target.pane.pane_id)
+            .is_none_or(|pane| pane.exited.is_some() || pane.generation != target.pane.generation)
+        {
+            return false;
+        }
+        let slot = &self.agent_requests.slots[target];
+        let Some(session) = slot
+            .tracker
+            .fence()
+            .and_then(|fence| fence.native_session.clone())
+        else {
+            return false;
+        };
+        let ids: Vec<_> = std::iter::once(&slot.request)
+            .chain(&slot.riders)
+            .filter(|id| self.settles_in_run(id))
+            .cloned()
+            .collect();
+        if ids.is_empty() {
+            return false;
+        }
+        for id in ids {
+            let stored = self
+                .agent_requests
+                .requests
+                .iter_mut()
+                .find(|stored| stored.info.id == id)
+                .expect("active request");
+            stored.later = true;
+            stored.info.to_native_session = Some(session.clone());
+            settle(
+                &mut stored.info,
+                AgentRequestState::Active,
+                Some(WAITING_FOR_RESUME.into()),
+            );
+            self.agent_requests.revision += 1;
+        }
+        self.agent_requests.slots.remove(target);
+        if let Some(pane) = self.panes.get_mut(&target.pane.pane_id) {
+            pane.agent.end_request_run(target);
+        }
+        true
+    }
+
     fn check_deferred_requests(&mut self) {
-        let deferred: Vec<(String, protocol::AgentRef, Option<String>)> = self
+        let deferred: Vec<_> = self
             .agent_requests
             .requests
             .iter()
             .filter(|stored| stored.later && stored.info.state == AgentRequestState::Active)
-            .map(|stored| {
-                (
-                    stored.info.id.clone(),
-                    stored.info.to.clone(),
-                    stored.info.to_native_session.clone(),
-                )
-            })
+            .map(|stored| stored.info.id.clone())
             .collect();
-        for (id, to, recorded_session) in deferred {
-            let native_session = self.response_native_session(&to);
-            let agent = self.request_agent(&to);
-            let info = self.agent_requests.info_mut(&id).expect("listed above");
-            let reason = match agent {
-                Err(reason) => reason,
-                // Bound to the first conversation the agent reports, as a turn's fence is.
-                Ok(_) if recorded_session.is_none() => {
-                    info.to_native_session = native_session;
-                    continue;
-                }
-                Ok(_) if native_session != recorded_session => {
-                    "the agent moved to another conversation".to_string()
-                }
-                Ok(_) => continue,
-            };
-            settle(info, AgentRequestState::Failed, Some(reason));
+        for id in deferred {
+            self.refresh_deferred_request(&id);
         }
+    }
+
+    fn refresh_deferred_request(&mut self, id: &str) {
+        let Some(stored) = self
+            .agent_requests
+            .get(id)
+            .filter(|stored| stored.later && stored.info.state == AgentRequestState::Active)
+        else {
+            return;
+        };
+        let info = &stored.info;
+        let waiting = info.reason.as_deref() == Some(WAITING_FOR_RESUME);
+        let route = self.deferred_reply_route(stored);
+        match route {
+            Ok(Some((target, native_session))) => {
+                if info.to == target && info.to_native_session == native_session && !waiting {
+                    return;
+                }
+                let info = self.agent_requests.info_mut(id).expect("listed above");
+                info.to = target;
+                info.to_native_session = native_session;
+                settle(
+                    info,
+                    AgentRequestState::Active,
+                    Some(crate::control::REPLY_LATER_REASON.into()),
+                );
+            }
+            Ok(None) if !waiting => {
+                let info = self.agent_requests.info_mut(id).expect("listed above");
+                settle(
+                    info,
+                    AgentRequestState::Active,
+                    Some(WAITING_FOR_RESUME.into()),
+                );
+            }
+            Ok(None) => {}
+            Err(reason) => {
+                let info = self.agent_requests.info_mut(id).expect("listed above");
+                settle(info, AgentRequestState::Failed, Some(reason));
+            }
+        }
+    }
+
+    /// The route for a deferred reply. An open pane can be between agent processes.
+    fn deferred_reply_route(
+        &self,
+        stored: &StoredRequest,
+    ) -> std::result::Result<Option<(protocol::AgentRef, Option<String>)>, String> {
+        let target = &stored.info.to;
+        let agent = self.request_agent(target);
+        let current = self.response_native_session(target);
+        let Some(expected) = stored.info.to_native_session.as_deref() else {
+            return agent.map(|agent| Some((agent.reference, current)));
+        };
+        if let Ok(agent) = agent
+            && current.as_deref() == Some(expected)
+        {
+            return Ok(Some((agent.reference, current)));
+        }
+        Ok(self
+            .resumed_request_target(target, &stored.target_agent, expected)?
+            .map(|target| (target, Some(expected.to_string()))))
     }
 
     /// The answer to a reply that stores nothing: a refusal, or an identical repeat.
@@ -1318,11 +1466,19 @@ impl SessionServer {
         }
         let runtime = match self.request_agent(target) {
             Ok(runtime) => runtime,
-            Err(reason) => return self.finish_request_turn(target, TurnOutcome::Failed(reason)),
+            Err(reason) => {
+                if !self.suspend_request_slot(target) {
+                    self.finish_request_turn(target, TurnOutcome::Failed(reason));
+                }
+                return;
+            }
         };
         let native_session = self.response_native_session(target);
         let slot = self.agent_requests.slots.get(target).expect("listed slot");
         if slot.tracker.native_session_changed(&native_session) {
+            if native_session.is_none() && self.suspend_request_slot(target) {
+                return;
+            }
             return self.finish_request_turn(
                 target,
                 TurnOutcome::Failed("the agent moved to another conversation".into()),

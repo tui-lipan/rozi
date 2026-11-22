@@ -177,37 +177,60 @@ fn media_dir(kind: MediaKind) -> Option<PathBuf> {
     xdg_user_dir(file.as_deref(), &home, kind)
 }
 
-/// A folder `user-dirs.dirs` names for `kind`, as GLib reads it, else the English default under
-/// `home`. A folder set to `home` itself is the spec's way of turning it off.
+/// The folder `user-dirs.dirs` names for `kind`, or the English default under `home` when it names
+/// none. The default is rozi's own: XDG lookup has none, but a desktop without xdg-user-dirs often
+/// has the folder. An entry set to `home`, which is how XDG turns a folder off, or one that cannot
+/// be read gives `None` rather than the default.
 #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
 fn xdg_user_dir(file: Option<&str>, home: &std::path::Path, kind: MediaKind) -> Option<PathBuf> {
     let (key, default) = match kind {
         MediaKind::Pictures => ("XDG_PICTURES_DIR", "Pictures"),
         MediaKind::Videos => ("XDG_VIDEOS_DIR", "Videos"),
     };
-    let value = file
+    let mut entries = file
         .into_iter()
         .flat_map(str::lines)
         .filter_map(|line| {
-            line.trim()
+            line.trim_start()
                 .strip_prefix(key)?
                 .trim_start()
                 .strip_prefix('=')
         })
-        .filter_map(|value| value.trim().strip_prefix('"')?.strip_suffix('"'))
-        .next_back();
-    let Some(value) = value else {
+        .peekable();
+    if entries.peek().is_none() {
         return Some(home.join(default));
+    }
+    // As in xdg-user-dirs, the last usable entry wins.
+    entries
+        .filter_map(|value| xdg_user_dir_value(value, home))
+        .next_back()
+        .filter(|dir| dir != home)
+}
+
+/// The path in `"$HOME/path"` or `"/path"`, up to the first unescaped quote.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn xdg_user_dir_value(value: &str, home: &std::path::Path) -> Option<PathBuf> {
+    let quoted = value.trim_start().strip_prefix('"')?;
+    let (in_home, quoted) = match quoted.strip_prefix("$HOME") {
+        Some(rest) => (true, rest),
+        None => (false, quoted),
     };
-    let dir = match value.strip_prefix("$HOME") {
-        Some(rest) if rest.is_empty() || rest.starts_with('/') => {
-            home.join(rest.trim_start_matches('/'))
+    let mut path = String::new();
+    let mut chars = quoted.chars();
+    loop {
+        match chars.next()? {
+            '"' => break,
+            '\\' => path.push(chars.next()?),
+            other => path.push(other),
         }
-        Some(_) => return None,
-        None if value.starts_with('/') => PathBuf::from(value),
-        None => return None,
-    };
-    (dir != home).then_some(dir)
+    }
+    if in_home && (path.is_empty() || path.starts_with('/')) {
+        Some(home.join(path.trim_start_matches('/')))
+    } else if !in_home && path.starts_with('/') {
+        Some(PathBuf::from(path))
+    } else {
+        None
+    }
 }
 
 pub(crate) const ROZI_RUNTIME_DIR_ENV: &str = "ROZI_RUNTIME_DIR";
@@ -1625,6 +1648,14 @@ mod tests {
             Some(PathBuf::from("/data/pics"))
         );
         assert_eq!(read(Some("XDG_PICTURES_DIR=\"$HOME/\"")), None);
+        assert_eq!(
+            read(Some(
+                r#"XDG_PICTURES_DIR="$HOME/My \"best\" pics" # not "Pictures""#
+            )),
+            Some(PathBuf::from("/home/you/My \"best\" pics"))
+        );
+        // Named but unusable is not the same as not named.
+        assert_eq!(read(Some("XDG_PICTURES_DIR=\"Pictures\"")), None);
         assert_eq!(
             read(Some("XDG_VIDEOS_DIR=\"$HOME/Filmy\"")),
             Some(PathBuf::from("/home/you/Pictures"))

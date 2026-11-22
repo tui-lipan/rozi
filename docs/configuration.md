@@ -901,7 +901,7 @@ See [Pane logging](terminal.md#pane-logging).
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `dir` | path string | `captures` in the state directory | Where **Screenshot pane** and **Screenshot UI** write PNGs. `~` expands. Created mode `0700` if missing. |
+| `dir` | path string | `rozi` in the pictures folder, else `captures` in the state directory | Where **Screenshot pane** and **Screenshot UI** write PNGs. `~` expands. Created mode `0700` if missing. |
 | `scale` | integer | `1` | `1` to `3`. Other values warn and use `1`. |
 
 See [Take a screenshot](terminal.md#take-a-screenshot).
@@ -914,7 +914,7 @@ UI's own configuration.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `dir` | path string | `recordings` in the state directory | Where a recording started without `--output` is written, including from **Start pane recording** and **Start UI recording**. `~` expands. Created mode `0700` if missing. |
+| `dir` | path string | `rozi` in the videos folder, else `recordings` in the state directory | Where a recording started without `--output` is written, including from **Start pane recording** and **Start UI recording**. `~` expands. Created mode `0700` if missing. |
 | `max_fps` | integer | `30` | `1` to `120`. |
 | `duration` | duration string | `"24h"` | Such as `"90s"`, `"8h"`, or `"1h30m"`; at most `"7d"`. |
 | `max_bytes` | size string | `"1GiB"` | Such as `"512MiB"`; at least `"64KiB"`. |

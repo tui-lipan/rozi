@@ -69,6 +69,10 @@ pub struct PlatformEnv {
     pub appdata: Option<PathBuf>,
     /// `%LOCALAPPDATA%` (Windows only).
     pub local_appdata: Option<PathBuf>,
+    /// The user's existing pictures folder, where screenshots go unless configured elsewhere.
+    pub pictures_dir: Option<PathBuf>,
+    /// The user's existing videos folder, where recordings go unless configured elsewhere.
+    pub videos_dir: Option<PathBuf>,
 }
 
 impl PlatformEnv {
@@ -99,8 +103,111 @@ impl PlatformEnv {
             xdg_runtime_dir: env_absolute_path("XDG_RUNTIME_DIR").or_else(login_runtime_dir),
             appdata: env_absolute_path("APPDATA"),
             local_appdata: env_absolute_path("LOCALAPPDATA"),
+            pictures_dir: media_dirs().pictures.clone(),
+            videos_dir: media_dirs().videos.clone(),
         }
     }
+}
+
+struct MediaDirs {
+    pictures: Option<PathBuf>,
+    videos: Option<PathBuf>,
+}
+
+/// The desktop's pictures and videos folders, looked up once per process and kept only when they
+/// exist: a headless host without them keeps captures in the state directory.
+fn media_dirs() -> &'static MediaDirs {
+    static DIRS: OnceLock<MediaDirs> = OnceLock::new();
+    DIRS.get_or_init(|| {
+        let existing = |dir: Option<PathBuf>| dir.filter(|dir| dir.is_dir());
+        MediaDirs {
+            pictures: existing(media_dir(MediaKind::Pictures)),
+            videos: existing(media_dir(MediaKind::Videos)),
+        }
+    })
+}
+
+#[derive(Clone, Copy)]
+enum MediaKind {
+    Pictures,
+    Videos,
+}
+
+#[cfg(windows)]
+fn media_dir(kind: MediaKind) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{FOLDERID_Pictures, FOLDERID_Videos, SHGetKnownFolderPath};
+
+    let id = match kind {
+        MediaKind::Pictures => FOLDERID_Pictures,
+        MediaKind::Videos => FOLDERID_Videos,
+    };
+    let mut raw = std::ptr::null_mut();
+    // SAFETY: `raw` receives a CoTaskMemAlloc'd, NUL-terminated string, freed below whatever the
+    // result; a null token asks for the current user's folder.
+    let result = unsafe { SHGetKnownFolderPath(&id, 0, std::ptr::null_mut(), &mut raw) };
+    let path = (result >= 0 && !raw.is_null()).then(|| {
+        // SAFETY: on success `raw` points to a NUL-terminated UTF-16 string.
+        let wide = unsafe {
+            let len = (0..).take_while(|&i| *raw.add(i) != 0).count();
+            std::slice::from_raw_parts(raw, len)
+        };
+        PathBuf::from(std::ffi::OsString::from_wide(wide))
+    });
+    // SAFETY: freeing null is allowed, and `raw` is not used again.
+    unsafe { CoTaskMemFree(raw.cast()) };
+    path.filter(|path| path.is_absolute())
+}
+
+#[cfg(target_os = "macos")]
+fn media_dir(kind: MediaKind) -> Option<PathBuf> {
+    let leaf = match kind {
+        MediaKind::Pictures => "Pictures",
+        MediaKind::Videos => "Movies",
+    };
+    Some(env_path("HOME")?.join(leaf))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn media_dir(kind: MediaKind) -> Option<PathBuf> {
+    let home = env_path("HOME")?;
+    let config_home = env_absolute_path("XDG_CONFIG_HOME").unwrap_or_else(|| home.join(".config"));
+    let file = fs::read_to_string(config_home.join("user-dirs.dirs")).ok();
+    xdg_user_dir(file.as_deref(), &home, kind)
+}
+
+/// A folder `user-dirs.dirs` names for `kind`, as GLib reads it, else the English default under
+/// `home`. A folder set to `home` itself is the spec's way of turning it off.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn xdg_user_dir(file: Option<&str>, home: &std::path::Path, kind: MediaKind) -> Option<PathBuf> {
+    let (key, default) = match kind {
+        MediaKind::Pictures => ("XDG_PICTURES_DIR", "Pictures"),
+        MediaKind::Videos => ("XDG_VIDEOS_DIR", "Videos"),
+    };
+    let value = file
+        .into_iter()
+        .flat_map(str::lines)
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix(key)?
+                .trim_start()
+                .strip_prefix('=')
+        })
+        .filter_map(|value| value.trim().strip_prefix('"')?.strip_suffix('"'))
+        .next_back();
+    let Some(value) = value else {
+        return Some(home.join(default));
+    };
+    let dir = match value.strip_prefix("$HOME") {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => {
+            home.join(rest.trim_start_matches('/'))
+        }
+        Some(_) => return None,
+        None if value.starts_with('/') => PathBuf::from(value),
+        None => return None,
+    };
+    (dir != home).then_some(dir)
 }
 
 pub(crate) const ROZI_RUNTIME_DIR_ENV: &str = "ROZI_RUNTIME_DIR";
@@ -789,22 +896,23 @@ fn tighten_own_directory(_dir: &std::path::Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Where the screenshot actions write: `configured` as the user named it, else `captures` in the
-/// state directory.
+/// Where the screenshot actions write: `configured` as the user named it, else `rozi` in the
+/// pictures folder, else `captures` in the state directory.
 pub fn capture_dir(env: &PlatformEnv, configured: Option<&std::path::Path>) -> io::Result<PathBuf> {
-    output_dir(env, configured, "captures")
+    output_dir(env, configured, env.pictures_dir.as_deref(), "captures")
 }
 
 /// Where a session server writes a recording it names itself: `configured` as the user named it,
-/// else `recordings` in the state directory.
+/// else `rozi` in the videos folder, else `recordings` in the state directory.
 pub fn recording_dir(
     env: &PlatformEnv,
     configured: Option<&std::path::Path>,
 ) -> io::Result<PathBuf> {
-    output_dir(env, configured, "recordings")
+    output_dir(env, configured, env.videos_dir.as_deref(), "recordings")
 }
 
-/// `configured`, else `leaf` in the state directory.
+/// `configured`, else `rozi` in `media`, else `leaf` in the state directory. A `--runtime-dir`
+/// root keeps everything inside it, so an isolated build never writes to the user's folders.
 ///
 /// A directory rozi has to create is created private to its owner. One the user already has, such
 /// as a pictures folder, is used as it is: refusing it for being readable by others would make the
@@ -812,9 +920,13 @@ pub fn recording_dir(
 fn output_dir(
     env: &PlatformEnv,
     configured: Option<&std::path::Path>,
+    media: Option<&std::path::Path>,
     leaf: &str,
 ) -> io::Result<PathBuf> {
-    let Some(dir) = configured else {
+    let media = media
+        .filter(|_| env.rozi_runtime_dir.is_none())
+        .map(|media| media.join(APP_DIR));
+    let Some(dir) = configured.or(media.as_deref()) else {
         let dir = private_state_dir(env)?.join(leaf);
         fs_security::ensure_private_dir(&dir)?;
         return Ok(dir);
@@ -1495,6 +1607,50 @@ mod tests {
             Some(value) => unsafe { std::env::set_var(key, value) },
             None => unsafe { std::env::remove_var(key) },
         }
+    }
+
+    #[test]
+    fn user_dirs_file_names_the_media_folder_or_turns_it_off() {
+        let home = std::path::Path::new("/home/you");
+        let read = |file: Option<&str>| xdg_user_dir(file, home, MediaKind::Pictures);
+        assert_eq!(read(None), Some(PathBuf::from("/home/you/Pictures")));
+        assert_eq!(
+            read(Some(
+                "# set by xdg-user-dirs-update\nXDG_PICTURES_DIR=\"$HOME/Obrazy\"\n"
+            )),
+            Some(PathBuf::from("/home/you/Obrazy"))
+        );
+        assert_eq!(
+            read(Some("XDG_PICTURES_DIR=\"/data/pics\"")),
+            Some(PathBuf::from("/data/pics"))
+        );
+        assert_eq!(read(Some("XDG_PICTURES_DIR=\"$HOME/\"")), None);
+        assert_eq!(
+            read(Some("XDG_VIDEOS_DIR=\"$HOME/Filmy\"")),
+            Some(PathBuf::from("/home/you/Pictures"))
+        );
+    }
+
+    #[test]
+    fn captures_go_to_the_media_folder_unless_the_runtime_is_isolated() {
+        let scratch = tempfile::tempdir().unwrap();
+        let pictures = scratch.path().join("Pictures");
+        fs::create_dir(&pictures).unwrap();
+        let mut env = PlatformEnv {
+            xdg_state_home: Some(scratch.path().join("state")),
+            local_appdata: Some(scratch.path().join("state")),
+            pictures_dir: Some(pictures.clone()),
+            ..PlatformEnv::default()
+        };
+        let dir = capture_dir(&env, None).unwrap();
+        assert_eq!(dir, pictures.join("rozi"));
+        assert!(dir.is_dir());
+
+        env.rozi_runtime_dir = Some(scratch.path().join("runtime"));
+        assert_eq!(
+            capture_dir(&env, None).unwrap(),
+            scratch.path().join("runtime/state/captures")
+        );
     }
 
     fn env_with_home(home: &str) -> PlatformEnv {

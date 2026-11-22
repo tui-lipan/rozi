@@ -78,8 +78,8 @@ pub enum Output {
     Named { dir: PathBuf, stem: String },
 }
 
-/// The directory a recording its recorder names goes in: `configured`, else `recordings` in the
-/// state directory, created private when rozi makes it.
+/// The directory a recording its recorder names goes in: `configured`, else `rozi` in the videos
+/// folder, else `recordings` in the state directory, created private when rozi makes it.
 pub fn recording_dir(configured: Option<&Path>) -> Result<PathBuf, ControlResponse> {
     let env = crate::platform::paths::PlatformEnv::from_process();
     crate::platform::paths::recording_dir(&env, configured).map_err(|error| {

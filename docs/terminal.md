@@ -356,7 +356,8 @@ The flash comes after the picture is taken,
 so it never appears in the file. With `[animations] enabled = false` or `focus_chrome = false`, only
 the toast appears.
 
-Files go into `[capture] dir`, which defaults to `captures` in the state directory, and are named
+Files go into `[capture] dir`, which defaults to `rozi` in your pictures folder, such as
+`~/Pictures/rozi`, or `captures` in the state directory when there is no pictures folder. They are named
 `rozi-pane-<ID>-<YYYYMMDD-HHMMSS>.png` or `rozi-ui-<YYYYMMDD-HHMMSS>.png` in local time. A second
 screenshot in the same second gets `-2`, `-3`, and so on; an existing file is never replaced.
 `[capture] scale` (1 to 3) enlarges the image. A screenshot is always written on the machine

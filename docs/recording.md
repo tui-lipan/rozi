@@ -219,9 +219,10 @@ written by the UI, on your machine, into `[recording] dir` from your own configu
 
 Without `--output`, the server names the file `<session>-pane-<id>-<date>-<time>.rozirec`, such as
 `dev-pane-3-20260925-141503.rozirec`, and adds `-2`, `-3`, and so on rather than replace one that
-exists. It writes into `[recording] dir` from the configuration on the session's host, or
-`recordings` in the state directory there: on Linux, `~/.local/state/rozi/recordings`. A directory
-rozi creates is readable only by you.
+exists. It writes into `[recording] dir` from the configuration on the session's host, or `rozi`
+in your videos folder there (`~/Videos/rozi`, or `~/Movies/rozi` on macOS). A host without a
+videos folder uses `recordings` in the state directory. A directory rozi creates is readable only by
+you.
 
 With `--output`, the directory must already exist. With `--session` or `--here`, a relative `--output` is
 resolved against the directory you run `rozi` in. With `--remote HOST --session NAME`, the file is

@@ -550,6 +550,8 @@ fn cache_env(root: &Path) -> PlatformEnv {
         xdg_runtime_dir: Some(root.join("run")),
         appdata: Some(root.join("AppData").join("Roaming")),
         local_appdata: Some(root.join("AppData").join("Local")),
+        pictures_dir: None,
+        videos_dir: None,
     }
 }
 

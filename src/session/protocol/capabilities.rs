@@ -82,11 +82,14 @@ pub enum Capability {
     AgentAskNow,
     /// The server can deliver an agent message without waiting for a reply.
     AgentAskNoReply,
+    /// The server takes [`super::ClientMessage::ReportAgentSession`] and the `agent-session`
+    /// control command: a pane's conversation reported without claiming its state.
+    AgentSessionReports,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 17] = [
+    pub const ALL: [Capability; 18] = [
         Capability::AgentAskNoReply,
         Capability::AgentAskNow,
         Capability::AgentAttachments,
@@ -94,6 +97,7 @@ impl Capability {
         Capability::AgentReplyLater,
         Capability::AgentRequestUpdates,
         Capability::AgentRequests,
+        Capability::AgentSessionReports,
         Capability::AgentSummaries,
         Capability::ClientHandoff,
         Capability::DragAndDrop,
@@ -126,6 +130,7 @@ impl Capability {
             Capability::SpawnAgentResume => "spawn-agent-resume",
             Capability::AgentAskNow => "agent-ask-now",
             Capability::AgentAskNoReply => "agent-ask-no-reply",
+            Capability::AgentSessionReports => "agent-session-reports",
         }
     }
 
@@ -145,7 +150,7 @@ impl Capability {
             | Self::SessionSharing
             | Self::SessionPublish => "0.0.50",
             Self::SpawnAgentResume => "0.1.1",
-            Self::AgentAskNow | Self::AgentAskNoReply => "0.1.2",
+            Self::AgentAskNow | Self::AgentAskNoReply | Self::AgentSessionReports => "0.1.2",
         }
     }
 
@@ -251,6 +256,11 @@ pub const GATED_VOCABULARY: &[GatedValue] = &[
     session_sharing_command("share-grant"),
     session_sharing_command("share-revoke"),
     session_sharing_command("share-list"),
+    GatedValue {
+        vocabulary: "ControlRequest",
+        value: "agent-session",
+        capability: Capability::AgentSessionReports,
+    },
 ];
 
 /// A control command a session server serves only with [`Capability::SessionSharing`].

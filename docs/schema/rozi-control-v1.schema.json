@@ -3150,6 +3150,36 @@
           "type": "object"
         },
         {
+          "description": "Name the conversation the pane's agent is in, so restoring the session reopens it, without\nreporting its state: screen detection keeps reading the pane.",
+          "properties": {
+            "agent": {
+              "type": "string"
+            },
+            "cmd": {
+              "const": "agent-session",
+              "type": "string"
+            },
+            "native_session": {
+              "type": "string"
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "agent",
+            "native_session"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Raise a toast from a script.\n\nThe automation surface can act but not report: a command that closes its own picker, or\nruns under `[keys] exec` with no pane, finishes invisibly. This is the \"useful off-screen\nresult\" toasts are reserved for - not a receipt for something already on screen.",
           "properties": {
             "cmd": {
@@ -5299,6 +5329,36 @@
             "cmd",
             "integration",
             "seq"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Name the conversation the pane's agent is in, so restoring the session reopens it, without\nreporting its state: screen detection keeps reading the pane.",
+          "properties": {
+            "agent": {
+              "type": "string"
+            },
+            "cmd": {
+              "const": "agent-session",
+              "type": "string"
+            },
+            "native_session": {
+              "type": "string"
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "agent",
+            "native_session"
           ],
           "type": "object"
         },

@@ -1640,6 +1640,51 @@ impl SessionServer {
         messages
     }
 
+    /// Record the conversation `agent` is in for a pane, without claiming the pane's state:
+    /// screen detection keeps reading it.
+    ///
+    /// Kept as the pane's retained conversation, so it lasts as one learned from rows does: until
+    /// live agent rows speak for the pane, or the pane visibly leaves the agent. A newer hook
+    /// report still outranks it, and it outranks an older one.
+    pub(super) fn apply_agent_session(
+        &mut self,
+        owner: Option<ClientId>,
+        pane_id: PaneId,
+        generation: u64,
+        agent: &str,
+        native_session: String,
+    ) -> IntegrationResult<()> {
+        let Some(pane) = self.pane_mut(owner, pane_id) else {
+            return Err(("pane-not-found", format!("pane {pane_id} not found")));
+        };
+        if pane.generation != generation {
+            return Err((
+                "stale-generation",
+                format!("pane {pane_id} generation does not match"),
+            ));
+        }
+        validate_native_session(Some(&native_session))?;
+        // Only the agent the pane runs can name its conversation: the reference becomes an
+        // argument to that agent's resume command.
+        if pane.agent.identity.as_deref() != Some(agent) {
+            return Err((
+                "conflict",
+                format!("pane {pane_id} is not running `{agent}`"),
+            ));
+        }
+        let before = super::resurrect::resume_target(pane);
+        pane.agent.retained_resume = Some(RetainedResume {
+            agent: agent.to_string(),
+            session: native_session,
+            reported_at: crate::runtime_metrics::unix_time_millis(),
+            reported: false,
+        });
+        if super::resurrect::resume_target(pane) != before {
+            self.mark_dirty();
+        }
+        Ok(())
+    }
+
     pub(super) fn apply_agent_integration(
         &mut self,
         owner: Option<ClientId>,

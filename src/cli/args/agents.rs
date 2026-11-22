@@ -74,6 +74,10 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Report integration state",
             ),
             row(
+                "report --agent <ID> --native-session <ID>",
+                "Name the agent's conversation, for restore",
+            ),
+            row(
                 "release --integration <TOKEN> --seq <N> [--target <PANE>]",
                 "Release integration state",
             ),
@@ -343,14 +347,40 @@ fn parse_report(
             other => return Err(format!("unexpected agents report argument `{other}`")),
         }
     }
+    let agent = agent.ok_or_else(|| "agents report requires --agent".to_string())?;
+    let Some(state) = state else {
+        // Without a state, a report only names the conversation: it claims nothing, so nothing
+        // that belongs to a claim may come with it.
+        let claim_flags = [
+            (integration.is_some(), "--integration"),
+            (seq.is_some(), "--seq"),
+            (reason.is_some(), "--reason"),
+            (unless_quiet.is_some(), "--unless-quiet"),
+            (ended, "--ended"),
+            (response.is_some(), "--response-stdin"),
+        ];
+        if let Some((_, flag)) = claim_flags.iter().find(|(given, _)| *given) {
+            return Err(format!("{flag} requires --state"));
+        }
+        return Ok((
+            ControlCommand::AgentSession {
+                target,
+                agent,
+                native_session: native_session.ok_or_else(|| {
+                    "agents report requires --state or --native-session".to_string()
+                })?,
+            },
+            None,
+        ));
+    };
     Ok((
         ControlCommand::AgentReport {
             response,
             target,
-            agent: agent.ok_or_else(|| "agents report requires --agent".to_string())?,
+            agent,
             integration: integration
                 .ok_or_else(|| "agents report requires --integration".to_string())?,
-            state: state.ok_or_else(|| "agents report requires --state".to_string())?,
+            state,
             reason,
             native_session,
             unless_quiet,
@@ -1095,6 +1125,20 @@ mod tests {
                 ..
             }
         ));
+        let report = |args: &str| {
+            parse_agents_args(args.split_whitespace().map(str::to_string).collect())
+                .map(|(command, _)| command)
+        };
+        // Without a state, a report only names the conversation, and claims nothing.
+        assert!(matches!(
+            report("report --agent antigravity --native-session c-1"),
+            Ok(ControlCommand::AgentSession { agent, native_session, target: None })
+                if agent == "antigravity" && native_session == "c-1"
+        ));
+        assert_eq!(
+            report("report --agent agy --native-session c-1 --integration t --seq 1").unwrap_err(),
+            "--integration requires --state"
+        );
     }
 
     #[test]

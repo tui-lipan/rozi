@@ -230,11 +230,13 @@ mod tests {
     }
 
     #[test]
-    fn builtins_with_hook_plugins_resume_their_native_conversation() {
+    fn builtins_resume_their_native_conversation() {
         let catalog = catalog();
         for (id, expected) in [
             ("claude", ["claude", "--resume", "thread id"]),
             ("codex", ["codex", "resume", "thread id"]),
+            ("opencode", ["opencode", "--session", "thread id"]),
+            ("antigravity", ["agy", "--conversation", "thread id"]),
         ] {
             let definition = catalog.by_id(id).expect("built-in agent exists");
             assert_eq!(

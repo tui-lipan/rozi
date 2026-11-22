@@ -425,6 +425,7 @@ fn session_worker_permitted(command: &ControlCommand) -> bool {
         | ControlCommand::AgentPrompt { .. }
         | ControlCommand::AgentReport { .. }
         | ControlCommand::AgentRelease { .. }
+        | ControlCommand::AgentSession { .. }
         | ControlCommand::RecordStart { .. }
         | ControlCommand::RecordStop { .. }
         | ControlCommand::RecordList

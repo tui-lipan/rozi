@@ -1,0 +1,9 @@
+{
+  "agent": "example",
+  "generation": 1,
+  "local": false,
+  "native_session": "example",
+  "pane_id": 1,
+  "request_id": 1,
+  "type": "report-agent-session"
+}

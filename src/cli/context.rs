@@ -227,7 +227,8 @@ pub(super) fn pin_here_target(
         | SetStatus { target, .. }
         | RecordStart { target, .. }
         | AgentReport { target, .. }
-        | AgentRelease { target, .. } => target,
+        | AgentRelease { target, .. }
+        | AgentSession { target, .. } => target,
         RecordStop { id: None, target }
         | RecordMark {
             id: None, target, ..

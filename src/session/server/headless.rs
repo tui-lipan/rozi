@@ -119,6 +119,7 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::AgentPrompt { .. }
         | ControlCommand::AgentReport { .. }
         | ControlCommand::AgentRelease { .. }
+        | ControlCommand::AgentSession { .. }
         | ControlCommand::RecordStart { .. }
         | ControlCommand::RecordStop { .. }
         | ControlCommand::RecordList
@@ -1018,6 +1019,11 @@ impl SessionServer {
                 },
                 broadcasts,
             ),
+            ControlCommand::AgentSession {
+                target,
+                agent,
+                native_session,
+            } => self.session_agent_session(target, &agent, native_session),
             ControlCommand::AgentRelease {
                 target,
                 integration,
@@ -2069,6 +2075,30 @@ impl SessionServer {
                 ControlResponse::empty()
             }
             Ok(None) => ControlResponse::empty(),
+            Err((code, message)) => {
+                ControlResponse::error_with(runtime::integration_error_code(code), message)
+            }
+        }
+    }
+
+    fn session_agent_session(
+        &mut self,
+        target: Option<PaneId>,
+        agent: &str,
+        native_session: String,
+    ) -> ControlResponse {
+        let id = match self.session_target_pane(target) {
+            Ok(id) => id,
+            Err(response) => return response,
+        };
+        let Some(generation) = self.panes.get(&id).map(|pane| pane.generation) else {
+            return ControlResponse::error_with(
+                ControlErrorCode::PaneNotFound,
+                format!("pane {id} not found"),
+            );
+        };
+        match self.apply_agent_session(None, id, generation, agent, native_session) {
+            Ok(()) => ControlResponse::empty(),
             Err((code, message)) => {
                 ControlResponse::error_with(runtime::integration_error_code(code), message)
             }

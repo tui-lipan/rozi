@@ -755,6 +755,43 @@ impl SessionServer {
                     )],
                 }
             }
+            ClientMessage::ReportAgentSession {
+                request_id,
+                pane_id,
+                local,
+                generation,
+                agent,
+                native_session,
+            } => {
+                let response = if self.client_read_only(client_id) {
+                    control::ControlResponse::error_with(
+                        control::ControlErrorCode::ReadOnly,
+                        "read-only client",
+                    )
+                } else {
+                    let owner = local.then_some(client_id);
+                    match self.apply_agent_session(
+                        owner,
+                        pane_id,
+                        generation,
+                        &agent,
+                        native_session,
+                    ) {
+                        Ok(()) => control::ControlResponse::empty(),
+                        Err((code, message)) => control::ControlResponse::error_with(
+                            runtime::integration_error_code(code),
+                            message,
+                        ),
+                    }
+                };
+                vec![(
+                    Target::Sender,
+                    ServerMessage::AgentReportResult {
+                        request_id,
+                        response,
+                    },
+                )]
+            }
             ClientMessage::ReportAgent {
                 response,
                 request_id,
@@ -1922,6 +1959,7 @@ fn refused_by_its_handler(message: &ClientMessage) -> bool {
         message,
         ClientMessage::SetPaneLogging { .. }
             | ClientMessage::ReportAgent { .. }
+            | ClientMessage::ReportAgentSession { .. }
             | ClientMessage::SpawnPane { .. }
             | ClientMessage::MarkedInput { .. }
             | ClientMessage::Attachment { .. }

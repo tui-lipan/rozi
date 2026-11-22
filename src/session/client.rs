@@ -1003,6 +1003,25 @@ impl SessionClient {
         });
     }
 
+    pub fn report_agent_session(
+        &self,
+        request_id: u64,
+        pane_id: PaneId,
+        generation: u64,
+        local: bool,
+        agent: String,
+        native_session: String,
+    ) {
+        self.send_control(ClientMessage::ReportAgentSession {
+            request_id,
+            pane_id,
+            local,
+            generation,
+            agent,
+            native_session,
+        });
+    }
+
     /// Ask the session server to run a session-owned control command for this client, answered
     /// by a [`ServerMessage::AttachedControlResult`] carrying `request_id`.
     pub fn attached_control(&self, request_id: u64, request: crate::control::ControlRequest) {

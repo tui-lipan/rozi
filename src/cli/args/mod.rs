@@ -746,6 +746,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     command,
                     control::ControlCommand::AgentReport { target: None, .. }
                         | control::ControlCommand::AgentRelease { target: None, .. }
+                        | control::ControlCommand::AgentSession { target: None, .. }
                 ) {
                     return Err(
                         "agents report/release with --session requires --target; inherited ROZI_PANE belongs to a different namespace"
@@ -2209,6 +2210,7 @@ pub(super) fn own_session_endpoint(
     match &mut request.command {
         control::ControlCommand::AgentReport { target, .. }
         | control::ControlCommand::AgentRelease { target, .. }
+        | control::ControlCommand::AgentSession { target, .. }
         | control::ControlCommand::SetStatus { target, .. }
             if target.is_none() =>
         {

@@ -164,6 +164,8 @@ pub(crate) fn gate(command: &ControlCommand) -> Gate {
         | ControlCommand::SwitchWorkspace { .. }
         | ControlCommand::MoveToWorkspace { .. }
         | ControlCommand::Publish { .. }
+        // Names a conversation, as a published row's `native_session` does.
+        | ControlCommand::AgentSession { .. }
         | ControlCommand::SetStatus { .. } => Gate::Session,
         ControlCommand::RunAction { .. } => Gate::RunAction,
         ControlCommand::Popup { .. } => Gate::Denied(
@@ -374,6 +376,7 @@ fn pane_targets(command: &ControlCommand) -> Result<Vec<Option<PaneId>>, Control
         ControlCommand::SendText { target, .. }
         | ControlCommand::SendKeys { target, .. }
         | ControlCommand::CapturePane { target, .. }
+        | ControlCommand::AgentSession { target, .. }
         | ControlCommand::SetStatus { target, .. } => vec![*target],
         ControlCommand::Publish { .. } => vec![None],
         // Only a named pane: without one the new pane follows the source pane, admitted above.

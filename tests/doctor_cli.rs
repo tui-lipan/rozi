@@ -20,6 +20,8 @@ fn environment(home: &Path) -> PlatformEnv {
         xdg_runtime_dir: Some(home.join("runtime")),
         appdata: Some(home.join("appdata")),
         local_appdata: Some(home.join("localappdata")),
+        pictures_dir: None,
+        videos_dir: None,
     }
 }
 

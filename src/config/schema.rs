@@ -1605,7 +1605,7 @@ pub struct ExperimentalConfig {
 /// `[capture]`: where the Screenshot pane and Screenshot UI actions write, and at what size.
 #[derive(Clone, Debug)]
 pub struct CaptureConfig {
-    /// `None` writes into `captures` in the state directory.
+    /// `None` writes into `rozi` in the pictures folder, else `captures` in the state directory.
     pub dir: Option<PathBuf>,
     /// PNG scale, `1..=`[`crate::control::MAX_CAPTURE_SCALE`].
     pub scale: u8,
@@ -1624,7 +1624,7 @@ impl Default for CaptureConfig {
 /// session server that records, on its own host, when each recording starts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecordingConfig {
-    /// `None` writes into `recordings` in the state directory.
+    /// `None` writes into `rozi` in the videos folder, else `recordings` in the state directory.
     pub dir: Option<PathBuf>,
     pub max_fps: u32,
     pub duration_ms: u64,

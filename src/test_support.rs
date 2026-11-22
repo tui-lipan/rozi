@@ -223,6 +223,8 @@ pub(crate) fn isolated_env() -> PlatformEnv {
         xdg_runtime_dir: Some(runtime_scratch_root().to_path_buf()),
         appdata: Some(root.join("AppData").join("Roaming")),
         local_appdata: Some(root.join("AppData").join("Local")),
+        pictures_dir: None,
+        videos_dir: None,
     }
 }
 

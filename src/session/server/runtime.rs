@@ -2335,6 +2335,11 @@ fn refresh_agent_identity(
     let launched = identity != pane.agent.identity || relaunched;
     if launched {
         pane.agent.withdrawn_rows.clear();
+        // A replaced agent process is a new conversation until something names it, even when the
+        // shell's prompt never showed in between. An agent reload re-adopts the same process.
+        if !adopting && (relaunched || pane.agent.identity.is_some()) {
+            pane.agent.retained_resume = None;
+        }
         update_row_resume_on_launch(pane, identity.as_deref(), relaunched);
         let launch = identity.is_some() && !adopting;
         // A prompt on the command line is a run from the start, loading screen and all.
@@ -7702,6 +7707,59 @@ mod tests {
         let mut pane = make_pane();
         derive_detected_agent(&mut pane, Some(&catalog()), Some("pi"), Some(&set), true);
         assert_eq!(pane.agent.identity.as_deref(), Some("pi"));
+    }
+
+    /// A conversation named for an agent process is that process's. One that replaced it in the
+    /// pane, with no prompt in between, has not named one yet, so a snapshot must not reopen the
+    /// old conversation into it. An agent reload re-adopts the same process and keeps it.
+    #[test]
+    fn a_relaunched_agent_drops_the_conversation_its_predecessor_named() {
+        use crate::platform::process::ObservedProcess;
+        let agy = |pid| AgentProcessSet {
+            root_pid: 1,
+            topology: ProcessTopology::DescendantTree,
+            complete: true,
+            processes: [(1, None, "bash"), (pid, Some(1), "agy")]
+                .into_iter()
+                .map(
+                    |(pid, parent_pid, name): (u32, Option<u32>, &str)| ObservedProcess {
+                        process: ForegroundProcess {
+                            pid,
+                            started: None,
+                            name: name.into(),
+                            executable: None,
+                            argv: Vec::new(),
+                            agent_hint: None,
+                        },
+                        parent_pid,
+                    },
+                )
+                .collect(),
+        };
+        let named = |pane: &mut ServerPane| {
+            pane.agent.retained_resume = Some(RetainedResume {
+                agent: "antigravity".into(),
+                session: "c-1".into(),
+                reported_at: 1,
+                reported: false,
+            });
+        };
+        let catalog = catalog();
+        let mut pane = make_pane();
+        derive_detected_agent(&mut pane, Some(&catalog), Some("agy"), Some(&agy(10)), true);
+        assert_eq!(pane.agent.identity.as_deref(), Some("antigravity"));
+        named(&mut pane);
+
+        derive_detected_agent(&mut pane, Some(&catalog), Some("agy"), Some(&agy(10)), true);
+        assert!(pane.agent.retained_resume.is_some(), "the same process");
+
+        pane.agent.clear_runtime_identity();
+        pane.agent.adopting = true;
+        derive_detected_agent(&mut pane, Some(&catalog), Some("agy"), Some(&agy(10)), true);
+        assert!(pane.agent.retained_resume.is_some(), "an agent reload");
+
+        derive_detected_agent(&mut pane, Some(&catalog), Some("agy"), Some(&agy(11)), true);
+        assert!(pane.agent.retained_resume.is_none(), "a new process");
     }
 
     /// Grok blinks `⚠ Action Required` into its title and out again about every 1.1 s while it

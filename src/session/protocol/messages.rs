@@ -230,6 +230,17 @@ pub enum ClientMessage {
         ended: bool,
         seq: u64,
     },
+    /// Name the conversation `agent` is in, for the pane, without claiming the pane's state: screen
+    /// detection keeps reading it. Answered by [`ServerMessage::AgentReportResult`] with the same
+    /// `request_id`.
+    ReportAgentSession {
+        request_id: u64,
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+        agent: String,
+        native_session: String,
+    },
     /// Run one session-owned [`crate::control::ControlCommand`] on behalf of this attached
     /// client, answered by [`ServerMessage::AttachedControlResult`] with the same `request_id`.
     ///
@@ -1033,6 +1044,9 @@ impl ClientMessage {
             ClientMessage::PublishRows { .. } | ClientMessage::ActivatePublishedRow { .. } => {
                 Some(super::Capability::SessionPublish)
             }
+            ClientMessage::ReportAgentSession { .. } => {
+                Some(super::Capability::AgentSessionReports)
+            }
             ClientMessage::Unknown => {
                 debug_assert!(false, "ClientMessage::Unknown is never sent");
                 None
@@ -1085,6 +1099,7 @@ impl ClientMessage {
             | ClientMessage::Kill { .. }
             | ClientMessage::SetPaneStatus { .. }
             | ClientMessage::ReportAgent { .. }
+            | ClientMessage::ReportAgentSession { .. }
             | ClientMessage::ReportPaneRows { .. }
             | ClientMessage::MarkedInput { .. }
             | ClientMessage::Attachment { .. }

@@ -414,7 +414,8 @@ What the client honors depends on the command:
 - `sidebar publish` works anywhere, into the extension's own stream tabs. Its rows are headed with
   the process's host and, for a session-bound placement, its session.
 - Commands that act on panes, such as `list-panes`, `capture-pane`, `send-text`, `send-keys`,
-  `split`, `focus`, `publish`, `agents list`, and `agents prompt`, apply only while the session on
+  `split`, `focus`, `publish`, `agents list`, `agents prompt`, and `agents report` without
+  `--state`, apply only while the session on
   screen is on the process's host (and, for an `active-session` or `each-session` placement, is its
   session).
   Otherwise they fail with `out-of-scope`, and `list-panes` and `agents list` return nothing. Panes
@@ -422,7 +423,8 @@ What the client honors depends on the command:
 - `run-action` runs only the extension's own `active-session` commands.
 - Anything that could start a process on the client or read the whole client fails with
   `not-permitted`: other actions, popups, UI captures, recordings, pane logging, metrics,
-  `extensions status`, `agents list --all`, `agents go`, and `agents report`/`release`.
+  `extensions status`, `agents list --all`, `agents go`, `agents report` with `--state`, and
+  `agents release`.
 - `subscribe` receives only events that happen while a session within the process's binding is on
   screen.
 

@@ -271,6 +271,8 @@ screen = { any_of = [
 id = "opencode"
 label = "OpenCode"
 match = { names = ["opencode", "open-code", "opencode-tui"], paths = ["opencode-ai", "/opencode/"] }
+[agents.resume]
+argv = ["opencode", "--session", "{session}"]
 
 [[agents.states]]
 state = "blocked"
@@ -413,6 +415,8 @@ screen = { any_of = ["↵ confirm · esc cancel"] }
 id = "antigravity"
 label = "Antigravity"
 match = { names = ["agy", "antigravity", "antigravity-cli"] }
+[agents.resume]
+argv = ["agy", "--conversation", "{session}"]
 
 # Its startup trust dialog names nothing the shared vocabulary knows.
 [[agents.states]]

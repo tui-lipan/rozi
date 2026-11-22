@@ -112,6 +112,7 @@ const NO_REPLY_PAYLOAD: &[&str] = &[
     "agent-go",
     "agent-release",
     "agent-report",
+    "agent-session",
     "command-visibility",
     "focus",
     "move-to-workspace",

@@ -596,6 +596,18 @@ response text in command-line arguments. Sources are `native-hook`, `native-api`
 - One token owns the pane. Hooks for a conversation running in the background can still report for
   that conversation's row with their own token.
 
+To name only the agent's conversation, so that [restore](sessions.md#reopen-an-agent-conversation)
+reopens it, leave out `--state`:
+
+```bash
+rozi agents report --agent antigravity --native-session "$CONVERSATION_ID"
+```
+
+This report claims nothing: screen detection keeps reading the pane, so it takes no
+`--integration`, `--seq`, or other state flags. `--agent` must name the agent the pane runs. An
+[extension process](writing-extensions.md#what-a-placed-process-may-do) may send it for any pane it
+can reach.
+
 Inside a rozi pane without `--session`, an omitted `--target` means the calling pane
 (`ROZI_PANE`), also in a remote pane and in a session with no window attached. With `--session`,
 always pass `--target`, because an inherited pane number may belong to a different session. Reports

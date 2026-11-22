@@ -1722,6 +1722,49 @@
           "type": "object"
         },
         {
+          "description": "Name the conversation `agent` is in, for the pane, without claiming the pane's state: screen\ndetection keeps reading it. Answered by [`ServerMessage::AgentReportResult`] with the same\n`request_id`.",
+          "properties": {
+            "agent": {
+              "type": "string"
+            },
+            "generation": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "local": {
+              "type": "boolean"
+            },
+            "native_session": {
+              "type": "string"
+            },
+            "pane_id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "request_id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "report-agent-session",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id",
+            "pane_id",
+            "local",
+            "generation",
+            "agent",
+            "native_session"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Run one session-owned [`crate::control::ControlCommand`] on behalf of this attached\nclient, answered by [`ServerMessage::AttachedControlResult`] with the same `request_id`.\n\nThe attached counterpart of [`Self::SessionControl`]: the connection stays open and the\nanswer may arrive after unrelated traffic, so the client matches it by `request_id`. Only\nthe commands a UI has no way to serve itself are accepted (see\n[`crate::session::server::attached_control_refusal`]).",
           "properties": {
             "request": {
@@ -4288,6 +4331,36 @@
             "cmd",
             "integration",
             "seq"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Name the conversation the pane's agent is in, so restoring the session reopens it, without\nreporting its state: screen detection keeps reading the pane.",
+          "properties": {
+            "agent": {
+              "type": "string"
+            },
+            "cmd": {
+              "const": "agent-session",
+              "type": "string"
+            },
+            "native_session": {
+              "type": "string"
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "agent",
+            "native_session"
           ],
           "type": "object"
         },
@@ -9544,6 +9617,7 @@
     "agent-reply-later",
     "agent-request-updates",
     "agent-requests",
+    "agent-session-reports",
     "agent-summaries",
     "client-handoff",
     "drag-and-drop",

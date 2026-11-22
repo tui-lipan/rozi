@@ -19,6 +19,9 @@ pub enum ControlCapability {
     /// `agents prompt` and `agents wait` return the agent's own reply when its integration reports
     /// one, instead of only a terminal capture.
     AgentResponses,
+    /// `agent-session` names a pane's conversation for restore without reporting its state, from
+    /// the pane or from an extension.
+    AgentSessionReports,
     AgentWaits,
     /// A UI's control socket accepts `record-start`, `record-stop`, `record-list`, and `record-mark`,
     /// forwarding them to the session server it is attached to.
@@ -125,12 +128,13 @@ pub enum ControlCapability {
 
 impl ControlCapability {
     /// Every control capability this binary has, in name order.
-    pub const ALL: [ControlCapability; 45] = [
+    pub const ALL: [ControlCapability; 46] = [
         ControlCapability::AgentAskNoReply,
         ControlCapability::AgentAskNow,
         ControlCapability::AgentPromptResults,
         ControlCapability::AgentRequests,
         ControlCapability::AgentResponses,
+        ControlCapability::AgentSessionReports,
         ControlCapability::AgentWaits,
         ControlCapability::AttachedControl,
         ControlCapability::AttachedSessionScope,
@@ -181,6 +185,7 @@ impl ControlCapability {
             ControlCapability::AgentPromptResults => "agent-prompt-results",
             ControlCapability::AgentRequests => "agent-requests",
             ControlCapability::AgentResponses => "agent-responses",
+            ControlCapability::AgentSessionReports => "agent-session-reports",
             ControlCapability::AgentWaits => "agent-waits",
             ControlCapability::AttachedControl => "attached-control",
             ControlCapability::AttachedSessionScope => "attached-session-scope",

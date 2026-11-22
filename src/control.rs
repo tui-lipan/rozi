@@ -124,6 +124,7 @@ impl ControlCommand {
             | Self::AgentPrompt { .. }
             | Self::AgentReport { .. }
             | Self::AgentRelease { .. }
+            | Self::AgentSession { .. }
             | Self::AgentAsk { .. }
             | Self::AgentReply { .. }
             | Self::AgentReplyLater { .. }
@@ -243,6 +244,9 @@ impl ControlCommand {
             | Self::RecordUiMark { .. }
             | Self::Pick { .. }
             | Self::Prompt { .. } => None,
+            Self::AgentSession { .. } => {
+                Some(crate::session::protocol::Capability::AgentSessionReports)
+            }
             Self::AgentAsk { no_reply: true, .. } => {
                 Some(crate::session::protocol::Capability::AgentAskNoReply)
             }
@@ -1014,6 +1018,14 @@ pub enum ControlCommand {
         target: Option<PaneId>,
         integration: String,
         seq: u64,
+    },
+    /// Name the conversation the pane's agent is in, so restoring the session reopens it, without
+    /// reporting its state: screen detection keeps reading the pane.
+    AgentSession {
+        #[serde(default)]
+        target: Option<PaneId>,
+        agent: String,
+        native_session: String,
     },
     /// Raise a toast from a script.
     ///
@@ -3579,7 +3591,8 @@ mod tests {
                 | crate::session::protocol::Capability::AgentAttachments => "0.0.50",
                 crate::session::protocol::Capability::SpawnAgentResume => "0.1.1",
                 crate::session::protocol::Capability::AgentAskNow
-                | crate::session::protocol::Capability::AgentAskNoReply => "0.1.2",
+                | crate::session::protocol::Capability::AgentAskNoReply
+                | crate::session::protocol::Capability::AgentSessionReports => "0.1.2",
                 _ => "0.0.44",
             };
             assert_eq!(cap.introduced_in(), expected, "{cap}");

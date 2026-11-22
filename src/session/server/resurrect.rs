@@ -3456,6 +3456,38 @@ mod tests {
         assert_eq!(resumed(&server), None, "A never comes back");
     }
 
+    /// A conversation named without a state is what a restore reopens, it claims nothing the
+    /// screen reads, and only the agent the pane runs may name one: the reference becomes an
+    /// argument to that agent's resume command.
+    #[test]
+    fn a_session_report_names_the_conversation_without_claiming_the_pane() {
+        let mut server = SessionServer::new_named_with_settings(
+            "native-agent-session-report",
+            ServerSettings {
+                resurrect: true,
+                ..ServerSettings::default()
+            },
+        );
+        let mut pane = running("agy", &[], protocol::PaneCommandPhase::Executing);
+        pane.agent.identity = Some("antigravity".into());
+        let generation = pane.generation;
+        server.panes.insert(1, pane);
+
+        let refused = server.apply_agent_session(None, 1, generation, "claude", "c-1".into());
+        assert_eq!(refused.map_err(|(code, _)| code), Err("conflict"));
+        assert!(!server.snapshot_dirty());
+
+        server
+            .apply_agent_session(None, 1, generation, "antigravity", "c-1".into())
+            .expect("the pane runs antigravity");
+        assert!(server.snapshot_dirty());
+        assert_eq!(
+            resume_target(&server.panes[&1]),
+            Some(("antigravity".into(), "c-1".into(), false))
+        );
+        assert!(server.panes[&1].runtime.integration.is_none());
+    }
+
     #[test]
     fn snapshot_records_only_explicit_native_agent_session_facts() {
         let mut server = SessionServer::new_named_with_settings(

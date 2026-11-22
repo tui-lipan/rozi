@@ -14,8 +14,8 @@ rozi serves the same request and response documents on two transports:
 
 The complete request vocabulary, including `context` and the agent requests (`agents-list`, `agent-get`,
 `agent-read`, `agent-response`, `agent-wait`, `agent-prompt`, `agent-ask`, `agent-reply`, `agent-await`,
-`agent-request`, `agent-requests`, `agent-cancel`, `agent-report`, and `agent-release`) that this page
-does not spell out, is described by the [JSON Schema](control.md#json-schema).
+`agent-request`, `agent-requests`, `agent-cancel`, `agent-report`, `agent-release`, and
+`agent-session`) that this page does not spell out, is described by the [JSON Schema](control.md#json-schema).
 
 ## Caller identity and prompt results
 
@@ -45,6 +45,9 @@ optional `turn_id`, `text`, `source`, `fidelity`, `complete`, and `truncated`. O
 for the prompted incarnation after submission qualifies. `agent-response` takes an agent `target`
 and returns its latest retained response or `null`. Both commands run on session endpoints and
 through attached clients.
+
+`agent-session` takes `target`, `agent`, and `native_session`. It names the conversation a
+restore reopens without claiming the pane's state.
 
 `agent-report` accepts an optional `response` object with those content fields except
 `response_id`, which rozi assigns. State and content share the same sequence validation.
@@ -727,7 +730,7 @@ gains no authority an attached client would not have.
 A session server answers `list-panes`, `layout-get`, `layout-set`, `pane-set`, `pane-move`,
 `pane-swap`, `pane-close`, `context`, `agents-list`, `agent-get`, `agent-read`, `agent-response`, `agent-wait`,
 `agent-prompt`, `agent-ask`, `agent-reply`, `agent-await`, `agent-request`, `agent-requests`,
-`agent-cancel`, `agent-report`, `agent-release`, `metrics`, `capture-pane`, `send-text`,
+`agent-cancel`, `agent-report`, `agent-release`, `agent-session`, `metrics`, `capture-pane`, `send-text`,
 `send-keys`, `new-pane`, `set-status`, `pane-logging`, `record-start`, `record-stop`, `record-list`,
 `record-mark`, `share-grant`, `share-revoke`, `share-list`, `extensions-deploy`,
 `extensions-undeploy`, and `extensions-status`. It refuses

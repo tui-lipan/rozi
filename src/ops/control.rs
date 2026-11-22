@@ -80,6 +80,7 @@ pub(crate) fn handle_control_request(
             envelope.request.command,
             ControlCommand::AgentReport { .. }
                 | ControlCommand::AgentRelease { .. }
+                | ControlCommand::AgentSession { .. }
                 | ControlCommand::SetStatus { target: None, .. }
         ) {
         match crate::ops::attached_control::route(&ctx.state, &envelope.request) {
@@ -545,6 +546,20 @@ pub(crate) fn handle_control_request(
                 unless_quiet,
                 ended,
                 seq,
+                envelope.reply,
+            );
+        }
+        ControlCommand::AgentSession {
+            target,
+            agent,
+            native_session,
+        } => {
+            return report_agent_session(
+                ctx,
+                target.or(envelope.request.source_pane),
+                caller_epoch,
+                agent,
+                native_session,
                 envelope.reply,
             );
         }
@@ -1441,6 +1456,65 @@ fn report_agent(
         unless_quiet,
         ended,
         seq,
+    );
+    Update::none()
+}
+
+/// Name the conversation a pane's agent is in, on the session server that owns the pane, without
+/// reporting its state.
+fn report_agent_session(
+    ctx: &mut Context<AppRoot>,
+    target: Option<PaneId>,
+    origin_epoch: Option<u64>,
+    agent: String,
+    native_session: String,
+    reply: std::sync::mpsc::Sender<ControlResponse>,
+) -> Update {
+    let Some(id) = target else {
+        let _ = reply.send(ControlResponse::error_with(
+            ControlErrorCode::TargetRequired,
+            "agents report requires --target or ROZI_PANE",
+        ));
+        return Update::none();
+    };
+    let destination = match agent_report_destination(&ctx.state, id, origin_epoch) {
+        Ok(destination) => destination,
+        Err(response) => {
+            let _ = reply.send(response);
+            return Update::none();
+        }
+    };
+    let capability = crate::session::protocol::Capability::AgentSessionReports;
+    if !destination.client.supports(capability) {
+        let _ = reply.send(ControlResponse::error_with(
+            ControlErrorCode::Unsupported,
+            format!(
+                "a report without --state needs this session on rozi ≥ {}",
+                capability.introduced_in()
+            ),
+        ));
+        return Update::none();
+    }
+    let request_id = ctx.state.next_agent_report_request_id;
+    ctx.state.next_agent_report_request_id = ctx
+        .state
+        .next_agent_report_request_id
+        .wrapping_add(1)
+        .max(1);
+    ctx.state.pending_agent_report_replies.insert(
+        request_id,
+        crate::state::PendingAgentReportReply {
+            origin_epoch: destination.origin_epoch,
+            reply,
+        },
+    );
+    destination.client.report_agent_session(
+        request_id,
+        id,
+        destination.generation,
+        destination.local,
+        agent,
+        native_session,
     );
     Update::none()
 }

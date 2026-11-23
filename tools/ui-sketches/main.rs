@@ -24,7 +24,7 @@ use rozi::state::{AlertMode, Pane, WorktreePickerState};
 use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
-use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
+use tui_lipan::{FloatRect, KeyMods, Rect};
 
 const SCENARIOS: [(&str, &str, fn()); 22] = [
     (
@@ -231,6 +231,7 @@ fn profile_picker() {
     picker.running.insert(
         "review".into(),
         DiscoveredSessionStatus::Running {
+            terminal_engine: None,
             panes: 2,
             clients: 0,
             has_layout: true,
@@ -841,6 +842,8 @@ fn agent_picker() {
         sessions: Vec::new(),
         projects: Vec::new(),
         agents: vec![rozi::session::protocol::AgentSummary {
+            answered: 0,
+            blocker: None,
             session: "backend".into(),
             reference: AgentRef {
                 pane: PaneRef {
@@ -947,6 +950,7 @@ fn session_picker_cached_hosts() {
         ));
         state.session_picker.as_mut().unwrap().entries[0].status =
             DiscoveredSessionStatus::Running {
+                terminal_engine: None,
                 panes: 1,
                 clients: 0,
                 has_layout: false,
@@ -963,6 +967,7 @@ fn session_picker_cached_hosts() {
         };
         state.session_picker.as_mut().unwrap().entries[1].status = if connected {
             DiscoveredSessionStatus::Running {
+                terminal_engine: None,
                 panes: 2,
                 clients: 0,
                 has_layout: true,
@@ -1021,6 +1026,7 @@ fn session_picker() {
                 origin: Default::default(),
                 ephemeral: false,
                 status: DiscoveredSessionStatus::Running {
+                    terminal_engine: None,
                     panes: 3,
                     clients: 1,
                     has_layout: true,
@@ -1168,7 +1174,7 @@ fn cursor_settings() {
     backend.state_mut().config.animations.cursor_trail.mode = CursorTrailMode::Jump;
     backend.state_mut().config.animations.cursor_trail.style = CursorTrailStyle::Smear;
     backend.state_mut().show_settings = true;
-    backend.state_mut().settings_navigation.tab = rozi::state::SettingsTab::General;
+    backend.state_mut().settings_navigation.tab = rozi::state::SettingsTab::Motion;
     backend.state_mut().settings_selected = Some(CycleCursorTrailStyle);
     backend.set_viewport(viewport(64, 40));
     backend.render();
@@ -1524,6 +1530,9 @@ fn sidebar_agents() {
         claude.agents = vec![
             reference(10, Some("fix")).into(),
             AgentRecord {
+                answered: 0,
+                request_task: None,
+                task_updated_at_unix_ms: None,
                 reference: reference(10, Some("watch")),
                 completions: 1,
             },
@@ -1555,6 +1564,8 @@ fn sidebar_agents() {
             sessions: Vec::new(),
             agents: vec![
                 AgentSummary {
+                    answered: 0,
+                    blocker: None,
                     session: "backend".into(),
                     reference: reference(4, Some("review")),
                     agent: "claude".into(),
@@ -1567,6 +1578,8 @@ fn sidebar_agents() {
                     screen_title: None,
                 },
                 AgentSummary {
+                    answered: 0,
+                    blocker: None,
                     session: "backend".into(),
                     reference: reference(5, Some("migrate")),
                     agent: "codex".into(),
@@ -1738,6 +1751,7 @@ fn sidebar_sessions() {
                     DiscoveredSessionStatus::Restorable
                 } else {
                     DiscoveredSessionStatus::Running {
+                        terminal_engine: None,
                         panes: 2,
                         clients: 0,
                         has_layout: true,
@@ -1835,6 +1849,8 @@ fn sidebar_projects() {
         snapshot.projects[0].session = "eph-other".into();
         snapshot.projects[0].branch = Some("fix/long-branch-name-with-unicode-修正".into());
         snapshot.agents.push(rozi::session::protocol::AgentSummary {
+            answered: 0,
+            blocker: None,
             session: "eph-other".into(),
             reference: rozi::session::protocol::AgentRef {
                 pane: rozi::session::protocol::PaneRef {
@@ -2172,6 +2188,7 @@ fn session_compatibility() {
                 name: "legacy-work".into(),
                 origin: Default::default(),
                 status: DiscoveredSessionStatus::Running {
+                    terminal_engine: None,
                     panes: 3,
                     clients: 1,
                     has_layout: true,
@@ -2186,6 +2203,7 @@ fn session_compatibility() {
                 name: "current-dev".into(),
                 origin: Default::default(),
                 status: DiscoveredSessionStatus::Running {
+                    terminal_engine: None,
                     panes: 2,
                     clients: 0,
                     has_layout: true,

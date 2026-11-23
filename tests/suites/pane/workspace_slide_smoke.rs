@@ -125,6 +125,20 @@ fn workspace_slide_reverses_and_skips_intermediate_workspaces() {
 }
 
 #[test]
+fn workspace_slide_skips_a_workspace_switched_through_before_a_frame() {
+    rozi::test_support::on_deeper_stack(|| {
+        let mut backend = backend();
+        backend.enqueue(Msg::RunAction(Action::SwitchWorkspace(1)));
+        backend.enqueue(Msg::RunAction(Action::SwitchWorkspace(4)));
+        backend.pump().unwrap();
+        backend.advance(Duration::from_millis(500));
+        let frame = grid(&backend);
+        assert!(!frame.contains("SECOND"), "{frame}");
+        assert!(frame.contains("FIFTH"), "{frame}");
+    });
+}
+
+#[test]
 fn workspace_slide_snaps_when_disabled_or_resized() {
     rozi::test_support::on_deeper_stack(|| {
         for master in [false, true] {

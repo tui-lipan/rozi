@@ -680,13 +680,14 @@ pub(crate) fn sync_workspace_slide(ctx: &mut Context<AppRoot>) {
     let mut slide = match previous {
         Some(slide) if !switched => slide,
         _ => {
-            let same_attachment = previous.is_some_and(|slide| slide.epoch == epoch);
+            let shown = ctx.state.workspace_shown.get();
+            let same_attachment = shown.is_some_and(|(shown_epoch, _)| shown_epoch == epoch);
             WorkspaceSlide {
                 epoch,
                 active,
-                outgoing: previous
+                outgoing: shown
                     .filter(|_| same_attachment)
-                    .map_or(active, |slide| slide.active),
+                    .map_or(active, |(_, shown_active)| shown_active),
                 same_attachment,
                 motion: previous.is_some_and(|slide| slide.motion),
                 content_viewport: previous.map_or(content_viewport, |slide| slide.content_viewport),
@@ -696,7 +697,13 @@ pub(crate) fn sync_workspace_slide(ctx: &mut Context<AppRoot>) {
     // Another workspace or another session replaces the whole screen, and the slide or portal
     // already shows where the user went. A smear from the old screen's cursor to the new one's
     // would join two unrelated places, so the cursor arrives without a trail.
-    if switched && previous.is_some() {
+    if switched
+        && ctx
+            .state
+            .workspace_shown
+            .get()
+            .is_some_and(|shown| shown != (epoch, active))
+    {
         ctx.skip_cursor_trail();
     }
     let motion =
@@ -724,6 +731,9 @@ pub(crate) fn workspace_offsets(ctx: &Context<AppRoot>, resized: bool) -> Vec<(u
         .workspace_slide
         .filter(|slide| slide.epoch == ctx.state.runtime_epoch && slide.active == active);
     let outgoing = slide.map_or(active, |slide| slide.outgoing);
+    ctx.state
+        .workspace_shown
+        .set(Some((ctx.state.runtime_epoch, active)));
     let same_attachment = slide.is_some_and(|slide| slide.same_attachment);
     let enabled = workspace_motion_enabled(ctx.state.config.animations, resized, same_attachment);
     let mut visible = Vec::with_capacity(2);

@@ -2841,6 +2841,13 @@ fn session_view_revision_step(reconnect: bool) -> u64 {
                 left: None,
                 parked_epoch: None,
             });
+        if reconnect {
+            // A reconnect mints its epoch when it starts, and the overlay renders under it before
+            // the attach lands.
+            backend.state_mut().runtime_epoch = 1;
+            backend.state_mut().current_mut().epoch = 1;
+            backend.render();
+        }
         let before = backend.state().session_view_revision;
         backend.take_cursor_trail_skip();
         backend

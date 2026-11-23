@@ -514,8 +514,9 @@ pub(crate) fn finish_session_install(ctx: &mut Context<AppRoot>) {
     // The launcher reuses `runtime_epoch` when it starts an ephemeral session. Without this the
     // workspace-slide keys treat that as a switch away from workspace 0 (the launcher panel).
     ctx.state.workspace_slide = None;
-    // Resetting slide history bypasses the screen-switch check in `sync_workspace_slide`. The incoming session's
-    // cursor must still arrive without a trail from the outgoing pane or picker.
+    ctx.state.workspace_shown.set(None);
+    // Resetting slide history bypasses the screen-switch check in `sync_workspace_slide`. The
+    // incoming session's cursor must still arrive without a trail from the outgoing pane or picker.
     ctx.skip_cursor_trail();
     ctx.state.commands_dirty = true;
     crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);

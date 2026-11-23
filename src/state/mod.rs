@@ -240,6 +240,9 @@ pub struct State {
     pub last_content_viewport: Cell<Option<Rect>>,
     /// The latest workspace switch, which the view slides between.
     pub workspace_slide: Option<WorkspaceSlide>,
+    /// The attachment and workspace the last frame showed. A slide starts from here, so a
+    /// workspace switched through before any frame showed it never sweeps across the screen.
+    pub workspace_shown: Cell<Option<(u64, usize)>>,
     /// Whether the last view dimmed the workspace, and whether it dimmed for a dialog, so each dim
     /// is handed to its layer on the frame it changes. See `view::animation::layer_fade`.
     pub dim_targets: Cell<(bool, bool)>,
@@ -745,6 +748,7 @@ impl State {
             last_viewport: Cell::new(None),
             last_content_viewport: Cell::new(None),
             workspace_slide: None,
+            workspace_shown: Cell::new(None),
             dim_targets: Cell::new((false, false)),
             session_dim_layer: Cell::new((None, crate::layout::anim::FadeStage::Running)),
             session_layer_key: Cell::new((0, 0)),

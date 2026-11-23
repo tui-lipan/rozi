@@ -588,6 +588,9 @@ pub struct AgentScratch {
     pub blocker_read: Option<AgentBlockerRead>,
     /// The last state a sweep positively observed, retained while later sweeps see no evidence.
     pub hold: Option<AgentHold>,
+    /// The foreground process group last checked against a shell prompt mark, the phase marked,
+    /// and whether a shell leads the group. See [`runtime::witnessed_command_phase`].
+    pub prompt_witness: Option<(i32, protocol::PaneCommandPhase, bool)>,
     /// The last state loud enough to hold, and when it was last positively seen, so neither a
     /// blinking attention signal nor a status line caught mid-redraw reads as a state change. See
     /// [`STATE_SETTLE_GRACE`](super::runtime::STATE_SETTLE_GRACE).

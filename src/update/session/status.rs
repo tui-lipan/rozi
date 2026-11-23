@@ -147,6 +147,7 @@ pub(crate) fn apply_pane_runtime_state(
     let finished = finished_records(&pane.agents, &agents);
     // Read under the old records, which name the rows the old runtime published.
     let previous_blocked = pane.agent_blocked();
+    let had_agent = pane.terminal.has_agent();
     pane.agents = agents;
     let previous_status = pane.terminal.reported_status.clone();
     let previous_agent_status = pane.terminal.agent_status();
@@ -188,6 +189,11 @@ pub(crate) fn apply_pane_runtime_state(
         pane.terminal
             .apply_rows(state.rows, state.integration, &finished_rows);
     finished_rows.extend(finished_activities);
+    // A bell rung before the agent appeared, such as the shell's as it launches the agent, is not
+    // the agent's: from here its own state marks the pane, as it does for every later bell.
+    if !had_agent && pane.terminal.has_agent() {
+        pane.activity.bell = false;
+    }
     let (failed_rows, failed_here): (Vec<_>, Vec<_>) = pane
         .note_failures(&previous_failures)
         .into_iter()
@@ -960,6 +966,28 @@ mod tests {
         let applied = apply_pane_runtime_state(&mut pane, Vec::new(), runtime);
         assert!(!applied.edges.became_blocked);
         assert!(!applied.edges.finished);
+    }
+
+    #[test]
+    fn an_agent_appearing_clears_the_bell_rung_before_it() {
+        let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
+        pane.activity.bell = true;
+        apply_pane_runtime_state(&mut pane, Vec::new(), PaneRuntimeState::default());
+        assert!(
+            pane.activity.bell,
+            "a shell's bell stays while no agent runs"
+        );
+        let runtime = PaneRuntimeState {
+            agent_launch: 1,
+            detected_agent: Some(DetectedAgent {
+                blocker: None,
+                agent: AgentIdentity::new("codex", "Codex").into(),
+                state: DetectedAgentState::Idle,
+            }),
+            ..PaneRuntimeState::default()
+        };
+        apply_pane_runtime_state(&mut pane, Vec::new(), runtime);
+        assert!(!pane.activity.bell);
     }
 
     #[test]

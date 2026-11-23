@@ -313,9 +313,9 @@ command finishes and every few seconds. Neither refreshes while hidden.
 
 Worktrees lists the Git worktrees of the focused pane's repository, on the host running that pane's
 session. A heading names the repository and host, with the checkouts beneath it. Each checkout is
-listed by branch, with PR/CI status underneath, such as `#114 · Passed` or `#112 · Merged`. Paths
-stay hidden; open the **Worktrees** picker to search by path or copy one with `Ctrl+C`. A bar in
-the left margin marks the checkout the focused pane is in. See [Read work status](worktrees.md#read-work-status) for
+listed by branch, or a detached one by its directory name, with PR/CI status underneath, such as
+`#114 · Passed` or `#112 · Merged`. Paths stay hidden; open the **Worktrees** picker to search by
+path or copy one with `Ctrl+C`. A bar in the left margin marks the checkout the focused pane is in. See [Read work status](worktrees.md#read-work-status) for
 GitHub setup and status meanings.
 
 The marker on the right shows whether a session was started from that checkout, using the same
@@ -331,7 +331,7 @@ markers as the [Sessions picker](sessions.md#use-the-session-picker):
 | `◌` | Saved; activating restores it |
 
 A number after the marker counts the sessions using the checkout. `Primary`, `Locked`,
-`Stale lock`, or `Prunable` appears to its left when it applies; see
+`Stale lock`, `Prunable`, or `Detached` appears to its left when it applies; see
 [Unlock a worktree](worktrees.md#unlock-a-worktree). When you hover a row, or select it in a focused
 sidebar, the right edge changes to what activating it does: `open`, `switch`, `connect`, `attach`,
 `restore`, `choose`, `new session`, or `new pane`. A checkout you can remove also shows its `✕`.

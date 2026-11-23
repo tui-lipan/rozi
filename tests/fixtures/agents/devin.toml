@@ -25,3 +25,23 @@ screen = '''
 
  ↑↓ select · ↵ confirm · esc cancel
 '''
+
+# Captured from Devin CLI 3000.14.30821 on 2026-11-24, signed in, first launch in an unseen
+# repository, nothing pressed; the path is scrubbed. It shares the sign-in chooser's hint, so it
+# read as blocked with no reason, and a wait for it to become ready ran out its whole timeout.
+# Kept as evidence that the hint alone does not mean a sign-in.
+[[case]]
+name = "startup-trust-dialog"
+state = "blocked"
+blocker = "trust"
+screen = '''
+ ✱ Do you trust the authors of this directory?
+   For security, devin should not be run in directories with untrusted content.
+
+ ~/.cache/rozi-agent-lab
+
+ ❭ 1 Yes, trust
+   2 No, exit
+
+ ↑↓ select · ↵ confirm · esc cancel
+'''

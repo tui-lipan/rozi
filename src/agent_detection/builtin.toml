@@ -427,6 +427,13 @@ blocker = "login"
 scope = "footer"
 screen = { all_of = ["log in with browser", "↵ confirm · esc cancel"] }
 
+# Signed in, a directory it has not seen opens on a trust chooser with the same hint.
+[[agents.states]]
+state = "blocked"
+blocker = "trust"
+scope = "footer"
+screen = { all_of = ["do you trust the authors of this directory?", "↵ confirm · esc cancel"] }
+
 [[agents]]
 id = "antigravity"
 label = "Antigravity"

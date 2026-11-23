@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::SearchEntry;
 
 pub(crate) fn layout_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     let workspace_index = ctx.state.current().active_workspace;

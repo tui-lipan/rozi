@@ -1,6 +1,7 @@
 //! Absolute edits to a shared layout document, shared by the server and the live-workspace bridge.
 
 use super::*;
+use tui_lipan::FloatRect;
 
 /// Why a shared-document edit was refused.
 #[derive(Clone, Debug, PartialEq, Eq)]

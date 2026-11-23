@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use tui_lipan::TerminalColorPalette;
 
 use super::headless::ReplyTo;
 use super::*;

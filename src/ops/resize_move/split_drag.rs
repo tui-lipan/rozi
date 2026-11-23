@@ -248,6 +248,7 @@ mod tests {
     };
     use crate::state::{Pane, Workspace};
     use crate::{AppRoot, Msg};
+    use tui_lipan::FloatRect;
     use tui_lipan::TestBackend;
 
     #[test]
@@ -447,6 +448,7 @@ mod tests {
     mod pointer_drags {
         use super::*;
         use tui_lipan::core::event::{KeyMods, MouseButton, MouseEvent, MouseKind};
+        use tui_lipan::{FloatRect, PointerShape};
 
         fn axis(vertical_divider: bool) -> SplitAxis {
             if vertical_divider {

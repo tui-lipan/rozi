@@ -727,7 +727,7 @@ pub(super) fn workbar_tick(ctx: &mut Context<AppRoot>) -> Update {
         .as_ref()
         .is_none_or(|rendered| *rendered != current);
     if changed {
-        Update::with_command(command)
+        Update::full_with_command(command)
     } else {
         Update::command_only(command)
     }
@@ -739,6 +739,7 @@ pub(super) fn workbar_tick(ctx: &mut Context<AppRoot>) -> Update {
 pub(super) fn update_check_tick(ctx: &mut Context<AppRoot>) -> Update {
     match ctx.state.update_check_interval() {
         Some(interval) => Update::command_only(crate::check_for_update_and_reschedule(
+            ctx.link(),
             interval,
             ctx.state.usage_count_enabled(),
         )),
@@ -847,7 +848,7 @@ mod tests {
     }
 
     fn sized(backend: &mut TestBackend<AppRoot>) {
-        backend.set_viewport(tui_lipan::prelude::Rect {
+        backend.set_viewport(tui_lipan::Rect {
             x: 0,
             y: 0,
             w: 100,
@@ -916,9 +917,9 @@ mod tests {
             assert!(shown.contains("the command keeps running"), "{shown}");
             // Leaving does not wait for the command.
             backend
-                .send_key(tui_lipan::prelude::KeyEvent {
-                    code: tui_lipan::prelude::KeyCode::Esc,
-                    mods: tui_lipan::prelude::KeyMods::NONE,
+                .send_key(tui_lipan::KeyEvent {
+                    code: tui_lipan::KeyCode::Esc,
+                    mods: tui_lipan::KeyMods::NONE,
                 })
                 .unwrap();
             assert!(!backend.state().show_palette);
@@ -961,9 +962,9 @@ mod tests {
             backend.render();
             for ch in "slow".chars() {
                 backend
-                    .send_key(tui_lipan::prelude::KeyEvent {
-                        code: tui_lipan::prelude::KeyCode::Char(ch),
-                        mods: tui_lipan::prelude::KeyMods::NONE,
+                    .send_key(tui_lipan::KeyEvent {
+                        code: tui_lipan::KeyCode::Char(ch),
+                        mods: tui_lipan::KeyMods::NONE,
                     })
                     .unwrap();
             }

@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::{PointerShape, SearchEntry, SearchMatchMode};
 
 use crate::state::SettingControl;
 

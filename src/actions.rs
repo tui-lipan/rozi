@@ -1,4 +1,5 @@
 use tui_lipan::prelude::*;
+use tui_lipan::{PasteOrigin, TerminalKeyModes, TerminalPasteEvent, encode_paste};
 
 use crate::AppRoot;
 use crate::config::UserCommandAction;
@@ -663,6 +664,7 @@ mod tests {
     use super::*;
     use crate::pane::lifecycle::find_pane_mut;
     use crate::state::ToastChannel;
+    use tui_lipan::FloatRect;
 
     #[test]
     fn layout_mutating_classification_gates_structure_not_navigation() {

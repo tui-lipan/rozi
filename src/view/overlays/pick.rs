@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::{PointerShape, SearchEntry};
 
 /// Room the modal frame and its padding take before a row's own text starts.
 const PICK_ROW_CHROME: usize = 4;

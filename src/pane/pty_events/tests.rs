@@ -4,6 +4,11 @@ use crate::AppRoot;
 use crate::state::{Pane, State};
 use tui_lipan::core::event::{MouseButton, MouseKind};
 use tui_lipan::prelude::*;
+use tui_lipan::{
+    ChordMismatchPolicy, ClipboardContent, FloatRect, KeyDispatchPolicy, MouseEncoding,
+    PasteOrigin, TerminalCopyMode, TerminalInputKind, TerminalKeyModes, TerminalKeyPolicy,
+    TerminalPasteEvent, UpdateLevel, focus_sequences,
+};
 
 fn rect() -> FloatRect {
     FloatRect {
@@ -1427,7 +1432,7 @@ mod finished_rows_notice {
         let mut pane = crate::state::Pane::new(
             23,
             100,
-            tui_lipan::prelude::FloatRect {
+            tui_lipan::FloatRect {
                 x: 0.0,
                 y: 0.0,
                 w: 20.0,

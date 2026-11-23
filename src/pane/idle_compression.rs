@@ -11,7 +11,7 @@
 
 use std::time::{Duration, Instant};
 
-use tui_lipan::prelude::TerminalScreen;
+use tui_lipan::TerminalScreen;
 
 pub(crate) const IDLE_BEFORE_COMPRESSION: Duration = Duration::from_secs(2);
 pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(250);

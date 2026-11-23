@@ -1,3 +1,4 @@
+use tui_lipan::FloatRect;
 use tui_lipan::prelude::*;
 
 use crate::layout::model::{OFFSCREEN_MIN_VISIBLE, ResizeCorner, SplitAxis};

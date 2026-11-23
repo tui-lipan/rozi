@@ -1,7 +1,7 @@
 use rozi::AppRoot;
 use rozi::config::{SidebarPosition, SidebarTab};
+use tui_lipan::Rect;
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::Rect;
 use tui_lipan::style::Color;
 
 /// A cell inside the sidebar body, far left of the centered modal so nothing is painted over it,

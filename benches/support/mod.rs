@@ -13,7 +13,7 @@ use rozi::session::protocol::{
 };
 use rozi::state::Pane;
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{FloatRect, Rect, TerminalScreen};
+use tui_lipan::{FloatRect, Rect, TerminalScreen};
 
 const CORPUS_BYTES: usize = 256 * 1024;
 pub const SEARCH_COLS: u16 = 250;

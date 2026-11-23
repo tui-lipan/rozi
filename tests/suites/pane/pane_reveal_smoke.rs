@@ -13,7 +13,7 @@ use rozi::pane::id::POPUP_PANE_ID;
 use rozi::state::Pane;
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseKind};
-use tui_lipan::prelude::{FloatRect, Key, MouseEvent, Rect};
+use tui_lipan::{FloatRect, Key, MouseEvent, Rect};
 
 const VIEWPORT: Rect = Rect {
     x: 0,
@@ -79,7 +79,7 @@ fn configure_reveal(state: &mut rozi::state::State, style: PaneAnimationStyle) {
 }
 
 fn popup_backend(style: PaneAnimationStyle) -> TestBackend<AppRoot> {
-    popup_backend_at_frame_rate(style, tui_lipan::prelude::DEFAULT_FRAME_RATE)
+    popup_backend_at_frame_rate(style, tui_lipan::DEFAULT_FRAME_RATE)
 }
 
 fn popup_backend_at_frame_rate(style: PaneAnimationStyle, frame_rate: u16) -> TestBackend<AppRoot> {
@@ -138,7 +138,7 @@ fn titled_reveal_backend(
 }
 
 fn single_pane_backend(style: PaneAnimationStyle) -> TestBackend<AppRoot> {
-    single_pane_backend_at_frame_rate(style, tui_lipan::prelude::DEFAULT_FRAME_RATE)
+    single_pane_backend_at_frame_rate(style, tui_lipan::DEFAULT_FRAME_RATE)
 }
 
 fn single_pane_backend_at_frame_rate(

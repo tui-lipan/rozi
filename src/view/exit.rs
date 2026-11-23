@@ -1,4 +1,4 @@
-use tui_lipan::prelude::{Context, Element, Span, Style, Text, Theme};
+use tui_lipan::{Context, Element, Span, Style, Text, Theme};
 
 use crate::AppRoot;
 use crate::session::naming::is_ephemeral_session_name;

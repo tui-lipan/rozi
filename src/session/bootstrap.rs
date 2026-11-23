@@ -1,4 +1,4 @@
-use tui_lipan::prelude::CommandLink;
+use tui_lipan::CommandLink;
 
 use crate::Msg;
 

@@ -8,7 +8,7 @@ use rozi::pane::chrome::PaneBorderMode;
 use rozi::state::{Pane, PaneBorderStyle};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseKind};
-use tui_lipan::prelude::{FloatRect, KeyMods, MouseEvent, Rect};
+use tui_lipan::{FloatRect, KeyMods, MouseEvent, Rect};
 
 const WIDTH: u16 = 60;
 const HEIGHT: u16 = 20;

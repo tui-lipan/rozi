@@ -4,7 +4,7 @@ use rozi::pane::launch::PaneLaunch;
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::protocol::{ClientMessage, Frame, ServerMessage, WirePalette};
 use rozi::session::server::ServerSettings;
-use tui_lipan::prelude::TerminalColorPalette;
+use tui_lipan::TerminalColorPalette;
 use tui_lipan::{ProgramStatusSnapshot, ProgramStatusState};
 
 fn spawn(client: &mut TestConnection, id: u32, command: &str, keep_open: bool) {

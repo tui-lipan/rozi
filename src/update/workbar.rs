@@ -37,7 +37,7 @@ pub(super) fn poll_command(ctx: &mut Context<AppRoot>, epoch: u64, command: Stri
     match begin_poll(&mut ctx.state.workbar, epoch, &command, configured) {
         PollDecision::Ignored => return Update::none(),
         PollDecision::Busy => {
-            return Update::command_only(Command::after(
+            return Update::command_only(ctx.link().command_after(
                 COMMAND_BUSY_RETRY,
                 move |link: CommandLink<Msg>| {
                     link.send(Msg::WorkbarCommandPoll { epoch, command });
@@ -50,7 +50,7 @@ pub(super) fn poll_command(ctx: &mut Context<AppRoot>, epoch: u64, command: Stri
         ctx.state.config.command_shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),
     );
-    Update::command_only(Command::spawn(move |link: CommandLink<Msg>| {
+    Update::command_only(ctx.link().command(move |link: CommandLink<Msg>| {
         let output = first_output_line(crate::platform::command::run_bounded_shell_command(
             &shell,
             &command,
@@ -118,14 +118,14 @@ pub(super) fn command_output(
     ) else {
         return Update::none();
     };
-    let next = Command::after(
+    let next = ctx.link().command_after(
         std::time::Duration::from_secs(interval_secs.expect("configured command has interval")),
         move |link: CommandLink<Msg>| {
             link.send(Msg::WorkbarCommandPoll { epoch, command });
         },
     );
     if changed {
-        Update::with_command(next)
+        Update::full_with_command(next)
     } else {
         Update::command_only(next)
     }

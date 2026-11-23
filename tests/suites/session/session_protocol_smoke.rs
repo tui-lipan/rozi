@@ -13,7 +13,7 @@ use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::protocol::{
     ClientMessage, Frame, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
 };
-use tui_lipan::prelude::TerminalColorPalette;
+use tui_lipan::TerminalColorPalette;
 
 use crate::common::{
     ServerGuard, TestConnection, connect_when_ready, contains, private_temp_dir, read_until,

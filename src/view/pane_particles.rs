@@ -7,6 +7,10 @@ use std::time::Duration;
 use crate::layout::anim::PanePaintMotion;
 use tui_lipan::CellMask;
 use tui_lipan::prelude::*;
+use tui_lipan::{
+    CellEffect, EffectCell, EffectContext, EffectPrepareContext, FloatRect, PreparedCellEffect,
+    TerminalColor,
+};
 
 const PAD_X: i16 = 22;
 const PAD_Y: i16 = 18;

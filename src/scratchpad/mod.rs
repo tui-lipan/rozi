@@ -2,6 +2,7 @@
 
 pub mod runtime;
 
+use tui_lipan::FloatRect;
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;

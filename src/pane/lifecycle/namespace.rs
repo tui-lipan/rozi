@@ -97,7 +97,7 @@ pub(crate) fn remove_pane(state: &mut State, id: PaneId) {
 pub(crate) fn remove_pane_with_reference(
     state: &mut State,
     id: PaneId,
-    removed_rect: Option<tui_lipan::prelude::FloatRect>,
+    removed_rect: Option<tui_lipan::FloatRect>,
 ) {
     if state.moving_pane.is_some_and(|session| session.id == id) {
         state.moving_pane = None;

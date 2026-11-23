@@ -379,7 +379,7 @@ pub(super) fn apply_sidebar_config(
     }
     if let Some(tab_style) = raw.tab_style.as_deref() {
         match crate::state::parse_cap_style(tab_style) {
-            Some(tui_lipan::prelude::CapStyle::Half) => warnings.push(format!(
+            Some(tui_lipan::CapStyle::Half) => warnings.push(format!(
                 "Ignored sidebar.tab_style \"{tab_style}\" (half block is not available for tab bars)"
             )),
             Some(style) => sidebar.tab_style = style,
@@ -1017,14 +1017,14 @@ mod tests {
         assert!(config.background_follows_canvas);
         assert!(!config.gap);
         assert!(!config.background);
-        assert_eq!(config.tab_style, tui_lipan::prelude::CapStyle::Round);
+        assert_eq!(config.tab_style, tui_lipan::CapStyle::Round);
         assert_eq!(config.layout, SidebarConfig::default().layout);
     }
 
     #[test]
     fn half_tab_style_is_ignored_with_a_warning() {
         let (config, warnings) = parse("tab_style = \"half\"\n");
-        assert_eq!(config.tab_style, tui_lipan::prelude::CapStyle::Padded);
+        assert_eq!(config.tab_style, tui_lipan::CapStyle::Padded);
         assert!(
             warnings
                 .iter()

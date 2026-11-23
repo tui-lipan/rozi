@@ -710,7 +710,7 @@ mod tests {
                 let mut pane = crate::state::Pane::new(
                     1,
                     100,
-                    tui_lipan::prelude::FloatRect {
+                    tui_lipan::FloatRect {
                         x: 0.0,
                         y: 0.0,
                         w: 20.0,
@@ -848,7 +848,7 @@ mod tests {
             let shadow = crate::state::Pane::new(
                 id,
                 100,
-                tui_lipan::prelude::FloatRect {
+                tui_lipan::FloatRect {
                     x: 0.0,
                     y: 0.0,
                     w: 80.0,
@@ -1024,7 +1024,7 @@ mod tests {
                 .push(crate::state::Pane::new(
                     90,
                     100,
-                    tui_lipan::prelude::FloatRect::default(),
+                    tui_lipan::FloatRect::default(),
                 ));
             let split = |target| {
                 request(ControlCommand::NewPane {

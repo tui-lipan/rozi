@@ -1,5 +1,6 @@
 use super::pane_log::LogHeader;
 use super::*;
+use tui_lipan::GraphicsMediaPolicy;
 
 /// Return a terminal to shell-safe input state without clearing its primary screen or scrollback.
 /// Shell integrations emit the same bytes after a foreground command completes; this copy covers

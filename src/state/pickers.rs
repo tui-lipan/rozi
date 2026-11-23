@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Instant;
 
-use tui_lipan::prelude::{ItemDescription, OverlayId, SearchItem, SearchMatchMode, TextInput};
 use tui_lipan::rank_search_palette_indices_with_mode;
+use tui_lipan::{ItemDescription, OverlayId, SearchItem, SearchMatchMode, TextInput};
 
 use crate::config::ProfileEntry;
 use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};

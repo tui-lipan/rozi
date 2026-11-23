@@ -1,4 +1,5 @@
 use tui_lipan::prelude::*;
+use tui_lipan::{FloatRect, TerminalColorPalette};
 
 use crate::AppRoot;
 use crate::layout::anim::{self, GeometryAnimation};
@@ -240,7 +241,8 @@ pub(crate) fn spawn_pane_in_scratch(
     let update = if initial_pane {
         Update::full()
     } else {
-        Update::with_command(open_timers_command(
+        Update::full_with_command(open_timers_command(
+            ctx.link(),
             super::LOCAL_PANE_EPOCH,
             id,
             generation,
@@ -571,7 +573,8 @@ pub(crate) fn spawn_pane_in_workspace(
             ),
         );
     }
-    let update = Update::with_command(open_timers_command(
+    let update = Update::full_with_command(open_timers_command(
+        ctx.link(),
         ctx.state.runtime_epoch,
         id,
         generation,

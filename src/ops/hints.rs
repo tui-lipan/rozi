@@ -140,7 +140,7 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (boo
         (ch.is_ascii_uppercase() || key.mods.shift) && can_open(&ctx.state, target, &matched);
     if open {
         // Leave hint mode before launching: a new pane or popup must retain its new focus.
-        let mut update = exit(ctx);
+        let update = exit(ctx);
         let opened = match matched.kind {
             HintKind::Custom(tag) => {
                 let action = ctx
@@ -163,9 +163,7 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (boo
             HintKind::Path => super::links::open_path(ctx, target, &matched.text),
             _ => super::links::open(ctx, target, &matched.text),
         };
-        // exit() only requests redraw/focus synchronously; preserve the opening command.
-        update.command = opened.command;
-        return (true, update);
+        return (true, update.merge(opened));
     }
     let result = ctx
         .clipboard()
@@ -196,14 +194,17 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (boo
             },
         )
     });
-    let mut update = exit(ctx);
-    update.command = feedback;
-    (true, update)
+    let update = exit(ctx);
+    match feedback {
+        Some(feedback) => (true, update.merge(Update::command_only(feedback))),
+        None => (true, update),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tui_lipan::TerminalHyperlink;
 
     fn scan_text(
         text: &str,
@@ -334,8 +335,8 @@ mod tests {
         crate::test_support::on_large_stack(|| {
             use crate::state::{Mode, Pane};
             use crate::{AppRoot, Msg};
+            use tui_lipan::Rect;
             use tui_lipan::TestBackend;
-            use tui_lipan::prelude::Rect;
 
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
@@ -346,7 +347,7 @@ mod tests {
             });
             {
                 let state = backend.state_mut();
-                let rect = tui_lipan::prelude::FloatRect {
+                let rect = tui_lipan::FloatRect {
                     x: 0.0,
                     y: 0.0,
                     w: 80.0,

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::str::FromStr;
 use tui_lipan::prelude::*;
+use tui_lipan::{CapStyle, DEFAULT_FRAME_RATE};
 
 use crate::layout::anim::WindowAnimationConfig;
 use crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER;
@@ -3204,8 +3205,8 @@ mod tests {
         assert_eq!(parse_cap_style("pill"), Some(CapStyle::Round));
         assert_eq!(parse_cap_style("powerline"), Some(CapStyle::Arrow));
         assert_eq!(parse_cap_style("nonsense"), None);
-        assert_eq!(CapStyle::Padded.glyphs(), None);
-        assert!(CapStyle::Round.glyphs().is_some());
+        assert_eq!(CapStyle::Padded.chars(), None);
+        assert!(CapStyle::Round.chars().is_some());
         assert_eq!(next_cap_style(CapStyle::Arrow), CapStyle::Padded);
     }
 

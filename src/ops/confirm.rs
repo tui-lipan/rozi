@@ -24,7 +24,7 @@ pub(crate) const CONFIRM_WINDOW: Duration = Duration::from_secs(3);
 pub(crate) fn arm(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.confirm_epoch = ctx.state.confirm_epoch.wrapping_add(1);
     let epoch = ctx.state.confirm_epoch;
-    Update::with_command(Command::after(
+    Update::full_with_command(ctx.link().command_after(
         CONFIRM_WINDOW,
         move |link: CommandLink<Msg>| {
             link.send(Msg::ConfirmationExpired(epoch));

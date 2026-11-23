@@ -2,6 +2,11 @@ use std::io::Write;
 use std::time::Duration;
 
 use tui_lipan::prelude::*;
+use tui_lipan::{
+    ChordMismatchPolicy, CopyFeedback, CopyFeedbackEffect, CopyOnSelect, CursorTrailFill,
+    CursorTrailMotion, CursorTrailTrigger, KeyDispatchPolicy, PasteSource, RightClickAction,
+    TerminalKeyPolicy,
+};
 
 use crate::config::Config;
 use crate::{cli, config, control, ops, platform};

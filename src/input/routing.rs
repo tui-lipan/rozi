@@ -288,7 +288,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::state::Attachment;
-    use tui_lipan::prelude::{KeyMods, Theme};
+    use tui_lipan::{KeyMods, Theme};
 
     fn key(code: KeyCode, mods: KeyMods) -> KeyEvent {
         KeyEvent { code, mods }

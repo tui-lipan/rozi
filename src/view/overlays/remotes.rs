@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::{ItemDescription, SearchEntry};
 
 /// This surface lists remembered session *counts*, not live rows, so it never lets a cached count
 /// stand in for having reached the host.

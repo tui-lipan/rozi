@@ -3604,7 +3604,7 @@ mod tests {
             palette: WirePalette {
                 foreground: None,
                 background: None,
-                ansi: [tui_lipan::prelude::Color::Black; 16],
+                ansi: [tui_lipan::Color::Black; 16],
             },
             cols: 80,
             rows: 24,
@@ -4297,7 +4297,7 @@ mod tests {
             palette: WirePalette {
                 foreground: None,
                 background: None,
-                ansi: [tui_lipan::prelude::Color::Black; 16],
+                ansi: [tui_lipan::Color::Black; 16],
             },
             pty: None,
             pty_resize_pending: false,

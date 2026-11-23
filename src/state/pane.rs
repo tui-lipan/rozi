@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::time::Instant;
 
-use tui_lipan::prelude::{FloatRect, Key, ManagedTerminalStatus, Span, Text, TextSource};
+use tui_lipan::{FloatRect, Key, ManagedTerminalStatus, Span, Text, TextSource};
 
 use crate::pane::{TerminalPane, shell_title_parts};
 

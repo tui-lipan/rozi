@@ -6,6 +6,7 @@
 //! being *there*, across an attach when the session is somewhere else.
 
 use tui_lipan::prelude::*;
+use tui_lipan::{ItemDescription, SearchMatchMode};
 
 use crate::AppRoot;
 use crate::state::{AgentLocation, AgentPickerState, PendingAgentJump};
@@ -588,6 +589,7 @@ mod tests {
     use crate::layout::tiling::append_tiled_window;
     use crate::session::remote::RemoteTarget;
     use crate::state::Pane;
+    use tui_lipan::FloatRect;
     use tui_lipan::TestBackend;
 
     fn backend_with_panes(ids: &[crate::pane::id::PaneId]) -> TestBackend<AppRoot> {

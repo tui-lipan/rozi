@@ -1,4 +1,4 @@
-use tui_lipan::prelude::CapStyle as TuiCapStyle;
+use tui_lipan::CapStyle as TuiCapStyle;
 
 use super::file::{PaneFileConfig, WorkbarFileConfig, WorkbarSegmentSpec};
 use super::schema::{
@@ -241,7 +241,7 @@ pub(super) fn apply_picker_style_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tui_lipan::prelude::CapStyle as TuiCapStyle;
+    use tui_lipan::CapStyle as TuiCapStyle;
 
     #[test]
     fn workbar_center_parses_and_schedules_its_clock_and_commands() {

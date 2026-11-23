@@ -1,4 +1,4 @@
-use tui_lipan::prelude::TextInput;
+use tui_lipan::TextInput;
 
 use crate::pane::id::PaneId;
 

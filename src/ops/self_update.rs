@@ -76,7 +76,7 @@ pub(crate) fn start(ctx: &mut Context<AppRoot>) -> Update {
         ctx.state.config.command_shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),
     );
-    Update::with_command(Command::spawn(move |link: CommandLink<Msg>| {
+    Update::full_with_command(ctx.link().command(move |link: CommandLink<Msg>| {
         // This thread spawns a package manager's command and waits on it for as long as it runs,
         // which is what lets Linux end the command with this process; the run's `stop` ends it
         // when this client leaves first.
@@ -164,9 +164,12 @@ pub(crate) fn finished(
             if !ctx.state.config.animations.enabled {
                 return settled(ctx, generation);
             }
-            Update::with_command(Command::after(SETTLE, move |link: CommandLink<Msg>| {
-                link.send(Msg::SelfUpdateSettled { generation })
-            }))
+            Update::full_with_command(
+                ctx.link()
+                    .command_after(SETTLE, move |link: CommandLink<Msg>| {
+                        link.send(Msg::SelfUpdateSettled { generation })
+                    }),
+            )
         }
         Err(reason) => {
             let hidden = run.hidden;
@@ -610,6 +613,7 @@ mod tests {
     use super::*;
     use crate::platform::install_source::InstallSource;
     use tui_lipan::TestBackend;
+    use tui_lipan::{KeyDispatchPolicy, TerminalKeyPolicy};
 
     const MB: u64 = 1024 * 1024;
 

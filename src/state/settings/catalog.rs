@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use tui_lipan::prelude::CapStyle;
+use tui_lipan::CapStyle;
 
 use crate::config::{
     Config, CopyFeedback, CopyOnSelect, CursorBlink, MiddleClickPaste, MousePointer, RestoreMode,
@@ -20,7 +20,7 @@ use crate::layout::model::LayoutKind;
 use crate::pane::chrome::PaneBorderMode;
 use crate::state::{
     AlertMode, AlertPaint, PaneAlertPaint, PaneBorderStyle, badge_cap_styles, cap_style_id,
-    cap_style_label,
+    cap_style_label, cap_styles,
 };
 
 use super::{SettingsAction, SettingsChoiceRing, SettingsTab};
@@ -530,7 +530,7 @@ pub static SETTINGS: &[SettingSpec] = {
             &["caps", "style", "pill"],
             Choice(&cap_choice(
                 "Titlebar shape",
-                Choices::Fixed(CapStyle::all),
+                Choices::Fixed(cap_styles),
                 config_field!(pane.title_style),
                 ConfigKey::new("pane", "title_style"),
             )),
@@ -634,7 +634,7 @@ pub static SETTINGS: &[SettingSpec] = {
             &["caps", "style", "pill"],
             Choice(&cap_choice(
                 "Workbar shape",
-                Choices::Fixed(CapStyle::all),
+                Choices::Fixed(cap_styles),
                 config_field!(pane.workbar_style),
                 ConfigKey::new("pane", "workbar_style"),
             )),

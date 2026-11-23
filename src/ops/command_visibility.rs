@@ -121,7 +121,7 @@ mod tests {
             ],
             ..Config::default()
         };
-        let mut state = State::new(config, tui_lipan::prelude::Theme::default());
+        let mut state = State::new(config, tui_lipan::Theme::default());
         state.extension_generations = [
             ("tools".to_string(), "gen-1".to_string()),
             ("other".to_string(), "gen-9".to_string()),
@@ -163,7 +163,7 @@ mod tests {
         crate::test_support::on_deeper_stack(|| {
             crate::test_support::isolate_user_dirs();
             let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-            backend.set_viewport(tui_lipan::prelude::Rect {
+            backend.set_viewport(tui_lipan::Rect {
                 x: 0,
                 y: 0,
                 w: 100,
@@ -186,18 +186,18 @@ mod tests {
                 backend.render();
                 for ch in "probe".chars() {
                     backend
-                        .send_key(tui_lipan::prelude::KeyEvent {
-                            code: tui_lipan::prelude::KeyCode::Char(ch),
-                            mods: tui_lipan::prelude::KeyMods::NONE,
+                        .send_key(tui_lipan::KeyEvent {
+                            code: tui_lipan::KeyCode::Char(ch),
+                            mods: tui_lipan::KeyMods::NONE,
                         })
                         .expect("type");
                 }
                 backend.advance(std::time::Duration::from_millis(200));
                 let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
                 backend
-                    .send_key(tui_lipan::prelude::KeyEvent {
-                        code: tui_lipan::prelude::KeyCode::Esc,
-                        mods: tui_lipan::prelude::KeyMods::NONE,
+                    .send_key(tui_lipan::KeyEvent {
+                        code: tui_lipan::KeyCode::Esc,
+                        mods: tui_lipan::KeyMods::NONE,
                     })
                     .expect("close the palette");
                 backend.render();

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use tui_lipan::prelude::*;
+use tui_lipan::{TerminalColorPalette, TerminalCommandPhase};
 
 use crate::pane::id::PaneId;
 

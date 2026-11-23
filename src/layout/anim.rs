@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::state::{Pane, State};
 use tui_lipan::animation::Easing;
-use tui_lipan::prelude::{FloatRect, TransitionConfig};
+use tui_lipan::{FloatRect, TransitionConfig};
 
 /// Default durations for [`WindowAnimationConfig`]. Callers read the configured values off that
 /// type rather than these, so a user override cannot be bypassed by reaching for the default.
@@ -1383,7 +1383,7 @@ pub(crate) fn geometry_animation_enabled(
 }
 
 /// Geometry transition policy for a pane. Extracted so tests can assert Scrollable resize
-/// instant-vs-AxisChange behavior without constructing a live [`tui_lipan::prelude::Context`].
+/// instant-vs-AxisChange behavior without constructing a live [`tui_lipan::Context`].
 ///
 /// `target_rect` sizes the Slide spring's amplitude and is only known to the view; without it the
 /// spring degrades to the plain geometry curve rather than guessing an amplitude.
@@ -1499,7 +1499,7 @@ mod tests {
             ..WindowAnimationConfig::default()
         };
         assert_eq!(
-            retained_pane_timeout(animations, tui_lipan::prelude::DEFAULT_FRAME_RATE),
+            retained_pane_timeout(animations, tui_lipan::DEFAULT_FRAME_RATE),
             Duration::from_millis(109)
         );
         assert_eq!(
@@ -1508,7 +1508,7 @@ mod tests {
                     close: false,
                     ..animations
                 },
-                tui_lipan::prelude::DEFAULT_FRAME_RATE
+                tui_lipan::DEFAULT_FRAME_RATE
             ),
             Duration::ZERO
         );
@@ -1548,7 +1548,7 @@ mod tests {
             ..WindowAnimationConfig::default()
         };
         assert_eq!(
-            retained_pane_timeout(scale, tui_lipan::prelude::DEFAULT_FRAME_RATE),
+            retained_pane_timeout(scale, tui_lipan::DEFAULT_FRAME_RATE),
             Duration::from_millis(149),
             "the scale close is a short pop the fade rides on"
         );
@@ -1582,11 +1582,11 @@ mod tests {
         );
 
         assert!(
-            retained_pane_timeout(slide, tui_lipan::prelude::DEFAULT_FRAME_RATE) > leaving,
+            retained_pane_timeout(slide, tui_lipan::DEFAULT_FRAME_RATE) > leaving,
             "the pane must stay described past the end of its slide"
         );
         assert_eq!(
-            retained_pane_timeout(slide, tui_lipan::prelude::DEFAULT_FRAME_RATE),
+            retained_pane_timeout(slide, tui_lipan::DEFAULT_FRAME_RATE),
             Duration::from_millis(229)
         );
         assert_eq!(
@@ -1595,7 +1595,7 @@ mod tests {
                     close: false,
                     ..slide
                 },
-                tui_lipan::prelude::DEFAULT_FRAME_RATE
+                tui_lipan::DEFAULT_FRAME_RATE
             ),
             Duration::ZERO
         );
@@ -1687,16 +1687,12 @@ mod tests {
             assert!(!pane_opacity_animates(animations, closing));
             assert_eq!(pane_opacity_target(animations, closing), 0.0);
             assert_eq!(
-                retained_pane_timeout_for_pane(
-                    animations,
-                    closing,
-                    tui_lipan::prelude::DEFAULT_FRAME_RATE
-                ),
+                retained_pane_timeout_for_pane(animations, closing, tui_lipan::DEFAULT_FRAME_RATE),
                 Duration::ZERO
             );
         }
         assert_eq!(
-            retained_pane_timeout(animations, tui_lipan::prelude::DEFAULT_FRAME_RATE),
+            retained_pane_timeout(animations, tui_lipan::DEFAULT_FRAME_RATE),
             Duration::ZERO
         );
 
@@ -2074,11 +2070,7 @@ mod tests {
             PaneAnimationStyle::Scale
         );
         assert_eq!(
-            retained_pane_timeout_for_pane(
-                animations,
-                &pane,
-                tui_lipan::prelude::DEFAULT_FRAME_RATE
-            ),
+            retained_pane_timeout_for_pane(animations, &pane, tui_lipan::DEFAULT_FRAME_RATE),
             Duration::from_millis(149)
         );
     }
@@ -2356,10 +2348,7 @@ mod tests {
                 "{style:?} does not spring neighbouring tiles"
             );
             assert_eq!(
-                retained_pane_timeout(
-                    state.config.animations,
-                    tui_lipan::prelude::DEFAULT_FRAME_RATE
-                ),
+                retained_pane_timeout(state.config.animations, tui_lipan::DEFAULT_FRAME_RATE),
                 state.config.animations.geometry_duration
                     + pane_finish_delay(state.runtime_frame_rate())
             );

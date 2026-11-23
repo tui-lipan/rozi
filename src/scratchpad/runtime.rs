@@ -2,8 +2,8 @@ use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use tui_lipan::prelude::CommandLink;
-use tui_lipan::prelude::{Context, ManagedTerminalStatus, Update};
+use tui_lipan::CommandLink;
+use tui_lipan::{Context, ManagedTerminalStatus, Update};
 
 use crate::AppRoot;
 use crate::config::Config;

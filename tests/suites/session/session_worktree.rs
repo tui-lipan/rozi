@@ -8,7 +8,7 @@ use rozi::session::origin::{SessionOrigin, WorktreeOrigin};
 use rozi::session::protocol::{
     ClientMessage, Frame, ServerMessage, WirePalette, WorktreeRequest, WorktreeResult,
 };
-use tui_lipan::prelude::TerminalColorPalette;
+use tui_lipan::TerminalColorPalette;
 
 use crate::common::{
     ServerGuard, TestConnection, attach_message, connect_when_ready, private_temp_dir, read_until,

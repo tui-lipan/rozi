@@ -455,6 +455,7 @@ pub(crate) fn forwarded_mouse(
     use std::cell::RefCell;
     use std::rc::Rc;
     use tui_lipan::prelude::*;
+    use tui_lipan::{ForwardedMouseEvent, MouseEncoding, MouseMode, MouseModeState};
 
     struct Probe(Rc<RefCell<Option<ForwardedMouseEvent>>>);
     impl Component for Probe {

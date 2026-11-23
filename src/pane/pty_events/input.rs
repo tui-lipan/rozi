@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use tui_lipan::core::event::MouseKind;
 use tui_lipan::prelude::*;
+use tui_lipan::{ForwardedMouseEvent, TerminalInputKind, TerminalKeyModes, key_event_to_bytes};
 
 use crate::AppRoot;
 use crate::pane::id::PaneId;

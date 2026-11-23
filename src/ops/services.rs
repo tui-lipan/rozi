@@ -231,7 +231,7 @@ pub(crate) fn start_services(ctx: &mut Context<AppRoot>) -> Update {
 
     if !ctx.state.services.running.is_empty() || !ctx.state.services.pending.is_empty() {
         let epoch = ctx.state.services.bump_epoch();
-        Update::command_only(Command::after(
+        Update::command_only(ctx.link().command_after(
             Duration::from_secs(1),
             move |link: CommandLink<Msg>| {
                 link.send(Msg::ServicesTick { epoch });

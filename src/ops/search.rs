@@ -124,8 +124,8 @@ fn purge_missing_search_matches(state: &mut State) -> bool {
         .is_some_and(|search| search.retain_matches(|matched| !missing.contains(&matched.pane)))
 }
 
-fn search_scan_command(epoch: u64) -> Command {
-    Command::after(
+fn search_scan_command(link: &tui_lipan::Link<crate::Msg>, epoch: u64) -> Command {
+    link.command_after(
         std::time::Duration::ZERO,
         move |link: CommandLink<crate::Msg>| {
             link.send(crate::Msg::SearchScanChunk { epoch });
@@ -133,12 +133,12 @@ fn search_scan_command(epoch: u64) -> Command {
     )
 }
 
-fn schedule_search_scan(state: &mut State, epoch: u64) -> Option<Command> {
-    if state.search_scan_scheduled_epoch.is_some() {
+fn schedule_search_scan(ctx: &mut Context<AppRoot>, epoch: u64) -> Option<Command> {
+    if ctx.state.search_scan_scheduled_epoch.is_some() {
         return None;
     }
-    state.search_scan_scheduled_epoch = Some(epoch);
-    Some(search_scan_command(epoch))
+    ctx.state.search_scan_scheduled_epoch = Some(epoch);
+    Some(search_scan_command(ctx.link(), epoch))
 }
 
 pub(crate) fn recompute_search(ctx: &mut Context<AppRoot>) -> Update {
@@ -206,8 +206,8 @@ fn recompute_search_inner(ctx: &mut Context<AppRoot>, refresh_after_output: bool
         .as_ref()
         .is_some_and(|search| search.scan.is_some())
     {
-        let command = schedule_search_scan(&mut ctx.state, epoch);
-        Update::with_command(command)
+        let command = schedule_search_scan(ctx, epoch);
+        Update::full_with_command(command)
     } else {
         Update::full()
     }
@@ -426,28 +426,19 @@ pub(crate) fn search_scan_chunk(ctx: &mut Context<AppRoot>, epoch: u64) -> Updat
             .map(|scan| scan.epoch),
         SearchScanAdvance::Complete { .. } => None,
     };
-    let command = next_epoch.and_then(|epoch| schedule_search_scan(&mut ctx.state, epoch));
-    match advance {
-        SearchScanAdvance::Stale => command.map_or_else(Update::none, Update::command_only),
-        SearchScanAdvance::Running { render: true, .. } => Update::with_command(command),
-        SearchScanAdvance::Running { render: false, .. } => {
-            command.map_or_else(Update::none, Update::command_only)
-        }
-        SearchScanAdvance::Complete { .. } => Update::full(),
-    }
+    let command = next_epoch.and_then(|epoch| schedule_search_scan(ctx, epoch));
+    scan_advance_refresh(advance).merge(command.map_or_else(Update::none, Update::command_only))
 }
 
-#[cfg(test)]
-fn scan_advance_update(advance: SearchScanAdvance, epoch: u64) -> Update {
+/// The redraw a scan step needs: a running chunk redraws only when it changed what is shown.
+fn scan_advance_refresh(advance: SearchScanAdvance) -> Update {
     match advance {
-        SearchScanAdvance::Stale => Update::none(),
-        SearchScanAdvance::Running { render: true, .. } => {
-            Update::with_command(search_scan_command(epoch))
+        SearchScanAdvance::Stale | SearchScanAdvance::Running { render: false, .. } => {
+            Update::none()
         }
-        SearchScanAdvance::Running { render: false, .. } => {
-            Update::command_only(search_scan_command(epoch))
+        SearchScanAdvance::Running { render: true, .. } | SearchScanAdvance::Complete { .. } => {
+            Update::full()
         }
-        SearchScanAdvance::Complete { .. } => Update::full(),
     }
 }
 
@@ -612,6 +603,7 @@ mod tests {
 
     use super::*;
     use crate::state::{CopyModeState, Pane};
+    use tui_lipan::{FloatRect, TerminalCopyMode};
 
     fn output_lines(count: usize) -> Vec<u8> {
         (0..count)
@@ -1137,43 +1129,27 @@ mod tests {
 
     #[test]
     fn scan_transition_classes_match_render_contract() {
-        let stale = scan_advance_update(SearchScanAdvance::Stale, 1);
-        assert_eq!(stale.level(), tui_lipan::UpdateLevel::None);
-        assert!(stale.command.is_none());
-
-        let intermediate = scan_advance_update(
-            SearchScanAdvance::Running {
-                first_match: false,
-                render: false,
-            },
-            1,
+        let level = |advance| scan_advance_refresh(advance).level();
+        assert_eq!(
+            level(SearchScanAdvance::Stale),
+            tui_lipan::UpdateLevel::None
         );
-        assert_eq!(intermediate.level(), tui_lipan::UpdateLevel::None);
-        assert!(intermediate.command.is_some());
-
-        let purged = scan_advance_update(
-            SearchScanAdvance::Running {
-                first_match: false,
-                render: true,
-            },
-            1,
+        for (render, expected) in [
+            (false, tui_lipan::UpdateLevel::None),
+            (true, tui_lipan::UpdateLevel::Full),
+        ] {
+            for first_match in [false, true] {
+                let advance = SearchScanAdvance::Running {
+                    first_match,
+                    render,
+                };
+                assert_eq!(level(advance), expected);
+            }
+        }
+        assert_eq!(
+            level(SearchScanAdvance::Complete { first_match: false }),
+            tui_lipan::UpdateLevel::Full
         );
-        assert_eq!(purged.level(), tui_lipan::UpdateLevel::Full);
-        assert!(purged.command.is_some());
-
-        let first = scan_advance_update(
-            SearchScanAdvance::Running {
-                first_match: true,
-                render: true,
-            },
-            1,
-        );
-        assert_eq!(first.level(), tui_lipan::UpdateLevel::Full);
-        assert!(first.command.is_some());
-
-        let complete = scan_advance_update(SearchScanAdvance::Complete { first_match: false }, 1);
-        assert_eq!(complete.level(), tui_lipan::UpdateLevel::Full);
-        assert!(complete.command.is_none());
     }
 
     #[test]

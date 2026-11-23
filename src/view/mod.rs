@@ -44,6 +44,7 @@ pub(crate) use workspace::{
 };
 
 use tui_lipan::prelude::*;
+use tui_lipan::{DescriptionPlacement, FloatRect, SearchEntry, SearchMatchMode};
 
 use crate::AppRoot;
 use crate::layout::geometry::{empty_workspace_rect, viewport_bounds};
@@ -700,13 +701,12 @@ pub(crate) fn modal_scrollbar_config(theme: &Theme) -> ScrollbarConfig {
         .thumb_focus_style(Style::new().fg(theme.border_active))
 }
 
-pub(crate) fn picker_selection_cap_glyphs(
-    config: &crate::config::Config,
-) -> (&'static str, &'static str) {
+pub(crate) fn picker_selection_cap_glyphs(config: &crate::config::Config) -> (String, String) {
     config
         .effective_cap_style(config.pane.picker_selection_style)
-        .glyphs()
-        .unwrap_or(("", ""))
+        .chars()
+        .map(|(left, right)| (left.into(), right.into()))
+        .unwrap_or_default()
 }
 
 pub(crate) fn picker_selection_cap_style(theme: &Theme, fill: Color) -> Style {
@@ -812,7 +812,7 @@ pub(crate) fn search_entries_with_groups<T>(
 #[cfg(test)]
 mod grouped_search_tests {
     use super::search_entries_with_groups;
-    use tui_lipan::prelude::SearchEntry;
+    use tui_lipan::SearchEntry;
 
     #[test]
     fn grouped_search_entries_have_one_spacer_between_groups() {
@@ -840,7 +840,7 @@ mod grouped_search_tests {
     fn reconnecting_with_retained_panes_shows_progress_modal() {
         crate::test_support::on_large_stack(|| {
             let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-            backend.set_viewport(tui_lipan::prelude::Rect {
+            backend.set_viewport(tui_lipan::Rect {
                 x: 0,
                 y: 0,
                 w: 100,
@@ -876,7 +876,7 @@ mod grouped_search_tests {
         crate::test_support::on_large_stack(|| {
             use crate::state::{ConnectionState, PendingSessionAttach};
             use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
-            use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
+            use tui_lipan::{KeyCode, KeyEvent, KeyMods, Rect};
 
             for (connection, lost, label) in [
                 (ConnectionState::Unreachable, true, "Session lost"),
@@ -1009,7 +1009,7 @@ mod grouped_search_tests {
             let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
             backend.state_mut().config.animations.picker =
                 crate::layout::anim::PickerAnimationStyle::Off;
-            backend.set_viewport(tui_lipan::prelude::Rect {
+            backend.set_viewport(tui_lipan::Rect {
                 x: 0,
                 y: 0,
                 w: 100,
@@ -1059,7 +1059,7 @@ mod grouped_search_tests {
     fn unreachable_remote_session_shows_offline_modal() {
         crate::test_support::on_large_stack(|| {
             let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-            backend.set_viewport(tui_lipan::prelude::Rect {
+            backend.set_viewport(tui_lipan::Rect {
                 x: 0,
                 y: 0,
                 w: 100,
@@ -1094,7 +1094,7 @@ mod grouped_search_tests {
     fn modal_corner_and_title_fg(
         frame: &tui_lipan::capture::CapturedFrame,
         title: &str,
-    ) -> (tui_lipan::prelude::Color, tui_lipan::prelude::Color) {
+    ) -> (tui_lipan::Color, tui_lipan::Color) {
         let lines = frame.to_fixed_grid_lines();
         let (row, line) = lines
             .iter()
@@ -1114,7 +1114,7 @@ mod grouped_search_tests {
     fn lost_remote_session_modal_uses_error_chrome() {
         crate::test_support::on_large_stack(|| {
             let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-            backend.set_viewport(tui_lipan::prelude::Rect {
+            backend.set_viewport(tui_lipan::Rect {
                 x: 0,
                 y: 0,
                 w: 100,
@@ -1280,7 +1280,7 @@ mod pane_layer_tests {
     use crate::layout::tiling::DwindleTree;
     use crate::state::{Pane, SharedSessionState};
     use tui_lipan::TestBackend;
-    use tui_lipan::prelude::{FloatRect, Rect};
+    use tui_lipan::{FloatRect, Rect};
 
     fn smaller_follower_backend(
         pane_count: u32,

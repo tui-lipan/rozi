@@ -1372,10 +1372,7 @@ mod tests {
         ]
         .map(|(status, unseen, count)| {
             let (glyph, color, _) = super::row_glyph(status, unseen, &theme);
-            (
-                format!("{glyph}{count}"),
-                tui_lipan::prelude::Style::new().fg(color),
-            )
+            (format!("{glyph}{count}"), tui_lipan::Style::new().fg(color))
         });
         assert_eq!(parts, expected);
     }
@@ -1396,6 +1393,7 @@ mod tests {
     use super::*;
     use crate::session::protocol::{AgentIdentity, DetectedAgent, DetectedAgentState, PaneStatus};
     use crate::state::Pane;
+    use tui_lipan::FloatRect;
 
     fn pane(id: PaneId, value: Option<&str>, _exiting: bool) -> Pane {
         pane_in(id, value, false, None)

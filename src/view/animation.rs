@@ -1,8 +1,11 @@
 use tui_lipan::prelude::*;
+use tui_lipan::{
+    CubicBezier, EffectAmount, EffectPulse, ExitAnimation, FloatRect, VisibilityAnimationPhase,
+};
 
 use crate::AppRoot;
 use crate::layout::anim;
-use crate::state::{ChromeSlot, Pane};
+use crate::state::{ChromeSlot, Pane, WorkspaceSlide};
 
 /// Modal lifecycle is owned by the renderer: no view/layout work on animation ticks.
 /// Keyed portals retain closing content, disable its input, and reverse safely on reopening.
@@ -666,24 +669,62 @@ pub(crate) fn session_layer_exit(animations: anim::WindowAnimationConfig) -> Exi
     }
 }
 
+/// Record a workspace switch for [`workspace_offsets`] to slide between. Runs after every update,
+/// key, and viewport change, because the view may not change the runtime.
+pub(crate) fn sync_workspace_slide(ctx: &mut Context<AppRoot>) {
+    let active = ctx.state.current().active_workspace;
+    let epoch = ctx.state.runtime_epoch;
+    let content_viewport = ctx.state.content_viewport(ctx.viewport());
+    let previous = ctx.state.workspace_slide;
+    let switched = !previous.is_some_and(|slide| slide.epoch == epoch && slide.active == active);
+    let mut slide = match previous {
+        Some(slide) if !switched => slide,
+        _ => {
+            let same_attachment = previous.is_some_and(|slide| slide.epoch == epoch);
+            WorkspaceSlide {
+                epoch,
+                active,
+                outgoing: previous
+                    .filter(|_| same_attachment)
+                    .map_or(active, |slide| slide.active),
+                same_attachment,
+                motion: previous.is_some_and(|slide| slide.motion),
+                content_viewport: previous.map_or(content_viewport, |slide| slide.content_viewport),
+            }
+        }
+    };
+    // Another workspace or another session replaces the whole screen, and the slide or portal
+    // already shows where the user went. A smear from the old screen's cursor to the new one's
+    // would join two unrelated places, so the cursor arrives without a trail.
+    if switched && previous.is_some() {
+        ctx.skip_cursor_trail();
+    }
+    let motion =
+        workspace_motion_enabled(ctx.state.config.animations, false, slide.same_attachment);
+    // A zero-length request leaves a page already sliding toward an unchanged target in motion, so
+    // turning motion off or resizing the workspace lands every page where it belongs.
+    let resized = slide.content_viewport != content_viewport;
+    if (slide.motion && !motion) || resized {
+        for index in 0..ctx.state.current().workspaces.len() {
+            let target = workspace_target(index, active);
+            ctx.snap_transition(workspace_slide_key(epoch, index), target);
+        }
+    }
+    slide.motion = motion;
+    slide.content_viewport = content_viewport;
+    ctx.state.workspace_slide = Some(slide);
+}
+
 /// Seed every workspace off-screen on its numbered side. Only the outgoing and active pages
 /// travel, so jumping from 1 to 9 does not sweep through the seven intermediate workspaces.
 pub(crate) fn workspace_offsets(ctx: &Context<AppRoot>, resized: bool) -> Vec<(usize, f32)> {
     let active = ctx.state.current().active_workspace;
-    let epoch = ctx.state.runtime_epoch;
-    let previous = ctx.state.workspace_slide.get();
-    let outgoing = outgoing_workspace(previous, epoch, active);
-    ctx.state
+    let slide = ctx
+        .state
         .workspace_slide
-        .set(Some((epoch, active, outgoing)));
-    let same_attachment = previous.is_some_and(|(old_epoch, _, _)| old_epoch == epoch);
-    // Another workspace or another session replaces the whole screen, and the slide or portal
-    // already shows where the user went. A smear from the old screen's cursor to the new one's
-    // would join two unrelated places, so the cursor arrives without a trail.
-    if previous.is_some_and(|(old_epoch, old_active, _)| old_epoch != epoch || old_active != active)
-    {
-        ctx.skip_cursor_trail();
-    }
+        .filter(|slide| slide.epoch == ctx.state.runtime_epoch && slide.active == active);
+    let outgoing = slide.map_or(active, |slide| slide.outgoing);
+    let same_attachment = slide.is_some_and(|slide| slide.same_attachment);
     let enabled = workspace_motion_enabled(ctx.state.config.animations, resized, same_attachment);
     let mut visible = Vec::with_capacity(2);
     for index in 0..ctx.state.current().workspaces.len() {
@@ -710,25 +751,8 @@ fn workspace_motion_enabled(
         && same_attachment
 }
 
-fn outgoing_workspace(previous: Option<(u64, usize, usize)>, epoch: u64, active: usize) -> usize {
-    match previous {
-        Some((old_epoch, old_active, outgoing)) if old_epoch == epoch => {
-            if old_active == active {
-                outgoing
-            } else {
-                old_active
-            }
-        }
-        _ => active,
-    }
-}
-
 fn workspace_offset(ctx: &Context<AppRoot>, index: usize, active: usize, animate: bool) -> f32 {
-    let target = match index.cmp(&active) {
-        std::cmp::Ordering::Less => -1.0,
-        std::cmp::Ordering::Equal => 0.0,
-        std::cmp::Ordering::Greater => 1.0,
-    };
+    let target = workspace_target(index, active);
     let config = if animate {
         TransitionConfig {
             duration: ctx.state.config.animations.workspace_duration,
@@ -737,11 +761,24 @@ fn workspace_offset(ctx: &Context<AppRoot>, index: usize, active: usize, animate
     } else {
         anim::instant_transition()
     };
-    let key = format!("rozi-workspace-slide-{}-{index}", ctx.state.runtime_epoch);
-    if !animate {
-        ctx.snap_transition(key.clone(), target);
+    ctx.transition(
+        workspace_slide_key(ctx.state.runtime_epoch, index),
+        target,
+        config,
+    )
+}
+
+/// Where a page rests: off-screen on its numbered side, or in view when active.
+fn workspace_target(index: usize, active: usize) -> f32 {
+    match index.cmp(&active) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
     }
-    ctx.transition(key, target, config)
+}
+
+fn workspace_slide_key(epoch: u64, index: usize) -> String {
+    format!("rozi-workspace-slide-{epoch}-{index}")
 }
 
 #[cfg(test)]
@@ -751,7 +788,7 @@ mod tests {
     use crate::layout::anim;
 
     use tui_lipan::TestBackend;
-    use tui_lipan::prelude::{Color, Rect};
+    use tui_lipan::{Color, Rect};
 
     use crate::AppRoot;
 
@@ -760,7 +797,7 @@ mod tests {
         views: std::rc::Rc<std::cell::Cell<usize>>,
     }
 
-    impl tui_lipan::prelude::Component for PickerPaintProbe {
+    impl tui_lipan::Component for PickerPaintProbe {
         type State = bool;
         type Properties = ();
         type Message = bool;
@@ -775,7 +812,7 @@ mod tests {
             ctx.state = visible;
             tui_lipan::Update::full()
         }
-        fn view(&self, ctx: &tui_lipan::Context<Self>) -> tui_lipan::prelude::Element {
+        fn view(&self, ctx: &tui_lipan::Context<Self>) -> tui_lipan::Element {
             use tui_lipan::prelude::*;
             self.views.set(self.views.get() + 1);
             let mut root = ZStack::new().child(Button::new("underneath").key("underneath"));
@@ -957,8 +994,7 @@ mod tests {
             state.config.animations.session = anim::SessionAnimationStyle::Off;
             let workspace = &mut state.current_mut().workspaces[0];
             for id in [1, 2] {
-                let mut pane =
-                    crate::state::Pane::new(id, 100, tui_lipan::prelude::FloatRect::default());
+                let mut pane = crate::state::Pane::new(id, 100, tui_lipan::FloatRect::default());
                 pane.opening = false;
                 workspace.panes.push(pane);
                 crate::layout::tiling::append_tiled_window(workspace, id);
@@ -1466,7 +1502,7 @@ mod tests {
         use crate::layout::model::Direction;
         use crate::layout::tiling::append_tiled_window;
         use crate::state::Pane;
-        use tui_lipan::prelude::FloatRect;
+        use tui_lipan::FloatRect;
 
         crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
@@ -1519,7 +1555,9 @@ mod tests {
             );
 
             backend.state_mut().runtime_epoch += 1;
-            backend.render();
+            backend
+                .dispatch(crate::Msg::RefreshPaintLayers)
+                .expect("refresh");
             assert!(
                 backend.take_cursor_trail_skip(),
                 "a session switch skips the trail"

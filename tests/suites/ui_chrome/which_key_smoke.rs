@@ -11,6 +11,7 @@ use rozi::config::WhichKey;
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseKind};
 use tui_lipan::prelude::*;
+use tui_lipan::{FloatRect, KeyDispatchPolicy, TerminalKeyPolicy};
 
 const VIEWPORT: Rect = Rect {
     x: 0,

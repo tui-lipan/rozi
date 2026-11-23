@@ -7,6 +7,9 @@ use crate::state::State;
 use crate::{AppRoot, Msg};
 use std::result::Result;
 use tui_lipan::prelude::*;
+use tui_lipan::{
+    ClipboardContent, PasteOrigin, TerminalKeyModes, TerminalPasteEvent, encode_paste,
+};
 
 pub(crate) fn bridge_enabled(state: &State, id: PaneId) -> bool {
     state.current().remote_target.is_some() && !crate::scratchpad::contains(state, id)
@@ -60,7 +63,7 @@ pub(crate) fn paste_in_namespace(
         Ok(accepted) => accepted,
         Err(update) => return update,
     };
-    Update::with_command(Command::spawn(move |link| {
+    Update::full_with_command(ctx.link().command(move |link| {
         let result = upload(&client, id, generation, local, sources, fallback);
         link.send(Msg::AttachmentUploadFinished(result));
     }))

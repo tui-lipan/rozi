@@ -162,8 +162,8 @@ pub(crate) fn leave(ctx: &mut Context<AppRoot>) {
 
 #[cfg(test)]
 mod tests {
+    use tui_lipan::Rect;
     use tui_lipan::TestBackend;
-    use tui_lipan::prelude::Rect;
 
     use crate::state::{ProfilePickerState, SessionPickerState, SettingsAction};
     use crate::{AppRoot, Msg};

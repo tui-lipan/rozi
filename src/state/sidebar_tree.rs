@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 
-use tui_lipan::prelude::TreeBranch;
+use tui_lipan::TreeBranch;
 
 use super::sidebar::{RowTarget, SidebarClose};
 use crate::config::SidebarTabId;

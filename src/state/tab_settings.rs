@@ -1,4 +1,4 @@
-use tui_lipan::prelude::TextInput;
+use tui_lipan::TextInput;
 
 /// The Sidebar tabs picker, present while it is open. Its query and highlighted tab survive a trip
 /// into a tab's settings, so coming back lands on the same row.

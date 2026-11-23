@@ -4,8 +4,8 @@ use rozi::AppRoot;
 use rozi::config::{SidebarTab, SidebarTabId};
 use rozi::git::worktrees::{WorktreeInfo, WorktreeLock};
 use rozi::session::protocol::WorktreeSession;
+use tui_lipan::Rect;
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::Rect;
 
 fn tree(path: &str, branch: &str, linked: bool, locked: bool) -> WorktreeInfo {
     WorktreeInfo {

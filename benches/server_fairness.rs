@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tui_lipan::prelude::TerminalColorPalette;
+use tui_lipan::TerminalColorPalette;
 
 fn spawn_placement(last_pane: u32) -> protocol::SpawnPlacementCommit {
     use rozi::layout::shared::*;
@@ -624,7 +624,7 @@ fn validate_snapshot_shape(path: &std::path::Path, pane_count: usize, history_ro
         );
         let replay = std::fs::read(path.join("panes").join(format!("{pane_id}.replay")))
             .expect("read snapshot pane replay");
-        let mut screen = tui_lipan::prelude::TerminalScreen::new(
+        let mut screen = tui_lipan::TerminalScreen::new(
             bench_support::SNAPSHOT_ROWS,
             bench_support::SNAPSHOT_COLS,
             history_rows,

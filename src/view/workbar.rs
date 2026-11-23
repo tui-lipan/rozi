@@ -1,4 +1,5 @@
 use tui_lipan::prelude::*;
+use tui_lipan::{CapSides, CapStyle, DragReorderMode, PointerShape, StatusBarItemSize};
 
 use crate::config::{BadgeColor, InputConfig, WorkbarAlertConfig, WorkbarItem, WorkbarSegment};
 use crate::input::Action;
@@ -601,13 +602,13 @@ fn workbar_with_caps(
         .state
         .config
         .effective_cap_style(ctx.state.config.pane.workbar_style)
-        .glyphs()
+        .chars()
     else {
         return row;
     };
     let backdrop = ctx.state.theme.surface.backdrop;
-    let cap = |glyph: &'static str, color: Color| {
-        Text::new(glyph)
+    let cap = |glyph: char, color: Color| {
+        Text::new(String::from(glyph))
             .style(
                 Style::new()
                     .fg(color)
@@ -681,7 +682,7 @@ fn workbar_badge(
     };
     // A cap glyph is drawn in the badge color over the color behind it, so the fill it shows is the
     // glyph's foreground. Same-color seams are a contrast glyph over the neighbor's fill and stay put.
-    let glyphs = cap_style.glyphs().is_some();
+    let glyphs = cap_style.chars().is_some();
     let left_cap = glyphs && !same_color && matches!(cap_sides, CapSides::Both | CapSides::Left);
     let right_cap =
         glyphs && (closing.is_some() || matches!(cap_sides, CapSides::Both | CapSides::Right));
@@ -1163,13 +1164,12 @@ fn workspace_tabs(ctx: &Context<AppRoot>) -> DraggableTabBar {
         .state
         .config
         .effective_cap_style(ctx.state.config.pane.workbar_tab_style)
-        .glyphs()
-        .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
+        .chars();
     let fill = workbar_fill(ctx);
 
     super::scrolling_tab_bar(theme, fill)
         .tabs(tabs)
-        .active(
+        .selected(
             state
                 .current()
                 .active_workspace
@@ -1210,7 +1210,7 @@ fn workspace_tabs(ctx: &Context<AppRoot>) -> DraggableTabBar {
         // `transform_bg` rather than `elevate_by`, which would transform the foreground too: the
         // label is already contrast-picked against the tab, so lifting it as well would erode that.
         .tab_hover_style(Style::new().transform_bg(crate::view::hover_lift()))
-        .on_change(
+        .on_select(
             ctx.link()
                 .callback(|event: TabsEvent| Msg::RunAction(Action::SwitchWorkspace(event.index))),
         )
@@ -1385,8 +1385,8 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
         format!("Press {prefix} Enter to spawn a shell.")
     };
     Frame::new()
-        .header_left("Empty workspace")
-        .header_padding(1)
+        .title("Empty workspace")
+        .title_padding(1)
         .border(true)
         .border_style(BorderStyle::Rounded)
         .style(
@@ -1469,8 +1469,8 @@ pub(crate) fn launcher_panel(ctx: &Context<AppRoot>, theme: &Theme) -> Element {
         stack.child(Text::new(format!("{keys:<key_width$}{what}")))
     });
     Frame::new()
-        .header_left(header)
-        .header_padding(1)
+        .title(header)
+        .title_padding(1)
         .border(true)
         .border_style(BorderStyle::Rounded)
         .style(
@@ -1508,8 +1508,8 @@ pub(crate) fn connecting_workspace_panel(
         "Attaching to the session server…"
     };
     Frame::new()
-        .header_left("Session")
-        .header_padding(1)
+        .title("Session")
+        .title_padding(1)
         .border(true)
         .border_style(BorderStyle::Rounded)
         .style(
@@ -1550,8 +1550,8 @@ pub(crate) fn restoring_workspace_panel(
         ),
     };
     Frame::new()
-        .header_left("Session")
-        .header_padding(1)
+        .title("Session")
+        .title_padding(1)
         .border(true)
         .border_style(BorderStyle::Rounded)
         .style(
@@ -1585,7 +1585,7 @@ mod tests {
     };
     use crate::config::{BadgeColor, WorkbarAlertConfig, WorkbarSegment};
     use crate::state::{AlertMode, Pane, Workspace};
-    use tui_lipan::prelude::{Color, FloatRect, Theme};
+    use tui_lipan::{Color, FloatRect, Theme};
 
     #[test]
     fn curated_color_assigns_distinct_roles() {
@@ -1985,11 +1985,9 @@ mod tests {
             let mut backend = attached_backend();
             let config = &mut backend.state_mut().config;
             config.nerd_icons = true;
-            config.pane.workbar_badge_style = tui_lipan::prelude::CapStyle::Round;
+            config.pane.workbar_badge_style = tui_lipan::CapStyle::Round;
             config.pane.workbar_powerline = false;
-            let (_, right_cap) = tui_lipan::prelude::CapStyle::Round
-                .glyphs()
-                .expect("round caps");
+            let (_, right_cap) = tui_lipan::CapStyle::Round.chars().expect("round caps");
             let (width, resting) = frame_cells(&mut backend);
             let lift = crate::view::HOVER_LIFT;
 
@@ -1997,7 +1995,11 @@ mod tests {
                 let (x, y) = find_run(&resting, width, needle).expect("badge label");
                 let cap_x = x + needle.len() as u16;
                 let cap = &resting[y as usize * width as usize + cap_x as usize];
-                assert_eq!(cap.symbol, right_cap, "{needle} badge should end in a cap");
+                assert_eq!(
+                    cap.symbol,
+                    right_cap.to_string(),
+                    "{needle} badge should end in a cap"
+                );
                 let body = cell_bg(&resting, width, x, y);
 
                 hover(&mut backend, x, y);
@@ -2020,7 +2022,7 @@ mod tests {
     fn attached_backend() -> tui_lipan::TestBackend<crate::AppRoot> {
         crate::test_support::isolate_user_dirs();
         let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-        backend.set_viewport(tui_lipan::prelude::Rect {
+        backend.set_viewport(tui_lipan::Rect {
             x: 0,
             y: 0,
             w: 100,
@@ -2106,7 +2108,7 @@ mod tests {
             x,
             y,
             kind,
-            mods: tui_lipan::prelude::KeyMods::NONE,
+            mods: tui_lipan::KeyMods::NONE,
         }
     }
 }

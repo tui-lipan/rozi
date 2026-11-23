@@ -5,7 +5,7 @@ use rozi::config::{CopyFeedback, CopyOnSelect, MiddleClickPaste, RightClickClipb
 use rozi::pane::chrome::PaneBorderMode;
 use rozi::state::{AlertMode, PaneAlertPaint, SettingsAction, SettingsTab};
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{CapStyle, KeyCode, KeyEvent, KeyMods, Rect};
+use tui_lipan::{CapStyle, KeyCode, KeyEvent, KeyMods, Rect};
 
 /// Isolated per `AGENTS.md`: building a `AppRoot` otherwise resolves the developer's own config
 /// and state directories.
@@ -402,7 +402,7 @@ fn settings_reports_sidebar_values() {
             state.config.sidebar.background_follows_canvas = true;
             state.config.sidebar.gap = false;
             state.config.sidebar.background = false;
-            state.config.sidebar.tab_style = tui_lipan::prelude::CapStyle::Round;
+            state.config.sidebar.tab_style = tui_lipan::CapStyle::Round;
         }
         let frame = rendered_rows(&mut backend);
         let workbar = group_rows(&frame, "Workbar", "Sidebar");
@@ -658,7 +658,7 @@ fn the_cursor_trail_rows_reach_the_runtime() {
         use rozi::state::SettingsAction::{
             CycleCursorTrailAnimation, CycleCursorTrailStyle, ToggleAnimations,
         };
-        use tui_lipan::prelude::{CursorTrail, CursorTrailFill, CursorTrailTrigger};
+        use tui_lipan::{CursorTrail, CursorTrailFill, CursorTrailTrigger};
         // Settings saves into the file this binary's tests share.
         let _config = rozi::test_support::lock_config_file();
         let mut backend = settings_backend(90, 30);
@@ -1458,7 +1458,8 @@ fn settings_search_results_have_pointer_feedback_and_follow_the_global_mode() {
             Some(tui_lipan::PointerShape::Pointer)
         );
         backend.state_mut().config.cursor.pointer = rozi::config::MousePointer::Panes;
-        backend.render();
+        // The app applies pointer feedback after an update, as a settings change arrives.
+        backend.dispatch(rozi::Msg::RefreshPaintLayers).unwrap();
         assert_eq!(backend.pointer_shape_at(x, y as u16), None);
     });
 }

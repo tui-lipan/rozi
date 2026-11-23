@@ -384,7 +384,8 @@ pub(crate) fn attached(
                 .begin_pane_event(crate::layout::anim::GeometryAnimation::Spawn);
             let open_delay = crate::layout::anim::open_delay(ctx.state.config.animations);
             let activate_delay = crate::layout::anim::activation_delay(ctx.state.config.animations);
-            Update::with_command(crate::pane::lifecycle::open_timers_batch_command(
+            Update::full_with_command(crate::pane::lifecycle::open_timers_batch_command(
+                ctx.link(),
                 epoch,
                 spawned,
                 open_delay,
@@ -481,15 +482,9 @@ pub(crate) fn attached(
         crate::ops::session::apply_attach_policy_if_occupied(ctx, policy);
     }
     if ctx.state.pending_session_action.is_some() {
-        let deferred = crate::ops::session::run_pending_session_action(ctx);
-        // Empty-seed deferred starts leave `update` as a command-less full refresh; prefer the
-        // deferred spawn's timers when present.
-        if deferred.command.is_some() {
-            return deferred;
-        }
-        if deferred.dirty {
-            update = deferred;
-        }
+        // Empty-seed deferred starts leave `update` as a command-less full refresh; keep it with
+        // the deferred spawn's timers.
+        update = update.merge(crate::ops::session::run_pending_session_action(ctx));
     }
     update
 }

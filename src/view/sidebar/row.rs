@@ -1,3 +1,4 @@
+use tui_lipan::ListTruncation;
 use tui_lipan::prelude::*;
 
 use crate::state::State;

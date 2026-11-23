@@ -2,7 +2,7 @@
 
 use std::str::FromStr;
 
-use tui_lipan::prelude::{KeyBinding, KeyEvent};
+use tui_lipan::{KeyBinding, KeyEvent};
 
 /// Parse one `send-keys` argument into either a discrete key event or literal text.
 ///
@@ -131,7 +131,7 @@ fn parse_lipan_binding(raw: &str) -> Result<KeyEvent, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tui_lipan::prelude::{KeyCode, KeyMods};
+    use tui_lipan::{KeyCode, KeyMods};
 
     fn key(code: KeyCode, mods: KeyMods) -> KeyEvent {
         KeyEvent { code, mods }

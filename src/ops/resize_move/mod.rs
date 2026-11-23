@@ -27,6 +27,7 @@ pub(crate) use tiling::{
 
 #[cfg(test)]
 pub(super) mod test_util {
+    use tui_lipan::FloatRect;
     use tui_lipan::TestBackend;
     use tui_lipan::prelude::*;
 

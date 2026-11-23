@@ -1,6 +1,7 @@
 use tui_lipan::prelude::*;
 use tui_lipan::style::ThemeRole;
 use tui_lipan::utils::color_contrast::readable_text_color;
+use tui_lipan::{CaretPalette, CaretShape, TerminalColorPalette, ThemeWatcher};
 
 use crate::config::BadgeColor;
 use crate::ops::focus::request_theme_picker_focus;
@@ -159,9 +160,9 @@ pub(crate) fn theme_tick(ctx: &mut Context<AppRoot>) -> Update {
 
     if let Some(theme) = newest_theme {
         apply_resolved_theme(ctx, theme);
-        return Update::with_command(schedule_theme_tick());
+        return Update::full_with_command(schedule_theme_tick(ctx.link()));
     }
-    Update::command_only(schedule_theme_tick())
+    Update::command_only(schedule_theme_tick(ctx.link()))
 }
 
 pub(crate) fn open_theme_picker(ctx: &mut Context<AppRoot>) -> Update {
@@ -265,7 +266,7 @@ pub(crate) fn select_theme(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     }
 
     if start_tick {
-        Update::with_command(schedule_theme_tick())
+        Update::full_with_command(schedule_theme_tick(ctx.link()))
     } else {
         closed
     }
@@ -598,6 +599,7 @@ mod tests {
     use crate::config::Config;
     use crate::pane::id::PaneId;
     use crate::state::{Pane, ThemePreset};
+    use tui_lipan::{FloatRect, HostTerminalColors};
 
     #[test]
     fn chrome_color_snaps_palette_colors_but_fades_truecolor() {

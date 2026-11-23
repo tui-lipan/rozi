@@ -17,7 +17,7 @@
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
-use tui_lipan::prelude::KeyBinding;
+use tui_lipan::KeyBinding;
 
 use super::input::is_bare_key_step;
 use super::schema::{Config, InputConfig, WmModifier};

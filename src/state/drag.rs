@@ -1,4 +1,4 @@
-use tui_lipan::prelude::FloatRect;
+use tui_lipan::FloatRect;
 
 use crate::layout::tiling::DwindleTree;
 

@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use tui_lipan::TerminalColorPalette;
 use tui_lipan::prelude::*;
 use tui_lipan::{
     CapturedCell, CapturedFrame, CapturedImage, CellModifiers, CursorShape, CursorState,

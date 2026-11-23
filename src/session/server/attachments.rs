@@ -7,6 +7,7 @@ use crate::platform::attachments::StagedFile;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use protocol::{ATTACHMENT_CHUNK_BYTES, AttachmentOperation, MAX_ATTACHMENT_BYTES};
 use std::result::Result;
+use tui_lipan::encode_paste;
 
 type Key = (ClientId, u64);
 const MAX_PENDING: usize = 8;

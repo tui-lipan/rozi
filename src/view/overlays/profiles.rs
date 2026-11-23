@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::SearchEntry;
 
 use crate::view::vocabulary::SessionPresence;
 

@@ -600,7 +600,7 @@ fn a_restart_that_ends_programs_asks_twice_and_a_blocked_one_never_starts() {
 fn the_dialog_names_each_session_and_what_becomes_of_it() {
     crate::test_support::on_large_stack(|| {
         let mut backend = TestBackend::new(AppRoot::default());
-        backend.set_viewport(tui_lipan::prelude::Rect {
+        backend.set_viewport(tui_lipan::Rect {
             x: 0,
             y: 0,
             w: 120,
@@ -641,7 +641,7 @@ fn the_dialog_names_each_session_and_what_becomes_of_it() {
 fn the_dialog_leads_with_what_blocks_then_what_it_costs() {
     crate::test_support::on_large_stack(|| {
         let mut backend = TestBackend::new(AppRoot::default());
-        backend.set_viewport(tui_lipan::prelude::Rect {
+        backend.set_viewport(tui_lipan::Rect {
             x: 0,
             y: 0,
             w: 120,

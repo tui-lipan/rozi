@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::SearchEntry;
 
 use crate::state::{AgentLocation, AgentPickerTab};
 use crate::view::agents::GlobalAgentRow;

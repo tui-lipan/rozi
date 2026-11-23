@@ -7,7 +7,7 @@ use crate::pane::id::PaneId;
 use crate::pane::spawn_policy::ClientSite;
 use crate::state::{Pane, PaneIdentity, State};
 use tui_lipan::Theme;
-use tui_lipan::prelude::*;
+use tui_lipan::{FloatRect, TerminalColorPalette, TerminalCopyMode};
 
 fn rule(matches: &str) -> crate::config::RuleConfig {
     crate::config::RuleConfig {
@@ -42,7 +42,7 @@ pub(crate) fn in_stack<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'sta
 
 fn scrollable_close_backend(focus: PaneId) -> tui_lipan::TestBackend<crate::AppRoot> {
     let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-    backend.set_viewport(tui_lipan::prelude::Rect {
+    backend.set_viewport(tui_lipan::Rect {
         x: 0,
         y: 0,
         w: 80,
@@ -193,7 +193,7 @@ fn replay_inputs_survive_teardown_only_while_their_spawn_is_still_queued() {
 fn close_keeps_the_pane_described_while_it_animates_out() {
     in_stack(|| {
         let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-        backend.set_viewport(tui_lipan::prelude::Rect {
+        backend.set_viewport(tui_lipan::Rect {
             x: 0,
             y: 0,
             w: 80,
@@ -250,7 +250,7 @@ fn closing_a_dwindle_pane_focuses_the_sibling_that_inherits_its_space() {
 
     in_stack(|| {
         let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-        backend.set_viewport(tui_lipan::prelude::Rect {
+        backend.set_viewport(tui_lipan::Rect {
             x: 0,
             y: 0,
             w: 80,
@@ -570,7 +570,7 @@ fn closing_an_inactive_scrollable_anchor_remaps_its_workspace_only() {
 fn close_popup_keeps_the_popup_described_until_it_is_pruned() {
     in_stack(|| {
         let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-        backend.set_viewport(tui_lipan::prelude::Rect {
+        backend.set_viewport(tui_lipan::Rect {
             x: 0,
             y: 0,
             w: 80,
@@ -631,7 +631,7 @@ fn close_popup_keeps_the_popup_described_until_it_is_pruned() {
 fn disabled_close_animation_still_prunes_the_pane() {
     in_stack(|| {
         let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-        backend.set_viewport(tui_lipan::prelude::Rect {
+        backend.set_viewport(tui_lipan::Rect {
             x: 0,
             y: 0,
             w: 80,
@@ -675,7 +675,7 @@ fn disabled_close_animation_still_prunes_the_pane() {
 fn workspace_switch_releases_the_outgoing_canvas_after_the_slide() {
     in_stack(|| {
         let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-        backend.set_viewport(tui_lipan::prelude::Rect {
+        backend.set_viewport(tui_lipan::Rect {
             x: 0,
             y: 0,
             w: 80,
@@ -1031,7 +1031,7 @@ fn spawning_into_the_scratchpad_parks_the_scrollable_anchor_on_the_new_pane() {
         use crate::AppRoot;
         use crate::state::Pane;
         use tui_lipan::TestBackend;
-        use tui_lipan::prelude::{FloatRect, Rect};
+        use tui_lipan::{FloatRect, Rect};
 
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(Rect {
@@ -1087,7 +1087,7 @@ fn spawning_a_floating_scratch_pane_uses_the_client_canvas() {
         use crate::AppRoot;
         use crate::state::Pane;
         use tui_lipan::TestBackend;
-        use tui_lipan::prelude::{FloatRect, Rect};
+        use tui_lipan::{FloatRect, Rect};
 
         let viewport = Rect {
             x: 0,
@@ -1191,7 +1191,7 @@ fn spawn_float_opens_a_floating_pane_at_the_mouse_pointer() {
         use crate::AppRoot;
         use tui_lipan::TestBackend;
         use tui_lipan::core::event::{MouseEvent, MouseKind};
-        use tui_lipan::prelude::{KeyMods, Rect};
+        use tui_lipan::{KeyMods, Rect};
 
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(Rect {
@@ -1306,7 +1306,7 @@ mod close_animation {
         for floating in [false, true] {
             in_stack(move || {
                 let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-                backend.set_viewport(tui_lipan::prelude::Rect {
+                backend.set_viewport(tui_lipan::Rect {
                     x: 0,
                     y: 0,
                     w: 80,
@@ -1390,7 +1390,7 @@ mod close_animation {
     fn a_user_closed_pane_does_not_report_its_own_exit() {
         in_stack(|| {
             let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-            backend.set_viewport(tui_lipan::prelude::Rect {
+            backend.set_viewport(tui_lipan::Rect {
                 x: 0,
                 y: 0,
                 w: 80,
@@ -1449,7 +1449,7 @@ mod close_animation {
     fn a_held_exited_pane_still_wears_its_exit_code() {
         in_stack(|| {
             let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-            backend.set_viewport(tui_lipan::prelude::Rect {
+            backend.set_viewport(tui_lipan::Rect {
                 x: 0,
                 y: 0,
                 w: 80,
@@ -1496,7 +1496,7 @@ mod close_animation {
     fn find_pane_in_namespace_does_not_cross_local_and_shared_ids() {
         in_stack(|| {
             let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-            let rect = tui_lipan::prelude::FloatRect::default();
+            let rect = tui_lipan::FloatRect::default();
             let mut shared = crate::state::Pane::new(7, 100, rect);
             shared.title = "shared".into();
             backend.state_mut().current_mut().workspaces[0]

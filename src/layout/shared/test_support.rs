@@ -3,6 +3,7 @@
 use super::*;
 use crate::config::Config;
 use crate::state::{Pane, State};
+use tui_lipan::FloatRect;
 
 pub(super) fn state_with_split() -> State {
     let mut state = State::new(Config::default(), Theme::default());

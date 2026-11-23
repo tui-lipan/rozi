@@ -40,7 +40,8 @@ pub(crate) fn handle_pane_resize(
         flush_pending_resizes(ctx, generation);
         return Update::none();
     }
-    Update::with_command(schedule_pane_resize_flush(
+    Update::full_with_command(schedule_pane_resize_flush(
+        ctx.link(),
         epoch,
         generation,
         resize_debounce_ms,
@@ -111,8 +112,13 @@ fn queue_pending_resize(
     Some((epoch, attachment.resize_flush_generation))
 }
 
-fn schedule_pane_resize_flush(epoch: u64, generation: u64, resize_debounce_ms: u64) -> Command {
-    Command::after(
+fn schedule_pane_resize_flush(
+    link: &tui_lipan::Link<crate::Msg>,
+    epoch: u64,
+    generation: u64,
+    resize_debounce_ms: u64,
+) -> Command {
+    link.command_after(
         std::time::Duration::from_millis(resize_debounce_ms),
         move |link: CommandLink<crate::Msg>| {
             link.send(crate::Msg::FlushPaneResizes { epoch, generation });

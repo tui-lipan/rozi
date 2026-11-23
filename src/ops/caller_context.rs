@@ -294,7 +294,7 @@ mod tests {
                 .push(crate::state::Pane::new(
                     99,
                     100,
-                    tui_lipan::prelude::FloatRect::default(),
+                    tui_lipan::FloatRect::default(),
                 ));
             for command in [
                 ControlCommand::PaneReveal { target: 99 },

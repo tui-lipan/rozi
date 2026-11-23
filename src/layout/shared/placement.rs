@@ -2,6 +2,7 @@
 //! it through, canvas bounds and scripted float rects. Depends on the document alone.
 
 use super::*;
+use tui_lipan::FloatRect;
 
 /// Rebuild a [`DwindleTree`] from a shared tree, keeping only leaves whose pane id is present
 /// locally (`known`). Returns `None` if nothing survives, so the caller can rebuild from order.

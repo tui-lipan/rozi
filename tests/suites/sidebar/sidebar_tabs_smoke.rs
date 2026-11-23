@@ -3,8 +3,8 @@ mod interaction {
     use rozi::config::{SidebarTab, SidebarTabId};
     use rozi::state::{SidebarCommandOutput, SidebarCommandRow};
     use rozi::{AppRoot, Msg};
+    use tui_lipan::Component;
     use tui_lipan::core::event::{KeyMods, MouseButton, MouseEvent, MouseKind};
-    use tui_lipan::prelude::Component;
     use tui_lipan::{Rect, TestBackend};
 
     fn mouse(x: u16, kind: MouseKind, mods: KeyMods) -> MouseEvent {
@@ -221,8 +221,8 @@ mod appearance {
 
     use rozi::AppRoot;
     use rozi::config::SidebarTab;
+    use tui_lipan::Rect;
     use tui_lipan::TestBackend;
-    use tui_lipan::prelude::Rect;
 
     fn sidebar_backend() -> TestBackend<AppRoot> {
         rozi::test_support::isolate_user_dirs();
@@ -293,7 +293,7 @@ mod appearance {
     fn round_tab_style_caps_the_active_sidebar_tab() {
         rozi::test_support::on_large_stack(|| {
             let mut backend = sidebar_backend();
-            backend.state_mut().config.sidebar.tab_style = tui_lipan::prelude::CapStyle::Round;
+            backend.state_mut().config.sidebar.tab_style = tui_lipan::CapStyle::Round;
             let lines = sidebar_columns(&mut backend);
             let tab = lines
                 .iter()
@@ -311,8 +311,8 @@ mod launcher {
     use rozi::AppRoot;
     use rozi::config::{SidebarLauncherEntry, SidebarTab, SidebarTabId, UserCommandAction};
     use rozi::state::{SidebarCommandOutput, SidebarCommandRow};
+    use tui_lipan::Rect;
     use tui_lipan::TestBackend;
-    use tui_lipan::prelude::Rect;
 
     fn sidebar_lines(tab: SidebarTab) -> Vec<String> {
         rozi::test_support::on_large_stack(move || {

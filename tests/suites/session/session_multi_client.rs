@@ -11,7 +11,7 @@ use rozi::session::protocol::{
     ClientMessage, ControllerChangeReason, Frame, ServerMessage, WirePalette,
 };
 use rozi::session::server::ServerSettings;
-use tui_lipan::prelude::TerminalColorPalette;
+use tui_lipan::TerminalColorPalette;
 
 use crate::common::{attach_client, contains, read_until, spawn_listener};
 
@@ -487,7 +487,7 @@ fn owned_media_child() {
 #[test]
 fn consumed_media_reaches_two_local_clients_and_a_late_remote_over_the_protocol() {
     use base64::Engine as _;
-    use tui_lipan::prelude::{GraphicsMediaPolicy, TerminalScreen};
+    use tui_lipan::{GraphicsMediaPolicy, TerminalScreen};
     let server = spawn_listener(ServerSettings::default());
     let (mut controller, _) =
         attach_client(server.endpoint(), server.session(), "media-controller");

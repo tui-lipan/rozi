@@ -69,7 +69,7 @@ pub(crate) fn refresh_sessions(ctx: &mut Context<AppRoot>, epoch: u64) -> Update
     let probe_targets = Vec::new();
     let mut attached = attached;
     attached.extend(ctx.state.remote.live_sessions.clone());
-    Update::with_command(Command::spawn(move |link: CommandLink<crate::Msg>| {
+    Update::full_with_command(ctx.link().command(move |link: CommandLink<crate::Msg>| {
         let (rows, host_status) = crate::ops::session::discover_sidebar_sessions(
             current_name.as_deref(),
             &remote_config,
@@ -155,7 +155,7 @@ pub(crate) fn sessions_discovered(
             };
         }
     }
-    Update::with_command(Command::after(
+    Update::full_with_command(ctx.link().command_after(
         SESSION_REFRESH_INTERVAL,
         move |link: CommandLink<crate::Msg>| {
             link.send(crate::Msg::SidebarSessionsRefresh { epoch });

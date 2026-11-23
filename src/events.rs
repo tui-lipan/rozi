@@ -381,7 +381,7 @@ mod tests {
             ],
             ..Config::default()
         };
-        let mut state = crate::state::State::new(config, tui_lipan::prelude::Theme::default());
+        let mut state = crate::state::State::new(config, tui_lipan::Theme::default());
         state.control_socket_path = Some(socket.clone());
 
         emit(&state, Event::new(EventKind::PaneExited, vec![]));

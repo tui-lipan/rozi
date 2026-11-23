@@ -91,12 +91,13 @@ fn move_reconnect_host(ctx: &mut Context<AppRoot>, old: &RemoteTarget, new: &Rem
 }
 
 fn host_discovery_command(
+    link: &tui_lipan::Link<crate::Msg>,
     epoch: u64,
     target: RemoteTarget,
     remote_config: crate::config::RemoteConfig,
 ) -> Command {
     crate::ops::session::discovery::note_remote_probe_request(&target);
-    Command::spawn(move |link: CommandLink<crate::Msg>| {
+    link.command(move |link: CommandLink<crate::Msg>| {
         std::thread::spawn(move || {
             let rows = crate::session::remote::ensure_remote_binary_in_ui(
                 &target,
@@ -438,7 +439,8 @@ fn connect_host(ctx: &mut Context<AppRoot>, target: RemoteTarget, auto_open: boo
         entry.probe = crate::state::HostProbe::InFlight;
     }
     crate::ops::focus::request_remote_picker_focus(ctx);
-    Update::with_command(host_discovery_command(
+    Update::full_with_command(host_discovery_command(
+        ctx.link(),
         epoch,
         target,
         ctx.state.config.remote.clone(),
@@ -814,15 +816,15 @@ pub(crate) fn submit_host_form(ctx: &mut Context<AppRoot>) -> Update {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tui_lipan::Rect;
     use tui_lipan::TestBackend;
-    use tui_lipan::prelude::Rect;
 
     use crate::{AppRoot, Msg};
 
     fn state() -> crate::state::State {
         crate::state::State::new(
             crate::config::Config::default(),
-            tui_lipan::prelude::Theme::default(),
+            tui_lipan::Theme::default(),
         )
     }
 
@@ -867,8 +869,13 @@ mod tests {
         let _picker = RemotePickerState::new(Some(target.clone()));
         assert!(crate::ops::session::discovery::take_remote_probe_requests().is_empty());
 
-        let _command =
-            host_discovery_command(1, target.clone(), crate::config::RemoteConfig::default());
+        let backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+        let _command = host_discovery_command(
+            &backend.link(),
+            1,
+            target.clone(),
+            crate::config::RemoteConfig::default(),
+        );
         assert_eq!(
             crate::ops::session::discovery::take_remote_probe_requests(),
             vec![target]
@@ -1050,7 +1057,7 @@ mod tests {
             "configured".into(),
             crate::config::RemoteHostConfig::default(),
         );
-        let mut state = crate::state::State::new(config, tui_lipan::prelude::Theme::default());
+        let mut state = crate::state::State::new(config, tui_lipan::Theme::default());
         state.remote.hosts.seed(
             &state.config.remote,
             std::slice::from_ref(&saved),

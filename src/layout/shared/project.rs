@@ -148,6 +148,7 @@ pub(super) fn shared_workspace_from_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tui_lipan::FloatRect;
 
     #[test]
     fn the_wire_default_geometry_matches_the_default_config() {

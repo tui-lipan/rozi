@@ -7,7 +7,7 @@ use rozi::AppRoot;
 use rozi::state::{AlertMode, Pane};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
-use tui_lipan::prelude::{Color, FloatRect, KeyMods, Rect};
+use tui_lipan::{Color, FloatRect, KeyMods, Rect};
 
 fn live_pane(id: u32) -> Pane {
     let mut pane = Pane::new(
@@ -92,7 +92,7 @@ fn the_two_paints_color_different_channels_on_screen() {
 fn a_filled_marked_tab_is_end_capped_like_the_active_one() {
     rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend();
-        backend.state_mut().config.pane.workbar_tab_style = tui_lipan::prelude::CapStyle::Round;
+        backend.state_mut().config.pane.workbar_tab_style = tui_lipan::CapStyle::Round;
         backend.render();
         let frame = backend.capture_frame();
         let width = frame.width as usize;

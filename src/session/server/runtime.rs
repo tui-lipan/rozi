@@ -12,6 +12,7 @@ use crate::platform::process::{
     PlatformProcessInspector, ProcessInspector, ProcessTopology,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
+use tui_lipan::TerminalWorkingDirectory;
 
 use crate::agent_detection::AgentCatalog;
 use crate::session::protocol::{
@@ -2668,12 +2669,12 @@ pub(super) fn witnessed_command_phase(
 }
 
 #[cfg(unix)]
-fn foreground_group(pty: &tui_lipan::prelude::TerminalPty) -> Option<i32> {
+fn foreground_group(pty: &tui_lipan::TerminalPty) -> Option<i32> {
     pty.foreground_process_group_id()
 }
 
 #[cfg(not(unix))]
-fn foreground_group(_pty: &tui_lipan::prelude::TerminalPty) -> Option<i32> {
+fn foreground_group(_pty: &tui_lipan::TerminalPty) -> Option<i32> {
     None
 }
 
@@ -2840,7 +2841,7 @@ fn remember_process_probe(
 }
 
 fn inspect_foreground_leader(
-    pty: &tui_lipan::prelude::TerminalPty,
+    pty: &tui_lipan::TerminalPty,
     inspector: &impl ProcessInspector,
 ) -> Option<ForegroundJob> {
     let process = inspector.foreground_process(pty)?;
@@ -4295,6 +4296,7 @@ fn is_local_host(host: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tui_lipan::{TerminalColorPalette, TerminalWorkingDirectorySource};
 
     fn test_publisher() -> PanePublisher {
         PanePublisher {
@@ -5594,7 +5596,7 @@ mod tests {
         // `set -m` gives the job its own process group in the foreground, as an interactive shell
         // does. `exec` keeps the job the same process after it changes directory.
         let pty = TerminalPty::spawn(
-            tui_lipan::prelude::TerminalPtyConfig::new("/bin/sh")
+            tui_lipan::TerminalPtyConfig::new("/bin/sh")
                 .arg("-c")
                 .arg(format!(
                     "set -m; cd '{}' && sh -c 'sleep 0.6; cd moved && exec sleep 5'",
@@ -5636,7 +5638,7 @@ mod tests {
     fn prompt_marks_from_a_program_other_than_a_shell_do_not_end_it() {
         fn read_pane(pane: &mut ServerPane, script: &str) -> PaneRuntimeState {
             let pty = TerminalPty::spawn(
-                tui_lipan::prelude::TerminalPtyConfig::new("/bin/sh")
+                tui_lipan::TerminalPtyConfig::new("/bin/sh")
                     .arg("-c")
                     .arg(script),
                 |_| {},
@@ -5694,7 +5696,7 @@ mod tests {
     #[test]
     fn live_process_inspection_replaces_a_shell_function_hint() {
         let pty = TerminalPty::spawn(
-            tui_lipan::prelude::TerminalPtyConfig::new("/bin/sh")
+            tui_lipan::TerminalPtyConfig::new("/bin/sh")
                 .arg("-c")
                 .arg("exec sleep 5"),
             |_| {},
@@ -7572,7 +7574,7 @@ mod tests {
         use crate::update::session::status::apply_pane_runtime_state;
 
         let mut server = make_pane();
-        let mut client = crate::state::Pane::new(1, 100, tui_lipan::prelude::FloatRect::default());
+        let mut client = crate::state::Pane::new(1, 100, tui_lipan::FloatRect::default());
         let state = |runtime: &PaneRuntimeState| runtime.detected_agent.as_ref().map(|d| d.state);
 
         let old = agent_job(100, &[(100, "sv"), (101, "pi")]);

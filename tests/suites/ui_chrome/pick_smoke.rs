@@ -4,7 +4,7 @@ use rozi::AppRoot;
 use rozi::control::pick::PickRow;
 use std::sync::mpsc;
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
+use tui_lipan::{KeyCode, KeyEvent, KeyMods, Rect};
 
 fn pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, rozi::state::PickReplyReceiver) {
     rozi::test_support::isolate_user_dirs();

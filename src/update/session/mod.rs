@@ -198,7 +198,7 @@ pub(crate) fn agent_requests_changed(
             )
         })
         .collect();
-    Update::full().merge(Update::with_command(Command::spawn(
+    Update::full().merge(Update::full_with_command(ctx.link().command(
         move |link: CommandLink<crate::Msg>| {
             for (target, revision) in ends {
                 link.send_after(

@@ -1,6 +1,7 @@
 //! In-app *Sharing* picker operations and `AttachedControl` reply handling.
 
 use tui_lipan::prelude::*;
+use tui_lipan::{ItemDescription, SearchMatchMode};
 
 use crate::AppRoot;
 use crate::control::{ControlCommand, ControlRequest, ControlResponse, ShareGrantInfo, ShareState};

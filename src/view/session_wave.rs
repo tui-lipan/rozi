@@ -7,7 +7,7 @@
 //! settles back to untouched cells.
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tui_lipan::prelude::{
+use tui_lipan::{
     CellEffect, EffectCell, EffectContext, EffectPrepareContext, EffectScope, Element,
     PreparedCellEffect, Rect, TerminalColor, Theme,
 };
@@ -428,9 +428,9 @@ mod tests {
         let effect = SessionWaveEffect::new(
             PanePaintMotion::Timed {
                 started_at: Duration::ZERO,
-                transition: tui_lipan::prelude::TransitionConfig {
+                transition: tui_lipan::TransitionConfig {
                     duration: Duration::from_millis(880),
-                    easing: tui_lipan::prelude::Easing::Linear,
+                    easing: tui_lipan::Easing::Linear,
                 },
                 closing: false,
                 interval: Duration::from_millis(16),

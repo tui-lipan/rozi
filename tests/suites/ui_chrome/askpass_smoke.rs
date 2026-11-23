@@ -7,7 +7,7 @@
 use rozi::AppRoot;
 use rozi::session::remote::AskpassKind;
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
+use tui_lipan::{KeyCode, KeyEvent, KeyMods, Rect};
 
 fn askpass_backend(kind: AskpassKind, prompt: &str) -> TestBackend<AppRoot> {
     rozi::test_support::isolate_user_dirs();
@@ -360,7 +360,7 @@ fn the_prompt_fades_the_picker_behind_it() {
     });
 }
 
-fn channel_sum(color: tui_lipan::prelude::Color) -> u32 {
+fn channel_sum(color: tui_lipan::Color) -> u32 {
     let (r, g, b) = color
         .to_rgb()
         .expect("a captured cell reports a concrete color");

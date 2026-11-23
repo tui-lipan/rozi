@@ -887,7 +887,7 @@ mod tests {
     /// Ctrl+Enter on the focused sidebar's cursor row is the keyboard form of Ctrl+click.
     #[test]
     fn ctrl_enter_on_a_checkout_opens_the_other_kind() {
-        use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
+        use tui_lipan::{KeyCode, KeyEvent, KeyMods, Rect};
         crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = backend();
             backend.set_viewport(Rect {
@@ -926,7 +926,7 @@ mod tests {
     /// Ctrl names what Ctrl+click opens instead.
     #[test]
     fn a_hovered_checkout_names_its_click_beside_the_close_and_ctrl_names_the_other() {
-        use tui_lipan::prelude::{KeyMods, Rect};
+        use tui_lipan::{KeyMods, Rect};
         crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = backend();
             backend.set_viewport(Rect {

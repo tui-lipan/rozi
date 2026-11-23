@@ -18,6 +18,7 @@ pub(crate) mod sharing;
 pub(crate) mod sidebar;
 pub(crate) mod workbar;
 
+use tui_lipan::UpdateLevel;
 use tui_lipan::prelude::*;
 
 use crate::{AppRoot, Msg};
@@ -113,9 +114,10 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             Update::full()
         }
         Msg::RefreshPaintLayers => Update::full(),
-        Msg::SchedulePaintRefresh(delay) => Update::command_only(Command::after(delay, |link| {
-            link.send(Msg::RefreshPaintLayers)
-        })),
+        Msg::SchedulePaintRefresh(delay) => Update::command_only(
+            ctx.link()
+                .command_after(delay, |link| link.send(Msg::RefreshPaintLayers)),
+        ),
         Msg::UiScreenshotFrameReady => {
             crate::ops::control::request_pending_ui_frame(ctx);
             Update::full()
@@ -1122,7 +1124,7 @@ fn drain_inbound_events_from_first(
     let mut entries = 1usize;
     let mut bytes = event_bytes;
     let mut aggregate = handle(event);
-    if aggregate.update.command.is_some() {
+    if aggregate.update.has_command() {
         mailbox.finish_drain();
         return aggregate;
     }
@@ -1135,7 +1137,7 @@ fn drain_inbound_events_from_first(
         entries += 1;
 
         let next = handle(event);
-        let has_command = next.update.command.is_some();
+        let has_command = next.update.has_command();
         aggregate = merge_handled_updates(aggregate, next);
         // Yield at the first command so subsequent inbound events are not coalesced across
         // an asynchronous-work boundary.
@@ -1309,8 +1311,7 @@ fn post_update_sync(
     if stale_search {
         ctx.state.search = None;
         ctx.state.commands_dirty = true;
-        let command = update.command.take();
-        update = Update::with_command(command);
+        update = update.merge(Update::full());
     }
     // Repairs: the alert pulse chain, armed when a pane or tab gains an alert and left to cancel
     // itself when none remain.
@@ -1319,8 +1320,7 @@ fn post_update_sync(
     sidebar::sync_tree_roots(ctx);
     // Repairs: the Worktrees tab's repository after focus moves to a pane in another checkout.
     if sidebar::sync_worktrees_tab(ctx) {
-        let command = update.command.take();
-        update = Update::with_command(command);
+        update = update.merge(Update::full());
     }
     // Repairs: the worktree refresh tick, kept alive while something needs it.
     crate::ops::worktrees::ensure_tick(ctx);
@@ -1342,18 +1342,19 @@ fn post_update_sync(
     // Repairs: placed extension processes, after attachments or generations change or a restart
     // falls due.
     crate::ops::placement::sync(ctx);
-    // Repairs: the runtime cursor trail, after config or theme changes.
+    // Repairs: the runtime cursor trail and pointer feedback, after config or theme changes.
     crate::app::sync_cursor_trail(ctx);
+    ctx.set_pointer_mode(ctx.state.config.cursor.pointer.runtime());
+    // Repairs: the workspace slide, after a workspace or session switch.
+    crate::view::animation::sync_workspace_slide(ctx);
     // Repairs: the agents picker's cursor, kept on a matching row as snapshots arrive.
     if crate::ops::agents::sync_picker_selection(&mut ctx.state) {
-        let command = update.command.take();
-        update = Update::with_command(command);
+        update = update.merge(Update::full());
     }
 
     // Repairs: the theme's terminal palette inputs, after the host reports a new palette.
     if crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state) {
-        let command = update.command.take();
-        update = Update::with_command(command);
+        update = update.merge(Update::full());
     }
 
     // Repairs: dialogs held back until a session is on screen (the welcome card, release notes),
@@ -1362,8 +1363,7 @@ fn post_update_sync(
         || crate::ops::release_notes::show_if_due(ctx)
         || overlays::usage_count_notice_if_due(ctx)
     {
-        let command = update.command.take();
-        update = Update::with_command(command);
+        update = update.merge(Update::full());
     }
 
     // Repairs: the command registry, after anything it renders from moves.
@@ -1418,8 +1418,9 @@ fn publishes_runtime_metrics(epoch: u64, current_epoch: u64, devtools_visible: b
 const DEVTOOLS_METRICS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Publishing never draws an app frame: DevTools rebuilds only its own panel to show the rows.
-fn publish_devtools_metrics(ctx: &Context<AppRoot>) {
-    ctx.set_devtools_metrics(|| ctx.state.current().runtime_metrics().devtools_rows());
+fn publish_devtools_metrics(ctx: &mut Context<AppRoot>) {
+    let rows = ctx.state.current().runtime_metrics().devtools_rows();
+    ctx.set_devtools_metrics(|| rows);
 }
 
 fn devtools_metrics_tick(app: &AppRoot, ctx: &mut Context<AppRoot>) -> Update {
@@ -1431,10 +1432,9 @@ fn devtools_metrics_tick(app: &AppRoot, ctx: &mut Context<AppRoot>) -> Update {
     if let Some(client) = &ctx.state.current().session_client {
         client.request_runtime_metrics();
     }
-    Update::command_only(Command::after(
-        DEVTOOLS_METRICS_INTERVAL,
-        |link: CommandLink<Msg>| link.send(Msg::DevtoolsMetricsTick),
-    ))
+    Update::command_only(ctx.link().command_after(DEVTOOLS_METRICS_INTERVAL, |link| {
+        link.send(Msg::DevtoolsMetricsTick)
+    }))
 }
 
 #[cfg(test)]
@@ -1662,7 +1662,7 @@ mod tests {
     fn inbound_drain_stops_after_command_and_keeps_earlier_stronger_level() {
         run_drain_test(|| {
             for (first_update, expected_level) in [
-                (Update::layout(), UpdateLevel::Layout),
+                (Update::render(), UpdateLevel::Render),
                 (Update::terminal_paint(), UpdateLevel::Paint),
             ] {
                 let mut first_update = Some(first_update);
@@ -1677,10 +1677,7 @@ mod tests {
                         match handled {
                             1 => classified(first_update.take().unwrap(), PostUpdateKind::Full),
                             2 => classified(
-                                Update::command_only(Command::after(
-                                    std::time::Duration::ZERO,
-                                    |_link: CommandLink<Msg>| {},
-                                )),
+                                Update::command_only(Command::on_ui_thread(|| {})),
                                 PostUpdateKind::SessionOutputOnly,
                             ),
                             _ => panic!("the event after a command must not be consumed"),
@@ -1690,7 +1687,7 @@ mod tests {
 
                 assert_eq!(handled, 2);
                 assert_eq!(handled_update.update.level(), expected_level);
-                assert!(handled_update.update.command.is_some());
+                assert!(handled_update.update.has_command());
                 assert_eq!(handled_update.post_update, PostUpdateKind::Full);
                 assert!(
                     mailbox.pop().is_some(),

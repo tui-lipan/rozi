@@ -17,7 +17,7 @@ use rozi::config::{SidebarPosition, SidebarTab};
 use rozi::pane::chrome::PaneBorderMode;
 use rozi::state::Pane;
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{FloatRect, Rect};
+use tui_lipan::{FloatRect, Rect};
 
 const WIDTH: u16 = 100;
 const HEIGHT: u16 = 20;

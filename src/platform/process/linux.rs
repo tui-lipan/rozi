@@ -8,7 +8,7 @@
 use std::io::Read;
 use std::path::PathBuf;
 
-use tui_lipan::prelude::TerminalPty;
+use tui_lipan::TerminalPty;
 
 use super::{ForegroundJob, ForegroundLaunch, ForegroundProcess, ProcessInspector};
 
@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn reports_cwd_and_foreground_program_for_a_live_child() {
         let pty = TerminalPty::spawn(
-            tui_lipan::prelude::TerminalPtyConfig::new("/bin/sh")
+            tui_lipan::TerminalPtyConfig::new("/bin/sh")
                 .arg("-c")
                 .arg("cd /tmp && exec sleep 30"),
             |_event| {},

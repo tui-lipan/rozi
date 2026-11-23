@@ -153,7 +153,7 @@ pub(crate) fn switch_to_parked(
     // was. One that had not fired yet stays valid alongside its replacement; every stage is a no-op
     // the second time. Taken before the missed layout is applied: panes it adds come with timers of
     // their own.
-    let rearmed = crate::pane::lifecycle::rearm_pane_transitions(&ctx.state);
+    let rearmed = crate::pane::lifecycle::rearm_pane_transitions(ctx.link(), &ctx.state);
     // The layout carries the open timers of panes added while parked; without them those panes
     // never finish opening, so they stay hidden and cannot take focus.
     let mut update = Update::full();
@@ -341,7 +341,7 @@ pub(crate) fn abandon_session_reconnect(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.current_mut().epoch = epoch;
     ctx.state.current_mut().pending_session_attach = None;
     ctx.state.commands_dirty = true;
-    let rearmed = crate::pane::lifecycle::rearm_pane_transitions(&ctx.state);
+    let rearmed = crate::pane::lifecycle::rearm_pane_transitions(ctx.link(), &ctx.state);
     if was_remote {
         ctx.state.current_mut().connection = crate::state::ConnectionState::Unreachable;
         crate::ops::session::open_session_picker(ctx).merge(rearmed)
@@ -376,7 +376,7 @@ pub(crate) fn start_attach(
     let request = pending.request.clone();
     install_pending_attach(ctx, pending);
     let remote_config = ctx.state.config.remote.clone();
-    Update::with_command(Command::spawn(move |link| {
+    Update::full_with_command(ctx.link().command(move |link| {
         std::thread::spawn(move || {
             crate::session::bootstrap::run_attach(epoch, request, &remote_config, link)
         });
@@ -452,7 +452,7 @@ fn begin_current_session_reconnect(
     ctx.state.current_mut().resize_flush_scheduled = false;
     ctx.state.commands_dirty = true;
     // The same holds for a pane's open or close transition: arm it again under the new epoch.
-    let rearmed = crate::pane::lifecycle::rearm_pane_transitions(&ctx.state);
+    let rearmed = crate::pane::lifecycle::rearm_pane_transitions(ctx.link(), &ctx.state);
     start_attach(ctx, crate::state::PendingSessionAttach::new(epoch, request)).merge(rearmed)
 }
 
@@ -513,8 +513,8 @@ pub(crate) fn finish_session_install(ctx: &mut Context<AppRoot>) {
     ctx.state.animation = crate::layout::anim::GeometryAnimation::None;
     // The launcher reuses `runtime_epoch` when it starts an ephemeral session. Without this the
     // workspace-slide keys treat that as a switch away from workspace 0 (the launcher panel).
-    ctx.state.workspace_slide.set(None);
-    // Resetting slide history bypasses the view's screen-switch check. The incoming session's
+    ctx.state.workspace_slide = None;
+    // Resetting slide history bypasses the screen-switch check in `sync_workspace_slide`. The incoming session's
     // cursor must still arrive without a trail from the outgoing pane or picker.
     ctx.skip_cursor_trail();
     ctx.state.commands_dirty = true;

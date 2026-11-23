@@ -4,7 +4,7 @@
 
 use rozi::AppRoot;
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
+use tui_lipan::{KeyCode, KeyEvent, KeyMods, Rect};
 
 /// Isolated per `AGENTS.md`: building an `AppRoot` otherwise resolves the developer's own config
 /// and state directories.

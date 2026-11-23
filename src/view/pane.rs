@@ -1,4 +1,9 @@
 use tui_lipan::prelude::*;
+use tui_lipan::{
+    CapStyle, DecorationGlyph, EdgeDecoration, EffectAmount, FloatRect, PointerShape,
+    TerminalDecoration, TerminalPasteShortcutBehavior, TerminalPathFilter, TerminalPos,
+    TerminalSelection,
+};
 
 use crate::config::{BadgeColor, PaneConfig};
 use crate::layout::model::{LayoutKind, TileGap};
@@ -786,7 +791,7 @@ fn title_cap_glyph_style(title_bg: Paint, cap_bg: Paint) -> Style {
 /// `cap_bg` so the row reads as a pill.
 fn filled_title_row(
     fill_style: Style,
-    caps: Option<(&'static str, &'static str)>,
+    caps: Option<(char, char)>,
     title_bg: Paint,
     cap_bg: Paint,
     title_text: Element,
@@ -807,8 +812,8 @@ fn filled_title_row(
         }
         Some((left, right)) => {
             let cap_style = title_cap_glyph_style(title_bg, cap_bg);
-            let cap = |glyph: &'static str| {
-                Text::new(glyph)
+            let cap = |glyph: char| {
+                Text::new(String::from(glyph))
                     .style(cap_style)
                     .width(Length::Px(1))
                     .height(Length::Px(1))
@@ -893,7 +898,7 @@ pub(crate) fn divider_title_element(
             );
             let title_row = filled_title_row(
                 title_bar_fill_style,
-                title_cap_style(ctx).glyphs(),
+                title_cap_style(ctx).chars(),
                 title_bar_bg,
                 frame_bg,
                 title_text,
@@ -901,7 +906,7 @@ pub(crate) fn divider_title_element(
             );
             Some(
                 MouseRegion::new()
-                    .enabled(!pane.closing)
+                    .disabled(pane.closing)
                     .capture_click(true)
                     .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
                     .child(title_row)
@@ -975,14 +980,14 @@ pub(crate) fn seam_title_element(
                         .into(),
                 };
             let cap_style = title_cap_glyph_style(parts.title_bg, parts.frame_bg);
-            let cap = |glyph: &'static str| -> Element {
-                Text::new(glyph)
+            let cap = |glyph: char| -> Element {
+                Text::new(String::from(glyph))
                     .style(cap_style)
                     .width(Length::Px(1))
                     .height(Length::Px(1))
                     .into()
             };
-            let (inset, row): (f32, Element) = match title_style.glyphs() {
+            let (inset, row): (f32, Element) = match title_style.chars() {
                 // `integrated_titlebar_top_edge` paints the corner cells in the title color too, so
                 // the strip owns the whole row. Padding 2 lands the text exactly where the frame's
                 // header (inset 1 past the corner, padded 1) would have put it.
@@ -1036,7 +1041,7 @@ pub(crate) fn seam_title_element(
             Some(SeamTitle {
                 inset,
                 element: MouseRegion::new()
-                    .enabled(!pane.closing)
+                    .disabled(pane.closing)
                     .capture_click(true)
                     .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
                     .child(row)
@@ -1217,7 +1222,7 @@ pub(crate) fn pane_element(
         // `Padded` keeps the title flush with the frame below, with blank side padding. The cap
         // styles instead draw the titlebar color as end caps over the backdrop, so the row reads
         // as a rounded/pointed pill: the fill (and text) live in a Flex middle between the caps.
-        let title_row: Element = match title_cap_style(ctx).glyphs() {
+        let title_row: Element = match title_cap_style(ctx).chars() {
             None => {
                 let mut row = HStack::new()
                     .style(title_bar_fill_style)
@@ -1256,14 +1261,14 @@ pub(crate) fn pane_element(
                     .width(Length::Flex(1))
                     .height(Length::Px(1))
                     .child(
-                        Text::new(left)
+                        Text::new(String::from(left))
                             .style(title_cap_glyph_style(title_bar_bg, left_cap_bg))
                             .width(Length::Px(1))
                             .height(Length::Px(1)),
                     )
                     .child(middle)
                     .child(
-                        Text::new(right)
+                        Text::new(String::from(right))
                             .style(title_cap_glyph_style(title_bar_bg, right_cap_bg))
                             .width(Length::Px(1))
                             .height(Length::Px(1)),
@@ -1273,12 +1278,12 @@ pub(crate) fn pane_element(
         };
 
         let mut title_bar: Element = MouseRegion::new()
-            .enabled(!pane.closing)
+            .disabled(pane.closing)
             .capture_click(true)
             .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
             .child(title_row)
             .into();
-        if merge.left_seam && title_cap_style(ctx).glyphs().is_none() {
+        if merge.left_seam && title_cap_style(ctx).chars().is_none() {
             // A `Padded` title has no cap to sit on the seam, so keep its row off the shared
             // border column: the spacer is an empty Text that leaves the seam cell untouched for
             // the neighbor's border glyph. (Capped titles instead draw their left cap there, so
@@ -1473,7 +1478,7 @@ pub(crate) fn pane_element(
                 if !right.is_empty() {
                     labels = labels.right(rich_title(right));
                 }
-                body = body.header(labels);
+                body = body.titles(labels);
             }
             PaneTitlebarMode::Integrated if !merge.title_outside_frame() => {
                 let title_text: Element = pane
@@ -1496,7 +1501,7 @@ pub(crate) fn pane_element(
                     marker,
                 );
                 let title_style = title_cap_style(ctx);
-                let title_row: Element = match title_style.glyphs() {
+                let title_row: Element = match title_style.chars() {
                     // The frame's own top-edge decoration draws the half-block caps as its corner
                     // cells, so the header only pads past the left one.
                     Some(_) if title_style == CapStyle::Half && show_border => {
@@ -1523,12 +1528,12 @@ pub(crate) fn pane_element(
                     ),
                 };
                 let header: Element = MouseRegion::new()
-                    .enabled(!pane.closing)
+                    .disabled(pane.closing)
                     .capture_click(true)
                     .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
                     .child(title_row)
                     .into();
-                body = body.header_content(header);
+                body = body.title_content(header);
                 if show_border {
                     body = match title_style {
                         CapStyle::Padded => {
@@ -1536,7 +1541,7 @@ pub(crate) fn pane_element(
                         }
                         CapStyle::Half => body
                             .decoration(integrated_half_titlebar_top_edge(title_bar_bg, frame_bg)),
-                        CapStyle::Round | CapStyle::Arrow => body,
+                        _ => body,
                     };
                 }
             }
@@ -1574,7 +1579,7 @@ pub(crate) fn pane_element(
                 }
                 inset_title_row = Some(
                     MouseRegion::new()
-                        .enabled(!pane.closing)
+                        .disabled(pane.closing)
                         .capture_click(true)
                         .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
                         .child(title_row)
@@ -1596,7 +1601,7 @@ pub(crate) fn pane_element(
             ),
         )
     {
-        body = body.header(BorderLabels::new().right(dot).padding(1));
+        body = body.titles(BorderLabels::new().right(dot).padding(1));
     }
     let content: Element = match inset_title_row {
         Some(title_row) => VStack::new()
@@ -1630,7 +1635,7 @@ pub(crate) fn pane_element(
         ctx.state.config.input.modifier.key_mods()
     };
     let mut window_region = MouseRegion::new()
-        .enabled(!pane.closing)
+        .disabled(pane.closing)
         .capture_requires_mods(mouse_gesture_mods)
         .drag_requires_mods(mouse_gesture_mods)
         .right_drag_requires_mods(mouse_gesture_mods)
@@ -3292,7 +3297,7 @@ mod tests {
             .unwrap()
             .terminal
             .with_screen_mut(|screen| {
-                screen.set_cell_size(tui_lipan::prelude::TerminalCellSize {
+                screen.set_cell_size(tui_lipan::TerminalCellSize {
                     width: 10,
                     height: 20,
                 });

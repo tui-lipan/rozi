@@ -182,6 +182,10 @@ use crate::control::{
     ControlResponse,
 };
 use tui_lipan::prelude::*;
+use tui_lipan::{
+    GraphicsMediaPolicy, SelectionEnd, TerminalClipboardEvent, TerminalColorPalette,
+    TerminalScreenHandle, TerminalSelection,
+};
 
 /// Decoded Kitty graphics retained by one pane parser.
 ///
@@ -554,7 +558,7 @@ impl TerminalPane {
     /// element change on every chunk of output, which forces a full `view()` + layout pass for the
     /// whole window. A handle holds still, so output is answered with [`Update::paint`].
     ///
-    /// [`Update::paint`]: tui_lipan::prelude::Update::paint
+    /// [`Update::paint`]: tui_lipan::Update::paint
     pub(crate) fn stable_terminal_id(&self) -> u64 {
         self.screen.borrow().stable_terminal_id()
     }
@@ -978,7 +982,7 @@ impl TerminalPane {
     }
 
     /// Absolute-line semantic marks from OSC 133 (Prompt / OutputStart / OutputEnd).
-    pub fn semantic_marks(&self) -> Vec<tui_lipan::prelude::SemanticMark> {
+    pub fn semantic_marks(&self) -> Vec<tui_lipan::SemanticMark> {
         self.screen.borrow().semantic_marks()
     }
 
@@ -1285,6 +1289,7 @@ pub(crate) fn sanitize_terminal_title(title: String) -> Option<String> {
 mod tests {
     use super::*;
     use tui_lipan::utils::{GridPos, GridSelection};
+    use tui_lipan::{TerminalCellSize, TerminalClipboardTarget, TerminalPos};
 
     #[test]
     fn a_pane_screen_answers_xtversion_as_rozi() {

@@ -157,7 +157,8 @@ fn open_profile_picker_mode(ctx: &mut Context<AppRoot>, apply_mode: bool) -> Upd
     ctx.state.save_profile_prompt = None;
     ctx.state.mode = Mode::Normal;
     request_profile_picker_focus(ctx);
-    Update::with_command(profile_session_watch_command(
+    Update::full_with_command(profile_session_watch_command(
+        ctx.link(),
         epoch,
         ctx.state.local_current_session_name().map(str::to_string),
     ))
@@ -219,10 +220,14 @@ fn push_local_current_session(
     });
 }
 
-fn profile_session_watch_command(epoch: u64, current: Option<String>) -> Command {
+fn profile_session_watch_command(
+    link: &tui_lipan::Link<crate::Msg>,
+    epoch: u64,
+    current: Option<String>,
+) -> Command {
     // Recurring watch: `after` keeps the wait off the executor, so a picker left open does not
     // hold a worker between sweeps. The discovery itself still runs on the pool.
-    Command::after(
+    link.command_after(
         std::time::Duration::from_millis(1500),
         move |link: CommandLink<crate::Msg>| {
             if let Ok(rows) =
@@ -246,7 +251,8 @@ pub(crate) fn apply_profile_sessions(
     if let Some(picker) = ctx.state.profile_picker.as_mut() {
         picker.running = rows.into_iter().map(|row| (row.name, row.status)).collect();
     }
-    Update::with_command(profile_session_watch_command(
+    Update::full_with_command(profile_session_watch_command(
+        ctx.link(),
         epoch,
         ctx.state.local_current_session_name().map(str::to_string),
     ))
@@ -385,7 +391,8 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<AppRoot>) -> Upd
     if spawned.is_empty() {
         Update::full()
     } else {
-        Update::with_command(crate::pane::lifecycle::open_timers_batch_command(
+        Update::full_with_command(crate::pane::lifecycle::open_timers_batch_command(
+            ctx.link(),
             ctx.state.runtime_epoch,
             spawned,
             crate::layout::anim::open_delay(ctx.state.config.animations),

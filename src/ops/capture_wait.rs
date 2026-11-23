@@ -77,7 +77,7 @@ pub(crate) fn start(ctx: &mut Context<AppRoot>, envelope: ControlEnvelope) -> Up
         return Update::none();
     }
     ctx.state.capture_waits.ticking = true;
-    Update::command_only(schedule_tick())
+    Update::command_only(schedule_tick(ctx.link()))
 }
 
 fn register(
@@ -213,11 +213,11 @@ pub(crate) fn tick(ctx: &mut Context<AppRoot>) -> Update {
         return Update::none();
     }
     ctx.state.capture_waits.ticking = true;
-    Update::command_only(schedule_tick())
+    Update::command_only(schedule_tick(ctx.link()))
 }
 
-fn schedule_tick() -> Command {
-    Command::after(TICK, move |link: CommandLink<Msg>| {
+fn schedule_tick(link: &tui_lipan::Link<crate::Msg>) -> Command {
+    link.command_after(TICK, move |link: CommandLink<Msg>| {
         link.send(Msg::CaptureWaitTick);
     })
 }

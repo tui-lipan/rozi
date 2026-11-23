@@ -1,4 +1,4 @@
-use tui_lipan::prelude::{KeyBinding, KeyMods, TextInput};
+use tui_lipan::{KeyBinding, KeyMods, TextInput};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum HelpTab {

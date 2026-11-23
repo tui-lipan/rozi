@@ -2,7 +2,7 @@ use std::io::{BufWriter, Read, Seek, Write};
 use std::time::Duration;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use tui_lipan::prelude::TerminalScreen;
+use tui_lipan::TerminalScreen;
 
 fn replay_screen(rows: u16, cols: u16, history: usize) -> TerminalScreen {
     let mut input = Vec::new();

@@ -2215,7 +2215,7 @@ mod tests {
     #[test]
     fn pane_output_resolves_through_each_clients_theme_without_being_rewritten() {
         use crate::state::ThemePreset;
-        use tui_lipan::prelude::{Style, TerminalColorPalette, TerminalScreen, Theme};
+        use tui_lipan::{Style, TerminalColorPalette, TerminalScreen, Theme};
 
         let report = format_table(
             &["NAME", "STATUS"],

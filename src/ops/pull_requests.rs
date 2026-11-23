@@ -62,7 +62,10 @@ pub(crate) fn tick(ctx: &mut Context<AppRoot>) -> Update {
     }
     let wanted = wanted(&ctx.state);
     want(ctx, wanted);
-    Update::command_only(Command::after(TICK, |link| link.send(Msg::PullRequestTick)))
+    Update::command_only(
+        ctx.link()
+            .command_after(TICK, |link| link.send(Msg::PullRequestTick)),
+    )
 }
 
 /// Tell every host which of its repositories to look up, and the rest to stop.

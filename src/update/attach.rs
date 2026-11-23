@@ -1,3 +1,4 @@
+use tui_lipan::TerminalColorPalette;
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
@@ -302,6 +303,7 @@ mod tests {
         AgentIdentity, DetectedAgent, DetectedAgentState, PaneMeta, PaneRuntimeState,
     };
     use crate::update::session::status::apply_pane_runtime_state;
+    use tui_lipan::FloatRect;
 
     fn record(completions: u64) -> crate::session::protocol::AgentRecord {
         crate::session::protocol::AgentRecord {

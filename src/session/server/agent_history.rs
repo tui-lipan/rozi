@@ -3,6 +3,10 @@
 //! All PTYs belong to the server and client input passes through `accept_pane_input`. A lease
 //! queues that input and geometry changes through restoration; headless automation gets busy.
 use tui_lipan::core::event::{MouseEvent, MouseKind};
+use tui_lipan::{
+    AltScreenHistoryReader, HistoryRead, HistoryReadError, HistoryReadStep, MouseEncoding,
+    MouseMode, MouseModeState, mouse_event_to_bytes,
+};
 
 use super::connection::PaneResizeRequest;
 use super::headless::ReplyTo;

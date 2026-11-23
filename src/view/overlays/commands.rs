@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::{PointerShape, SearchEntry};
 
 /// Whether `registry_id` names a `[[commands]]` entry its extension has hidden from the palette.
 fn hidden_named_command(ctx: &Context<AppRoot>, registry_id: &str) -> bool {

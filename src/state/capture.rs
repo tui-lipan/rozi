@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use tui_lipan::prelude::TextInput;
+use tui_lipan::TextInput;
 
 use super::AttachmentId;
 use crate::pane::id::PaneId;

@@ -1,3 +1,4 @@
+use tui_lipan::FloatRect;
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
@@ -1307,7 +1308,7 @@ mod tests {
     use crate::layout::tiling::{append_tiled_window, collect_tree_leaves};
     use crate::layout::workspace_target_rects_with_visible_bounds;
     use crate::state::Pane;
-    use tui_lipan::prelude::Theme;
+    use tui_lipan::Theme;
 
     fn state_with_tiled(ids: &[PaneId]) -> State {
         let mut state = State::new(Config::default(), Theme::default());

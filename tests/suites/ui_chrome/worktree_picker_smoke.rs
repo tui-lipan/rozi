@@ -6,7 +6,7 @@ use rozi::state::WorktreePickerState;
 use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
-use tui_lipan::prelude::{KeyMods, Rect};
+use tui_lipan::{KeyMods, Rect};
 
 fn picker() -> TestBackend<AppRoot> {
     rozi::test_support::isolate_user_dirs();
@@ -425,7 +425,7 @@ fn hidden_remote_paths_remain_searchable_and_copyable_by_key_and_click() {
     rozi::test_support::on_deeper_stack(|| {
         use std::cell::RefCell;
         use std::rc::Rc;
-        use tui_lipan::prelude::{App, KeyCode, KeyEvent};
+        use tui_lipan::{App, KeyCode, KeyEvent};
         use tui_lipan::{ClipboardError, ClipboardProvider};
 
         struct Clipboard(Rc<RefCell<String>>);
@@ -565,8 +565,8 @@ fn footer_hints_click_through_to_their_key_action() {
         assert!(!backend.capture_frame().plain_text().contains("Esc"));
         assert!(backend.focus_key(&"rozi-worktree-form-input".into()));
         backend
-            .send_key(tui_lipan::prelude::KeyEvent {
-                code: tui_lipan::prelude::KeyCode::Esc,
+            .send_key(tui_lipan::KeyEvent {
+                code: tui_lipan::KeyCode::Esc,
                 mods: KeyMods::NONE,
             })
             .unwrap();
@@ -579,8 +579,8 @@ fn footer_hints_click_through_to_their_key_action() {
         assert!(!backend.capture_frame().plain_text().contains("Esc"));
         assert!(backend.focus_key(&"rozi-worktree-picker".into()));
         backend
-            .send_key(tui_lipan::prelude::KeyEvent {
-                code: tui_lipan::prelude::KeyCode::Esc,
+            .send_key(tui_lipan::KeyEvent {
+                code: tui_lipan::KeyCode::Esc,
                 mods: KeyMods::NONE,
             })
             .unwrap();

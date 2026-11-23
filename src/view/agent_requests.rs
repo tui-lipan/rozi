@@ -7,7 +7,7 @@ use crate::control::{AgentRequestState, AgentRequestSummary};
 use crate::pane::id::PaneId;
 use crate::session::protocol::{AgentRef, PaneRef};
 use crate::state::{Pane, State};
-use tui_lipan::prelude::TreeBranch;
+use tui_lipan::TreeBranch;
 
 /// The requests that touch one pane's agents, for the marks in its title.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -448,7 +448,7 @@ mod tests {
     fn ages_run_on_the_servers_clock_not_this_machines() {
         let mut state = State::new(
             crate::config::Config::default(),
-            tui_lipan::prelude::Theme::default(),
+            tui_lipan::Theme::default(),
         );
         assert_eq!(server_now_ms(&state), None);
         // A server whose clock reads 1970 plus five seconds, far behind this machine's.

@@ -26,7 +26,7 @@ use rozi::pane::TerminalPane;
 use rozi::pane::launch::PaneLaunch;
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::protocol::{ClientMessage, Frame, ServerMessage, WirePalette};
-use tui_lipan::prelude::TerminalColorPalette;
+use tui_lipan::TerminalColorPalette;
 
 use common::{
     ServerGuard, TestConnection, attach_message, connect_when_ready, contains, private_temp_dir,

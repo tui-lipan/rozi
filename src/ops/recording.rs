@@ -307,7 +307,7 @@ pub(crate) fn answered(
         RecordingAction::Mark(pane) => {
             notify_info(ctx, "Recording marked");
             if let Some(end) = blink(ctx, pane) {
-                return Update::with_command(end);
+                return Update::full_with_command(end);
             }
         }
     }
@@ -379,7 +379,7 @@ fn blink(ctx: &mut Context<AppRoot>, pane: PaneId) -> Option<Command> {
     blink.revision = blink.revision.wrapping_add(1);
     blink.pane = Some(pane);
     let revision = blink.revision;
-    Some(Command::spawn(move |link: CommandLink<crate::Msg>| {
+    Some(ctx.link().command(move |link: CommandLink<crate::Msg>| {
         link.send_after(MARK_BLINK, crate::Msg::RecordingMarkBlinkEnded { revision });
     }))
 }

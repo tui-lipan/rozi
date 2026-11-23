@@ -1,3 +1,4 @@
+use tui_lipan::FileTreeExplorerFocusOrigin;
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
@@ -50,10 +51,10 @@ pub(crate) fn focus_body(ctx: &mut Context<AppRoot>) -> Update {
         ctx.state.sidebar.show_restored();
     }
     ctx.state.sidebar.select_shown_panel();
-    let command = if previous_shown != ctx.state.sidebar.shown {
-        visibility_changed(ctx).command
+    let revealed = if previous_shown != ctx.state.sidebar.shown {
+        visibility_changed(ctx)
     } else {
-        None
+        Update::none()
     };
     // Resolves after reconciliation, so requesting it in the same pass that reveals the sidebar is
     // fine even though the body has not mounted yet.
@@ -66,7 +67,7 @@ pub(crate) fn focus_body(ctx: &mut Context<AppRoot>) -> Update {
         panel.suppress_row_hover = true;
     }
     ctx.state.commands_dirty = true;
-    Update::with_command(command)
+    Update::full().merge(revealed)
 }
 
 /// Escape from the sidebar or a pointer-focused explorer: give the keyboard back to the focused
@@ -181,7 +182,7 @@ pub(crate) fn reorder_active_tab(ctx: &mut Context<AppRoot>, right: bool) -> Upd
         return Update::none();
     }
     crate::update::sidebar::sync_and_persist_panels(ctx);
-    Update::layout()
+    Update::render()
 }
 
 pub(crate) fn move_active_tab_to_panel(ctx: &mut Context<AppRoot>, down: bool) -> Update {
@@ -245,7 +246,7 @@ pub(crate) fn pointer_moved(ctx: &mut Context<AppRoot>, panel: usize) -> Update 
     panel.suppress_row_hover = false;
     // Re-enabling the rows' hover effects changes how the row list describes itself, so the view has
     // to run - but the description is the same shape, so reconciling it is enough.
-    Update::layout()
+    Update::render()
 }
 
 /// The pointer entered or left a row, which is what reveals that row's ✕.
@@ -279,7 +280,7 @@ pub(crate) fn row_hover(
     // exactly what the transition has to show — so the view has to run. `layout` rather than `full`:
     // the row list is described the same way either side of the transition, one glyph aside, so
     // re-running the view and reconciling is enough without rebuilding the whole element tree.
-    Update::layout()
+    Update::render()
 }
 
 /// The pointer entered or left a row's ✕. Like [`row_hover`], a leave only clears its own row.
@@ -303,7 +304,7 @@ pub(crate) fn close_hover(
         return Update::none();
     }
     panel.hovered_close = next;
-    Update::layout()
+    Update::render()
 }
 
 pub(crate) fn other_dock(ctx: &mut Context<AppRoot>, transfer: bool) -> Update {

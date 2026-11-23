@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::{ContentFormatter, FormatInput, FormattedBlock, FormattedDocument, FormattedLine};
 
 const EXTENSIONS_WIDTH: u16 = 84;
 const EXTENSION_DETAIL_WIDTH: u16 = 76;

@@ -70,7 +70,7 @@ fn pad_png(
     bytes: Vec<u8>,
     native: (u16, u16),
     canvas: (u16, u16),
-    background: tui_lipan::prelude::Color,
+    background: tui_lipan::Color,
 ) -> Result<Vec<u8>, String> {
     if native.0 == 0 || native.1 == 0 || native.0 > canvas.0 || native.1 > canvas.1 {
         return Err(
@@ -89,7 +89,7 @@ fn pad_png(
         .ok()
         .and_then(|pixels| pixels.checked_mul(4))
         .ok_or_else(|| "video bitmap is too large".to_string())?;
-    let tui_lipan::prelude::Color::Rgb(r, g, b) = background else {
+    let tui_lipan::Color::Rgb(r, g, b) = background else {
         return Err("video padding requires an RGB background".to_string());
     };
     let mut rgba = vec![0; pixels];
@@ -145,9 +145,7 @@ fn write_png_frames<R: BufRead>(
                 let mut png = crate::pane::png_bytes(&captured, colors, scale)
                     .map_err(|error| format!("cannot draw frame {}: {error}", frames.len() + 1))?;
                 if let Some(canvas) = canvas {
-                    let background = colors
-                        .background
-                        .unwrap_or(tui_lipan::prelude::Color::Rgb(0, 0, 0));
+                    let background = colors.background.unwrap_or(tui_lipan::Color::Rgb(0, 0, 0));
                     png = pad_png(png, (frame.width, frame.height), canvas, background)?;
                 }
                 write_new(&dir.join(&name), &png, overwrite)?;

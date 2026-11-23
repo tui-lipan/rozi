@@ -382,8 +382,7 @@ fn background_output_arms_the_alert_pulse_without_the_global_sweep() {
         let epoch = backend.state().runtime_epoch;
         let pane_id = 77;
         let generation = 9;
-        let mut pane =
-            crate::state::Pane::new(pane_id, 100, tui_lipan::prelude::FloatRect::default());
+        let mut pane = crate::state::Pane::new(pane_id, 100, tui_lipan::FloatRect::default());
         pane.pty_generation = generation;
         pane.terminal.bind_session(pane_id, generation);
         backend.state_mut().current_mut().workspaces[1]
@@ -1278,7 +1277,7 @@ fn a_conversation_the_hooks_do_not_follow_raises_the_blocked_edge() {
             .map(|id| AgentRef::for_test(1, 1, Some(RowKey::new("sessions", id))).into())
             .collect()
     };
-    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::prelude::FloatRect::default());
+    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::FloatRect::default());
 
     let working = apply_pane_runtime_state(&mut pane, records(), runtime("working"));
     assert!(!working.edges.became_blocked);
@@ -1327,7 +1326,7 @@ fn a_failure_marks_its_pane_until_seen_and_again_only_when_new() {
             .map(|id| AgentRef::for_test(1, 1, Some(RowKey::new("threads", id))).into())
             .collect()
     };
-    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::prelude::FloatRect::default());
+    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::FloatRect::default());
     let apply = |pane: &mut crate::state::Pane, first: &str, second: &str| {
         apply_pane_runtime_state(pane, records(), runtime(first, second));
         pane.terminal.error_unseen
@@ -1398,7 +1397,7 @@ fn a_hook_report_of_a_seen_failure_does_not_raise_it_again() {
     let records = || -> Vec<AgentRecord> {
         vec![AgentRef::for_test(1, 1, Some(RowKey::new("threads", "conversation"))).into()]
     };
-    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::prelude::FloatRect::default());
+    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::FloatRect::default());
 
     apply_pane_runtime_state(&mut pane, records(), runtime("working", None));
     apply_pane_runtime_state(&mut pane, records(), runtime("error", None));
@@ -1457,7 +1456,7 @@ fn a_new_failure_is_announced_once_where_it_happened() {
             .map(|id| AgentRef::for_test(1, 1, Some(RowKey::new("threads", id))).into())
             .collect()
     };
-    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::prelude::FloatRect::default());
+    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::FloatRect::default());
     let mut apply = |shown: &str, behind: &str| {
         let applied = apply_pane_runtime_state(&mut pane, records(), runtime(shown, behind));
         (applied.failed_rows, applied.edges.failed)
@@ -1522,7 +1521,7 @@ fn a_standing_hook_failure_is_not_new_when_its_row_comes_or_goes() {
         vec![AgentRef::for_test(1, 1, slot).into()]
     };
     for (first, then) in [(false, true), (true, false)] {
-        let mut pane = crate::state::Pane::new(1, 100, tui_lipan::prelude::FloatRect::default());
+        let mut pane = crate::state::Pane::new(1, 100, tui_lipan::FloatRect::default());
         apply_pane_runtime_state(&mut pane, records(first), runtime(first));
         assert!(pane.terminal.error_unseen);
         // Looked at.
@@ -1601,7 +1600,7 @@ fn a_standing_failure_is_not_new_when_its_conversation_moves_process() {
             },
         ),
     ];
-    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::prelude::FloatRect::default());
+    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::FloatRect::default());
     apply_pane_runtime_state(
         &mut pane,
         listed(),
@@ -1654,7 +1653,7 @@ fn a_conversation_two_publishers_list_fails_once() {
             })
             .collect()
     };
-    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::prelude::FloatRect::default());
+    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::FloatRect::default());
     apply_pane_runtime_state(&mut pane, records(), runtime("working"));
     let failed = apply_pane_runtime_state(&mut pane, records(), runtime("error"));
     assert_eq!(pane.failures().len(), 2, "it shows in both places");
@@ -1681,7 +1680,7 @@ fn parked_non_controller_defers_exit_until_control_returns() {
         let mut backend = TestBackend::new(crate::AppRoot::default());
         let mut attachment = crate::state::Attachment::new();
         attachment.epoch = 9;
-        let mut pane = crate::state::Pane::new(4, 100, tui_lipan::prelude::FloatRect::default());
+        let mut pane = crate::state::Pane::new(4, 100, tui_lipan::FloatRect::default());
         pane.pty_generation = 7;
         attachment.workspaces[0].panes.push(pane);
         let mut shared = crate::state::SharedSessionState::new(1);
@@ -1888,9 +1887,9 @@ fn first_relayed_lift_arms_tile_animation_and_abnormal_clear_snaps_the_pane() {
         {
             let workspace = backend.state_mut().current_mut().active_workspace_mut();
             workspace.panes.clear();
-            workspace.panes.extend((1..=2).map(|id| {
-                crate::state::Pane::new(id, 100, tui_lipan::prelude::FloatRect::default())
-            }));
+            workspace.panes.extend(
+                (1..=2).map(|id| crate::state::Pane::new(id, 100, tui_lipan::FloatRect::default())),
+            );
         }
         let mut drag = drag_at(0.1);
         drag.pane_id = 1;
@@ -1974,12 +1973,12 @@ fn disconnect_cancels_pointer_gestures_and_reconnect_flushes_pending_resizes_bod
             .push(crate::state::Pane::new(
                 2,
                 100,
-                tui_lipan::prelude::FloatRect::default(),
+                tui_lipan::FloatRect::default(),
             ));
         state.moving_pane = Some(crate::state::MoveSession {
             id: 1,
             was_floating: false,
-            drag_rect: tui_lipan::prelude::FloatRect::default(),
+            drag_rect: tui_lipan::FloatRect::default(),
             pointer_x: 0,
             pointer_y: 0,
         });
@@ -2375,9 +2374,9 @@ fn lost_remote_session_requires_explicit_recreation() {
 
         backend.render();
         backend
-            .send_key(tui_lipan::prelude::KeyEvent {
-                code: tui_lipan::prelude::KeyCode::Enter,
-                mods: tui_lipan::prelude::KeyMods::NONE,
+            .send_key(tui_lipan::KeyEvent {
+                code: tui_lipan::KeyCode::Enter,
+                mods: tui_lipan::KeyMods::NONE,
             })
             .expect("Enter on the modal starts explicit recreation");
         assert!(
@@ -2883,7 +2882,7 @@ fn seeded_pane_arrival(reconnect: bool) -> ((bool, bool, bool), bool) {
             workspace.panes.push(crate::state::Pane::new(
                 7,
                 0,
-                tui_lipan::prelude::FloatRect::default(),
+                tui_lipan::FloatRect::default(),
             ));
             crate::layout::tiling::append_tiled_window(workspace, 7);
             state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
@@ -3107,7 +3106,7 @@ fn empty_ephemeral_profile_seed_emits_profile_loaded_after_attach() {
 
 fn colliding_namespace_backend() -> TestBackend<crate::AppRoot> {
     let mut backend = TestBackend::new(crate::AppRoot::default());
-    let rect = tui_lipan::prelude::FloatRect::default();
+    let rect = tui_lipan::FloatRect::default();
     let mut shared = crate::state::Pane::new(7, 100, rect);
     shared.pty_generation = 1;
     shared.terminal.bind_session(7, 1);
@@ -3423,7 +3422,7 @@ fn a_failed_popup_spawn_tears_the_popup_down() {
             let mut pane = crate::state::Pane::new(
                 crate::pane::id::POPUP_PANE_ID,
                 100,
-                tui_lipan::prelude::FloatRect::default(),
+                tui_lipan::FloatRect::default(),
             );
             pane.opening = false;
             // A `keep_open` popup must still go: there is no process to keep open.
@@ -3552,7 +3551,7 @@ fn attached_agent_acknowledgement_rejects_another_epoch_body() {
 fn attaching_to_a_populated_session_hands_the_keyboard_to_the_focused_pane() {
     crate::test_support::on_large_stack(|| {
         let mut backend = TestBackend::new(crate::AppRoot::default());
-        backend.set_viewport(tui_lipan::prelude::Rect {
+        backend.set_viewport(tui_lipan::Rect {
             x: 0,
             y: 0,
             w: 100,

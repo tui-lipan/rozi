@@ -844,7 +844,7 @@ fn new_pane_environment(
 fn a_verified_caller_passes_on_its_ssh_connection_and_nothing_else() {
     use rozi::platform::command::{ShellEnv, resolve_launch_argv};
     use rozi::session::protocol::{ClientMessage, Frame, PaneRef, ServerMessage, WirePalette};
-    use tui_lipan::prelude::TerminalColorPalette;
+    use tui_lipan::TerminalColorPalette;
 
     const CONNECTION: &str = "192.0.2.1 5000 192.0.2.2 22";
     rozi::test_support::isolate_user_dirs();

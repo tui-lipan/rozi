@@ -1,4 +1,8 @@
 use tui_lipan::prelude::*;
+use tui_lipan::{
+    FileKind, FileTreeChangeSource, FileTreeChangeView, FileTreeEntryRequest,
+    FileTreeRefreshPolicy, FileTreeSuffixPriority, FileTreeToggleEvent, GitIconStyle, TreeKeymap,
+};
 
 use crate::config::{SidebarTreeConfig, SidebarTreeRoot, SidebarTreeView};
 use crate::{AppRoot, Msg};

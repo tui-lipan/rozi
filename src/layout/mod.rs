@@ -10,7 +10,7 @@ pub mod shared;
 pub mod tiling;
 pub mod tree_ser;
 
-use tui_lipan::prelude::FloatRect;
+use tui_lipan::FloatRect;
 
 use self::anim::SlideEdge;
 use self::geometry::{clamp_floating_rect, float_rect_contains_point, workspace_tile_bounds};

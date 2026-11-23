@@ -220,11 +220,11 @@ mod app_tests {
             // A key moved off the prefix keeps its whole chord; one moved within it shows its key.
             backend.state_mut().config.key_overrides.insert(
                 "command-palette".to_string(),
-                vec![tui_lipan::prelude::KeyBinding::from_str("alt-o").unwrap()],
+                vec![tui_lipan::KeyBinding::from_str("alt-o").unwrap()],
             );
             backend.state_mut().config.key_overrides.insert(
                 "help".to_string(),
-                vec![tui_lipan::prelude::KeyBinding::from_str("ctrl-a i").unwrap()],
+                vec![tui_lipan::KeyBinding::from_str("ctrl-a i").unwrap()],
             );
             backend.state_mut().commands_dirty = true;
             backend.state_mut().current_mut().session_attached = true;

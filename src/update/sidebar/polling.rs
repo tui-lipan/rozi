@@ -155,7 +155,7 @@ pub(crate) fn agent_tick(ctx: &mut Context<AppRoot>) -> Update {
         return Update::command_only(command);
     }
     ctx.state.sidebar.last_agent_durations = current;
-    Update::with_command(command)
+    Update::full_with_command(command)
 }
 
 pub(crate) fn poll_command(ctx: &mut Context<AppRoot>, epoch: u64, tab_id: SidebarTabId) -> Update {
@@ -177,7 +177,7 @@ pub(crate) fn poll_command(ctx: &mut Context<AppRoot>, epoch: u64, tab_id: Sideb
             .sidebar
             .command_poll_scheduled
             .insert(tab_id.clone(), epoch);
-        return Update::command_only(Command::after(
+        return Update::command_only(ctx.link().command_after(
             COMMAND_BUSY_RETRY,
             move |link: CommandLink<crate::Msg>| {
                 link.send(crate::Msg::SidebarCommandPoll { epoch, tab_id });
@@ -216,7 +216,7 @@ pub(crate) fn poll_command(ctx: &mut Context<AppRoot>, epoch: u64, tab_id: Sideb
         ));
     }
     let cwd = client_poll_cwd(&ctx.state);
-    Update::command_only(Command::spawn(move |link: CommandLink<crate::Msg>| {
+    Update::command_only(ctx.link().command(move |link: CommandLink<crate::Msg>| {
         let output = crate::config::prepare_state_dir(env.iter().map(|(key, value)| (key, value)))
             .map_err(std::io::Error::other)
             .and_then(|()| {
@@ -281,14 +281,14 @@ pub(crate) fn command_output(
         .sidebar
         .command_poll_scheduled
         .insert(tab_id.clone(), epoch);
-    let command = Command::after(
+    let command = ctx.link().command_after(
         std::time::Duration::from_secs(interval_secs),
         move |link: CommandLink<crate::Msg>| {
             link.send(crate::Msg::SidebarCommandPoll { epoch, tab_id });
         },
     );
     if changed {
-        Update::with_command(command)
+        Update::full_with_command(command)
     } else {
         Update::command_only(command)
     }

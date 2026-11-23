@@ -26,7 +26,7 @@
 
 use std::path::PathBuf;
 
-use tui_lipan::prelude::TerminalPty;
+use tui_lipan::TerminalPty;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForegroundProcess {

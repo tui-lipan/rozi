@@ -12,7 +12,7 @@ use rozi::pane::id::PaneId;
 use rozi::state::Pane;
 use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{FloatRect, Rect};
+use tui_lipan::{FloatRect, Rect};
 
 fn agent_pane(
     id: PaneId,
@@ -716,7 +716,7 @@ fn osc_status_snapshot_rejects_old_generations_and_revisions_and_renders() {
             state.current_mut().focused_pane = None;
         }
         let epoch = backend.state().runtime_epoch;
-        let mut screen = tui_lipan::prelude::TerminalScreen::new(24, 80, 100);
+        let mut screen = tui_lipan::TerminalScreen::new(24, 80, 100);
         screen.set_program_status_enabled(true);
         screen.process_bytes(
             b"\x1b]7501;state=working:app=cargo:title=QnVpbGQ=:progress=42:msg=Q29tcGlsaW5n\x07",

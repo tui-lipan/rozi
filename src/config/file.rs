@@ -3229,10 +3229,7 @@ on_open = { send = "danger\n" }
         let path = Path::new("test.toml");
 
         let loaded = load_config_from_text("", path);
-        assert_eq!(
-            loaded.config.frame_rate,
-            tui_lipan::prelude::DEFAULT_FRAME_RATE
-        );
+        assert_eq!(loaded.config.frame_rate, tui_lipan::DEFAULT_FRAME_RATE);
 
         let loaded = load_config_from_text("frame_rate = 60\n", path);
         assert_eq!(loaded.config.frame_rate, 60);
@@ -4293,8 +4290,8 @@ command = "open"
     fn animation_settings_from_config_text_reach_the_rendered_pane_body() {
         use crate::AppRoot;
         use crate::layout::anim::PaneAnimationStyle;
+        use tui_lipan::Rect;
         use tui_lipan::TestBackend;
-        use tui_lipan::prelude::Rect;
 
         // One config carrying every style's knob at once, which is how a real one looks.
         const SETTINGS: &str = r#"
@@ -4436,7 +4433,7 @@ command = "open"
         use crate::AppRoot;
         use crate::state::Pane;
         use tui_lipan::TestBackend;
-        use tui_lipan::prelude::{FloatRect, Rect};
+        use tui_lipan::{FloatRect, Rect};
 
         let loaded = load_config_from_text(
             r#"
@@ -4551,8 +4548,8 @@ command = "open"
 
     fn a_floating_pane_falls_back_from_slide_to_scale_and_picks_up_scales_settings_body() {
         use crate::AppRoot;
+        use tui_lipan::Rect;
         use tui_lipan::TestBackend;
-        use tui_lipan::prelude::Rect;
 
         let loaded = load_config_from_text(
             r#"
@@ -4612,7 +4609,7 @@ command = "open"
             let animations = state.config.animations;
             let pane = &mut state.active_workspace_mut().panes[0];
             pane.floating = true;
-            pane.floating_rect = tui_lipan::prelude::FloatRect {
+            pane.floating_rect = tui_lipan::FloatRect {
                 x: 10.0,
                 y: 4.0,
                 w: 60.0,
@@ -4647,7 +4644,7 @@ command = "open"
     fn widget_rect(
         backend: &tui_lipan::TestBackend<crate::AppRoot>,
         key: &str,
-    ) -> Option<tui_lipan::prelude::Rect> {
+    ) -> Option<tui_lipan::Rect> {
         backend
             .capture_ui_snapshot()
             .widgets

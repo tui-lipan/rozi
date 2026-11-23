@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use tui_lipan::prelude::{FloatRect, Rect, Theme, ThemeWatcher};
+use tui_lipan::{FloatRect, Rect, Theme, ThemeWatcher};
 
 use crate::config::Config;
 use crate::layout::anim::GeometryAnimation;
@@ -180,6 +180,22 @@ pub struct ConnectHold {
     pub active: bool,
 }
 
+/// A workspace switch, recorded after the update that made it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorkspaceSlide {
+    /// The attachment the switch happened in.
+    pub epoch: u64,
+    pub active: usize,
+    /// The workspace sliding out, or `active` when nothing slides out.
+    pub outgoing: usize,
+    /// The previous switch was in the same attachment, so this one may slide instead of cutting.
+    pub same_attachment: bool,
+    /// The settings allowed motion at the last update, so turning it off lands a page mid-slide.
+    pub motion: bool,
+    /// The workspace area at the last update, so a resize lands a page mid-slide.
+    pub content_viewport: Rect,
+}
+
 pub struct State {
     pub config: Config,
     /// Runner cadence fixed when this client starts; config reloads apply on the next launch.
@@ -222,8 +238,8 @@ pub struct State {
     pub last_viewport: Cell<Option<Rect>>,
     /// Last app-content viewport, used to snap geometry when sidebar reservation changes.
     pub last_content_viewport: Cell<Option<Rect>>,
-    /// Last rendered attachment, active workspace, and outgoing workspace.
-    pub workspace_slide: Cell<Option<(u64, usize, usize)>>,
+    /// The latest workspace switch, which the view slides between.
+    pub workspace_slide: Option<WorkspaceSlide>,
     /// Whether the last view dimmed the workspace, and whether it dimmed for a dialog, so each dim
     /// is handed to its layer on the frame it changes. See `view::animation::layer_fade`.
     pub dim_targets: Cell<(bool, bool)>,
@@ -282,7 +298,7 @@ pub struct State {
     /// `alert_pulse_armed_at + n * alert_pulse_half`, so the phase is a function of the clock and
     /// never of how promptly earlier ticks were handled.
     ///
-    /// [`Context::elapsed`]: tui_lipan::prelude::Context::elapsed
+    /// [`Context::elapsed`]: tui_lipan::Context::elapsed
     pub alert_pulse_armed_at: std::time::Duration,
     /// The half period the chain's deadlines are laid out on.
     pub alert_pulse_half: std::time::Duration,
@@ -728,7 +744,7 @@ impl State {
             pane_canvas_epoch: 0,
             last_viewport: Cell::new(None),
             last_content_viewport: Cell::new(None),
-            workspace_slide: Cell::new(None),
+            workspace_slide: None,
             dim_targets: Cell::new((false, false)),
             session_dim_layer: Cell::new((None, crate::layout::anim::FadeStage::Running)),
             session_layer_key: Cell::new((0, 0)),
@@ -1714,7 +1730,7 @@ mod render_visibility_tests {
     use super::*;
     use crate::config::Config;
     use crate::layout::model::LayoutKind;
-    use tui_lipan::prelude::Theme;
+    use tui_lipan::Theme;
 
     #[test]
     fn fresh_workspaces_adopt_the_configured_default_layout() {
@@ -1829,7 +1845,7 @@ mod render_visibility_tests {
 mod retention_tests {
     use super::*;
     use crate::config::Config;
-    use tui_lipan::prelude::Theme;
+    use tui_lipan::Theme;
 
     fn state() -> State {
         State::new(Config::default(), Theme::default())

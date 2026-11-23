@@ -19,7 +19,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use tui_lipan::CapturedFrame;
-use tui_lipan::prelude::*;
+use tui_lipan::TerminalColorPalette;
 
 use super::encode::{FrameEncoder, ImageStore};
 use super::format::{

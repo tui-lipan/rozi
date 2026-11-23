@@ -71,7 +71,7 @@ fn open_with(
     if !ctx.state.relaunch.finds_binaries {
         return Update::full();
     }
-    Update::with_command(Command::spawn(move |link| {
+    Update::full_with_command(ctx.link().command(move |link| {
         std::thread::spawn(move || {
             let result = crate::relaunch::candidate::find(expected.as_ref())
                 .map_err(|missing| missing.to_string());
@@ -352,10 +352,12 @@ fn awaiting(ctx: &mut Context<AppRoot>, stage: RelaunchStage, attempt: u64) -> U
     if let Some(dialog) = ctx.state.relaunch.dialog.as_mut() {
         dialog.stage = stage;
     }
-    Update::with_command(Command::after(
-        ANSWER_TIMEOUT,
-        move |link: CommandLink<Msg>| link.send(Msg::RelaunchAnswerTimeout { attempt }),
-    ))
+    Update::full_with_command(
+        ctx.link()
+            .command_after(ANSWER_TIMEOUT, move |link: CommandLink<Msg>| {
+                link.send(Msg::RelaunchAnswerTimeout { attempt })
+            }),
+    )
 }
 
 /// The stage in progress, taken out of the dialog, when `pick` accepts it.
@@ -854,7 +856,7 @@ fn upgrade_step(ctx: &mut Context<AppRoot>, session: HandoffSession) -> Update {
     if let Some(restore) = ctx.state.relaunch.restore.as_mut() {
         restore.current = Some(RestoreInFlight::Upgrade { attempt, session });
     }
-    Update::full().merge(Update::with_command(Command::spawn(move |link| {
+    Update::full().merge(Update::full_with_command(ctx.link().command(move |link| {
         std::thread::spawn(move || {
             let result = upgrade_session(&name, remote.as_deref(), &config);
             link.send(Msg::RelaunchUpgraded { attempt, result });
@@ -902,7 +904,7 @@ pub(crate) fn upgraded(
                     token: None,
                     ..session
                 }));
-            next_step()
+            next_step(ctx.link())
         }
         Err(error) => skip(
             ctx,
@@ -920,7 +922,7 @@ fn skip(ctx: &mut Context<AppRoot>, problem: String) -> Update {
         restore.problems.push(problem);
         restore.done += 1;
     }
-    next_step()
+    next_step(ctx.link())
 }
 
 /// How an attach the restore started ended.
@@ -985,7 +987,7 @@ pub(crate) fn attach_settled(
         }
         restore.problems.extend(problems);
     }
-    next_step()
+    next_step(ctx.link())
 }
 
 fn restore_view(attachment: &mut crate::state::Attachment, session: &HandoffSession) {
@@ -1006,8 +1008,8 @@ fn restore_view(attachment: &mut crate::state::Attachment, session: &HandoffSess
 
 /// The next step waits for this message, so the attach that just landed finishes installing before
 /// it is parked.
-fn next_step() -> Update {
-    Update::with_command(Command::spawn(|link| link.send(Msg::RelaunchRestoreNext)))
+fn next_step(link: &tui_lipan::Link<crate::Msg>) -> Update {
+    Update::full_with_command(link.command(|link| link.send(Msg::RelaunchRestoreNext)))
 }
 
 /// Everything is back: put the session that was on screen on screen again, or the launcher, give the

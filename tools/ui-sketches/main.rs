@@ -259,7 +259,7 @@ fn profile_picker() {
         write_png(&mut backend, &format!("profile-picker-{width}x{height}"));
     }
     backend.state_mut().profile_picker.as_mut().unwrap().input =
-        tui_lipan::prelude::TextInput::new("review");
+        tui_lipan::TextInput::new("review");
     backend.render();
     write_png(&mut backend, "profile-picker-filtered");
 }
@@ -713,7 +713,7 @@ fn worktree_picker() {
 fn floating_title_caps() {
     use rozi::layout::tiling::build_dwindle_tree;
     use rozi::pane::chrome::PaneTitlebarMode;
-    use tui_lipan::prelude::CapStyle;
+    use tui_lipan::CapStyle;
 
     for (width, height) in [(48, 12), (80, 24)] {
         for mode in [PaneTitlebarMode::Bar, PaneTitlebarMode::Integrated] {
@@ -1945,8 +1945,8 @@ fn sidebar_projects() {
     backend.render();
     write_png(&mut backend, "sidebar-projects-selected-unicode");
     backend
-        .send_key(tui_lipan::prelude::KeyEvent {
-            code: tui_lipan::prelude::KeyCode::Esc,
+        .send_key(tui_lipan::KeyEvent {
+            code: tui_lipan::KeyCode::Esc,
             mods: KeyMods::NONE,
         })
         .unwrap();
@@ -2224,8 +2224,8 @@ fn session_compatibility() {
         .unwrap();
     for ch in "session".chars() {
         backend
-            .send_key(tui_lipan::prelude::KeyEvent {
-                code: tui_lipan::prelude::KeyCode::Char(ch),
+            .send_key(tui_lipan::KeyEvent {
+                code: tui_lipan::KeyCode::Char(ch),
                 mods: KeyMods::NONE,
             })
             .unwrap();

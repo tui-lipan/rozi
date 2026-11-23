@@ -3,8 +3,8 @@
 use rozi::AppRoot;
 use rozi::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
 use rozi::session::remote::RemoteTarget;
+use tui_lipan::Rect;
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::Rect;
 
 fn running(name: &str, clients: u32, target: &RemoteTarget) -> DiscoveredSession {
     DiscoveredSession {

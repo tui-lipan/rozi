@@ -28,7 +28,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tui_lipan::prelude::CommandLink;
+use tui_lipan::CommandLink;
 
 use crate::Msg;
 use crate::platform::ipc::{IpcConnection, IpcEndpoint, IpcListener};

@@ -87,7 +87,7 @@ fn checkout_row(state: &State, row: WorktreeTabRow) -> SidebarRow {
     };
     // Keep branch identity visible alongside the status rail. Short status tokens leave the
     // branch its natural width; longer descriptions cannot consume its last 40%.
-    let mut item = Row::new(vocabulary::checkout_branch(tree))
+    let mut item = Row::new(vocabulary::checkout_branch(tree).into_owned())
         .active(row.current)
         .title_style(title_style)
         .priority(Priority::Balanced);

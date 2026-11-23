@@ -18,8 +18,9 @@ checkouts. The palette lists **Worktrees** only while the focused pane is in a G
 The picker title names the repository, and the host when it is a remote one.
 
 The picker lists the checkouts on the focused pane's session host, including remote hosts. `●`
-marks the checkout the focused pane is in. Each row shows the branch, then `Primary`, `Locked`,
-`Stale lock`, or `Prunable` when it applies, then its PR/CI status. Paths stay searchable without
+marks the checkout the focused pane is in. Each row shows the branch, or the directory name of a
+detached checkout, then `Primary`, `Locked`, `Stale lock`, `Prunable`, or `Detached` when it
+applies, then its PR/CI status. Paths stay searchable without
 appearing in rows. Press `Ctrl+C` or click **copy path** to copy the selected checkout's full
 path, including a remote host's path, to your clipboard.
 

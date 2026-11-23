@@ -593,12 +593,14 @@ pub(crate) fn host_agent_label(state: &State, entry: &DiscoveredSession) -> Opti
 }
 
 /// What a checkout is to Git, when that is worth saying: a plain linked checkout says nothing.
+/// Only the first that applies shows, so `Detached` gives way to anything that asks for attention.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CheckoutKind {
     Primary,
     StaleLock,
     Locked,
     Prunable,
+    Detached,
 }
 
 impl CheckoutKind {
@@ -611,6 +613,8 @@ impl CheckoutKind {
             Some(Self::Locked)
         } else if tree.prunable {
             Some(Self::Prunable)
+        } else if tree.branch.is_none() && !tree.bare {
+            Some(Self::Detached)
         } else {
             None
         }
@@ -622,6 +626,7 @@ impl CheckoutKind {
             Self::StaleLock => "Stale lock",
             Self::Locked => "Locked",
             Self::Prunable => "Prunable",
+            Self::Detached => "Detached",
         }
     }
 
@@ -629,17 +634,18 @@ impl CheckoutKind {
     pub(crate) fn style(self, theme: &Theme) -> Style {
         match self {
             Self::StaleLock | Self::Prunable => Style::new().fg(theme.status.warning),
-            Self::Primary | Self::Locked => fg_only(&theme.muted),
+            Self::Primary | Self::Locked | Self::Detached => fg_only(&theme.muted),
         }
     }
 }
 
-/// A checkout's branch, or what stands in for one.
-pub(crate) fn checkout_branch(tree: &WorktreeInfo) -> &str {
+/// A checkout's branch, or what stands in for one: a detached checkout goes by its directory, and
+/// [`CheckoutKind::Detached`] says why.
+pub(crate) fn checkout_branch(tree: &WorktreeInfo) -> std::borrow::Cow<'_, str> {
     match (&tree.branch, tree.bare) {
-        (_, true) => "(bare)",
-        (Some(branch), false) => branch,
-        (None, false) => "(detached)",
+        (_, true) => "(bare)".into(),
+        (Some(branch), false) => branch.as_str().into(),
+        (None, false) => crate::state::projects::path_name(&tree.path).into(),
     }
 }
 
@@ -745,6 +751,22 @@ mod tests {
         SessionPresence::Busy,
         SessionPresence::Unavailable,
     ];
+
+    /// Several detached checkouts all read `(detached)` and could not be told apart.
+    #[test]
+    fn detached_checkout_goes_by_its_directory() {
+        let tree = WorktreeInfo {
+            path: "/src/wt/review-481".to_string(),
+            branch: None,
+            detached: true,
+            bare: false,
+            prunable: false,
+            linked: true,
+            lock: None,
+        };
+        assert_eq!(checkout_branch(&tree), "review-481");
+        assert_eq!(CheckoutKind::of(&tree), Some(CheckoutKind::Detached));
+    }
 
     /// A parked session and an offline host both used to wear `○`, which said a session in the
     /// background was as gone as a host that cannot be reached. Every state that has news of its

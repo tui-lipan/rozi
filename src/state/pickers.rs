@@ -60,9 +60,12 @@ impl WorktreePickerState {
         let tree = self.entries.get(index)?;
         let description = crate::view::vocabulary::checkout_description(tree, &self.statuses);
         Some(
-            SearchItem::new(crate::view::vocabulary::checkout_branch(tree), index)
-                .aliases([tree.path.clone()])
-                .description(ItemDescription::new().right(format!("  {description}"))),
+            SearchItem::new(
+                crate::view::vocabulary::checkout_branch(tree).into_owned(),
+                index,
+            )
+            .aliases([tree.path.clone()])
+            .description(ItemDescription::new().right(format!("  {description}"))),
         )
     }
 

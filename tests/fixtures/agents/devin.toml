@@ -7,6 +7,7 @@ notes = "Devin CLI 3000.11.234, signed out, 88x39 pane, first launch in an unsee
 [[case]]
 name = "startup-sign-in"
 state = "blocked"
+blocker = "login"
 screen = '''
 ⠀⣴⣾⣶⡄⠀⠀⠀⠀
 ⠀⠛⠿⠟⠻⣶⣾⣶⡄  Devin CLI

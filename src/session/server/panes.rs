@@ -445,6 +445,9 @@ impl SessionServer {
         generation: u64,
         bytes: &[u8],
     ) {
+        if owner.is_none() {
+            self.send_held_submit(pane_id);
+        }
         if let Some(pane) = self.live_pane_mut(owner, pane_id, generation) {
             pane.graphics_pacer.input(Instant::now());
             if let Some(pty) = &pane.pty

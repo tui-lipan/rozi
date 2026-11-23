@@ -1116,6 +1116,8 @@ mod tests {
                         Some(DetectedAgentState::Idle) if title_spinner(&title.to_lowercase()) => {
                             Some(DetectedAgentState::Working)
                         }
+                        // A blank screen observes nothing, where the old detectors called it idle.
+                        Some(DetectedAgentState::Idle) if screen.trim().is_empty() => None,
                         other => other,
                     };
                     assert_eq!(

@@ -2472,7 +2472,11 @@ fn compute_pane_runtime(
     scan: &mut LazyProcessScan,
 ) -> PaneRuntimeState {
     let semantic = pane.screen().semantic_state();
-    let command_phase = PaneCommandPhase::from(semantic.command_phase);
+    let command_phase = witnessed_command_phase(
+        pane,
+        inspector,
+        PaneCommandPhase::from(semantic.command_phase),
+    );
     let last_exit_status = match command_phase {
         PaneCommandPhase::Completed { exit_status } => {
             exit_status.or(pane.runtime.last_exit_status)
@@ -2612,6 +2616,50 @@ fn compute_pane_runtime(
             pane.runtime.sequence
         },
         ..candidate
+    }
+}
+
+/// The command phase the pane's shell integration marks, unless the terminal belongs to a program
+/// other than a shell.
+///
+/// Only a shell sits at a prompt, but any program can write the marks. Devin CLI writes a whole
+/// command's worth around each of its turns, so its pane read as back at a prompt with no program
+/// running: the agent vanished at the end of every turn, and with it the request it had just
+/// answered. While the marks claim a prompt or a finished command, the process group the kernel
+/// holds in the foreground decides; one led by anything but a shell is still executing. The group
+/// is read every poll, its leader only when the group changes. Without a foreground group to read,
+/// the marks stand.
+pub(super) fn witnessed_command_phase(
+    pane: &mut ServerPane,
+    inspector: &impl ProcessInspector,
+    phase: PaneCommandPhase,
+) -> PaneCommandPhase {
+    if matches!(
+        phase,
+        PaneCommandPhase::Executing | PaneCommandPhase::Unknown
+    ) {
+        return phase;
+    }
+    let Some(pty) = pane.pty.as_ref() else {
+        return phase;
+    };
+    let Some(group) = pty.foreground_process_group_id() else {
+        return phase;
+    };
+    let shell = match pane.agent.prompt_witness {
+        Some((witnessed, shell)) if witnessed == group => shell,
+        _ => {
+            let shell = inspector
+                .foreground_process(pty)
+                .is_none_or(|leader| is_pane_shell(pane, &leader.name));
+            pane.agent.prompt_witness = Some((group, shell));
+            shell
+        }
+    };
+    if shell {
+        phase
+    } else {
+        PaneCommandPhase::Executing
     }
 }
 
@@ -5564,6 +5612,50 @@ mod tests {
             compute_runtime_state(&mut pane, &inspector, None, &mut LazyProcessScan::default());
         assert_eq!(later.cwd.as_deref(), started.to_str());
         assert_eq!(later.cwd_source, PaneCwdSource::ProcessInspector);
+    }
+
+    /// Devin CLI writes prompt and command-finished marks around its turns. A pane whose terminal
+    /// a program other than a shell holds is not at a prompt, whatever the marks say; one whose
+    /// shell holds it is.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn prompt_marks_from_a_program_other_than_a_shell_do_not_end_it() {
+        let read = |script: &str| {
+            let pty = TerminalPty::spawn(
+                tui_lipan::prelude::TerminalPtyConfig::new("/bin/sh")
+                    .arg("-c")
+                    .arg(script),
+                |_| {},
+            )
+            .expect("spawn foreground process");
+            std::thread::sleep(Duration::from_millis(200));
+            let mut pane = make_pane();
+            pane.pty = Some(pty);
+            pane.terminal
+                .process_bytes(b"\x1b]133;A\x07\x1b]133;B\x07\x1b]133;C\x07\x1b]133;D;0\x07");
+            compute_runtime_state(
+                &mut pane,
+                &crate::platform::process::linux::LinuxProcessInspector,
+                None,
+                &mut LazyProcessScan::default(),
+            )
+        };
+
+        let program = read("exec sleep 5");
+        assert_eq!(program.command_phase, PaneCommandPhase::Executing);
+        assert_eq!(program.foreground_program.as_deref(), Some("sleep"));
+        assert_eq!(
+            program.last_exit_status, None,
+            "its exit status is not a command's"
+        );
+
+        let shell = read("sleep 5; :");
+        assert_eq!(
+            shell.command_phase,
+            PaneCommandPhase::Completed {
+                exit_status: Some(0)
+            }
+        );
     }
 
     #[cfg(target_os = "linux")]

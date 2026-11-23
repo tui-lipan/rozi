@@ -45,3 +45,22 @@ screen = '''
 
  ↑↓ select · ↵ confirm · esc cancel
 '''
+
+# Captured from Devin CLI 3000.14.30821 on 2026-11-24, signed in, asked to run `touch`, nothing
+# pressed. Its approval chooser ends in the same hint as the sign-in and trust ones, and must stay a
+# plain blocked: an approval keeps a wait going, where a sign-in or trust blocker ends it.
+[[case]]
+name = "approval-to-run-a-command"
+state = "blocked"
+screen = '''
+❭ Run the shell command `touch approval-probe.txt` in this directory. Do nothing else.
+
+ ● Running command
+ └ $ touch approval-probe.txt
+
+❭ Allow       ← ◼◼◼◼ → Once     Exec(touch)
+  Bypass mode
+  Deny
+
+↑↓ select · ←→ 1-4 scope · e edit · ↵ confirm · esc cancel
+'''

@@ -17,7 +17,10 @@ A release maintainer needs:
 - these secrets in the protected `release` environment:
   - `ROZI_RELEASE_PRIVATE_KEY` — the active signing key's private half;
   - `OPENAI_API_KEY` — an OpenAI API key for release notes;
-  - `CARGO_REGISTRY_TOKEN` — a crates.io API token.
+
+The `rozi` crate uses [crates.io Trusted Publishing](https://crates.io/docs/trusted-publishing).
+Register its GitHub publisher with owner `tui-lipan`, repository `rozi`, workflow
+`release.yml`, and environment `release`.
 
 The committed `release-keys.json` trust store holds two Ed25519 keys:
 
@@ -171,7 +174,7 @@ stable release before the signing workflow completes.
     release-note artifact, and has no signing secret. It attests each archive's provenance,
     publishes the generated Markdown unchanged as the release body, and uploads the assets.
 11. **crates.io.** After the signed GitHub release exists, a final protected job rechecks the tag
-    and runs `cargo publish --locked` with `CARGO_REGISTRY_TOKEN`.
+    and runs `cargo publish --locked` with a short-lived token from crates.io Trusted Publishing.
 
 ## Release archive and signature contract
 

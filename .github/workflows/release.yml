@@ -946,6 +946,7 @@ jobs:
       name: release
     permissions:
       contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@f50ab1ce44b2f120b2531407517fcbfb1d610fa5 # 1.96
@@ -966,11 +967,15 @@ jobs:
             exit 1
           }
 
+      - name: Authenticate with crates.io
+        id: crates-io-auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+
       # `--locked` so the published crate carries the exact lockfile the signed archives were built
       # from. rozi ships binaries, so Cargo.lock is part of the published crate.
       - name: Publish to crates.io
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
         shell: bash
         run: |
           set -euo pipefail

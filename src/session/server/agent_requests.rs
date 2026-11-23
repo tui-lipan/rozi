@@ -1473,9 +1473,10 @@ impl SessionServer {
             })
     }
 
-    /// Advance every request: settle the turns of delivered ones, deliver what is ready, and
-    /// answer the awaits that can be answered.
+    /// Send the held Enters that are due, then advance every request: settle the turns of delivered
+    /// ones, deliver what is ready, and answer the awaits that can be answered.
     pub(super) fn pump_agent_requests(&mut self) {
+        self.send_due_submits();
         if self.agent_requests.has_work() {
             self.watch_request_screens();
             let targets: Vec<_> = self.agent_requests.slots.keys().cloned().collect();

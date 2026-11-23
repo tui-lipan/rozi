@@ -212,6 +212,8 @@ pub struct SessionServer {
     agent_requests: agent_requests::AgentRequestStore,
     /// The Enter of each prompt typed into a pane, until the program has taken the paste.
     held_submits: HashMap<PaneId, prompt_input::HeldSubmit>,
+    /// How long a held Enter waits for its paste to be drawn before it is sent anyway.
+    submit_max_delay: Duration,
     capture_waits: HashMap<ClientId, capture_waits::PendingCaptureWait>,
     attachments: attachments::Attachments,
     /// Pane recordings running now, by id.
@@ -1944,6 +1946,7 @@ impl SessionServer {
             agent_history: HashMap::new(),
             agent_requests: Default::default(),
             held_submits: HashMap::new(),
+            submit_max_delay: prompt_input::SUBMIT_MAX_DELAY,
             capture_waits: HashMap::new(),
             attachments: attachments::Attachments::default(),
             recordings: recordings::Recordings::new(),
@@ -2110,7 +2113,6 @@ impl SessionServer {
         self.expire_agent_waits();
         self.resolve_capture_waits();
         self.pump_agent_history();
-        self.send_due_submits();
         self.pump_agent_requests();
         self.broadcast_agent_request_changes();
         self.pump_recordings();

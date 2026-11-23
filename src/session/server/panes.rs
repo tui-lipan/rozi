@@ -445,9 +445,6 @@ impl SessionServer {
         generation: u64,
         bytes: &[u8],
     ) {
-        if owner.is_none() {
-            self.send_held_submit(pane_id);
-        }
         if let Some(pane) = self.live_pane_mut(owner, pane_id, generation) {
             pane.graphics_pacer.input(Instant::now());
             if let Some(pty) = &pane.pty
@@ -460,6 +457,20 @@ impl SessionServer {
     }
 
     pub(super) fn write_pane_input(
+        &mut self,
+        owner: Option<ClientId>,
+        pane_id: PaneId,
+        generation: u64,
+        bytes: &[u8],
+    ) {
+        if owner.is_none() && self.queue_behind_held_submit(pane_id, generation, bytes) {
+            return;
+        }
+        self.write_pane_now(owner, pane_id, generation, bytes);
+    }
+
+    /// Write `bytes` to the pane's program at once, ahead of anything held for it.
+    pub(super) fn write_pane_now(
         &mut self,
         owner: Option<ClientId>,
         pane_id: PaneId,

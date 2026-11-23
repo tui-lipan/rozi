@@ -10,6 +10,7 @@ notes = "GitHub Copilot CLI v1.0.80, first launch in an unseen directory"
 [[case]]
 name = "startup-trust-dialog"
 state = "blocked"
+blocker = "trust"
 title = "GitHub Copilot"
 screen = '''
   Current   Sessions   Issues   Pull requests   Gists

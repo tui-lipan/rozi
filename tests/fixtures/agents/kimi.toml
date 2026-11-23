@@ -138,6 +138,7 @@ screen = '''
 [[case]]
 name = "startup-trust-dialog"
 state = "blocked"
+blocker = "trust"
 screen = '''
  ──────────────────────────────────────────────────────────────────────────────────────
   Trust this folder?

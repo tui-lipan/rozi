@@ -354,6 +354,13 @@ scope = "footer"
 outranks_reports = true
 screen = { any_of = ["enter continue ·", "enter confirm · esc skip", "enter select · esc back"] }
 
+# Its hook review asks for trust before the first turn, as its folder access question does.
+[[agents.states]]
+state = "blocked"
+blocker = "trust"
+scope = "footer"
+screen = { all_of = ["trust all and continue", "enter confirm · esc skip"] }
+
 [[agents]]
 id = "pi"
 label = "Pi"

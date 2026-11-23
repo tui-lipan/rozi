@@ -664,6 +664,18 @@ impl SessionServer {
         if let Some(runtime) = find_agent(&runtimes, reference) {
             if condition_matches(until, runtime.state) {
                 WaitEvaluation::Ready(Some(Box::new(runtime.clone())))
+            } else if let Some(blocker) = runtime
+                .startup_blocker()
+                .filter(|_| until != AgentWaitCondition::Gone)
+            {
+                WaitEvaluation::Error(
+                    ControlErrorCode::AgentBlocked,
+                    format!(
+                        "agent in pane {} is blocked ({}); answer its prompt, then wait again",
+                        reference.pane.pane_id,
+                        blocker.reason()
+                    ),
+                )
             } else {
                 WaitEvaluation::Pending
             }
@@ -1240,6 +1252,43 @@ mod tests {
         pane.agent.sync_references(&pane.runtime);
         server.resolve_agent_waits();
         assert!(server.agent_waits.is_empty());
+    }
+
+    /// An approval can be answered while the wait goes on; a trust prompt holds an agent that has
+    /// not started, and waiting it out would only spend the timeout.
+    #[test]
+    fn a_prompt_that_stops_startup_ends_a_wait_for_another_state() {
+        let mut server = server_with_agent(protocol::DetectedAgentState::Blocked);
+        let reference = server
+            .resolve_agent_wait_target(AgentTarget::Pane(3))
+            .unwrap();
+        let mut show = |kind: &str| {
+            let detected = server.panes.get_mut(&3).unwrap();
+            detected.runtime.detected_agent.as_mut().unwrap().blocker = Some(
+                protocol::AgentBlocker {
+                    kind: kind.into(),
+                    reset: None,
+                }
+                .into(),
+            );
+            [
+                AgentWaitCondition::Quiescent,
+                AgentWaitCondition::Blocked,
+                AgentWaitCondition::Gone,
+            ]
+            .map(|until| server.evaluate_agent_wait(&reference, until))
+        };
+
+        let [quiescent, blocked, gone] = show("trust");
+        assert!(matches!(
+            quiescent,
+            WaitEvaluation::Error(ControlErrorCode::AgentBlocked, _)
+        ));
+        assert!(matches!(blocked, WaitEvaluation::Ready(Some(_))));
+        assert!(matches!(gone, WaitEvaluation::Pending));
+
+        let [quiescent, ..] = show("approval");
+        assert!(matches!(quiescent, WaitEvaluation::Pending));
     }
 
     #[test]

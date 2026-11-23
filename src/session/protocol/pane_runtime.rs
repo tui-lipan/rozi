@@ -231,10 +231,17 @@ pub struct AgentBlocker {
 }
 
 impl AgentBlocker {
+    /// Whether the agent cannot start until someone answers this: a question about the folder or the
+    /// account, asked before any turn. Unlike an approval, it is not part of work already under way,
+    /// so there is nothing for a wait to wait out.
+    pub fn stops_startup(&self) -> bool {
+        matches!(self.kind.as_str(), "trust" | "login")
+    }
+
     pub fn reason(&self) -> String {
         match self.kind.as_str() {
             "approval" => "Approval required".into(),
-            "trust" => "Folder trust required".into(),
+            "trust" => "Trust required".into(),
             "question" => "Waiting for an answer".into(),
             "login" => "Sign-in required".into(),
             "usage-limit" => self.reset.as_ref().map_or_else(

@@ -7,6 +7,7 @@ notes = "Amp 0.0.1793635240, signed out, 88x39 pane, first launch in an unseen d
 [[case]]
 name = "startup-sign-in"
 state = "blocked"
+blocker = "login"
 screen = '''
 No API key found. Starting login flow...
 Would you like to log in to Amp? [(y)es, (n)o]:

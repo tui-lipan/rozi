@@ -169,6 +169,7 @@ screen = '''
 [[case]]
 name = "startup-sign-in"
 state = "blocked"
+blocker = "login"
 screen = '''
 Welcome to Kiro CLI, let's get you signed in!
 

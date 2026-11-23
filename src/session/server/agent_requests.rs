@@ -1451,7 +1451,7 @@ impl SessionServer {
             return Some(ControlResponse::error_with(
                 ControlErrorCode::AgentBlocked,
                 format!(
-                    "request `{}` is queued: the agent in pane {} is blocked ({}); answer its prompt, then await the request again",
+                    "request `{}` is queued: the agent in pane {} is blocked ({}); await the request again once its prompt is answered",
                     pending.id,
                     request.to.pane.pane_id,
                     blocker.reason()

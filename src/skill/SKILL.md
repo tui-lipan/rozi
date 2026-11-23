@@ -285,8 +285,8 @@ or error), or `gone`.
   of hooks, plugins, MCP servers, or scripts and every sign-in to the user, even in that directory:
   Codex's `Trust all and continue` lets hooks run outside its sandbox. Answer with `send-keys`,
   reading which option is selected first: Claude Code starts on `No, exit`, so a bare `Enter` quits
-  it. Then wait or await again. Other dialogs at startup read as `blocked` without failing the wait, so give a first wait a
-  short timeout (30s) and check the screen when it expires.
+  it. Then wait or await again. Other dialogs at startup read as `blocked` without failing the wait,
+  so give a first wait a short timeout (30s) and check the screen when it expires.
 
 **Reading the answer.** Add `--result` to a prompt wait to get the agent's response with the
 reply; `agents response` reads the latest one later. The JSON `response` object has `text`,

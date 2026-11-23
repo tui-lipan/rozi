@@ -671,7 +671,7 @@ impl SessionServer {
                 WaitEvaluation::Error(
                     ControlErrorCode::AgentBlocked,
                     format!(
-                        "agent in pane {} is blocked ({}); answer its prompt, then wait again",
+                        "agent in pane {} is blocked ({}); wait again once its prompt is answered",
                         reference.pane.pane_id,
                         blocker.reason()
                     ),

@@ -13,6 +13,7 @@ notes = "Claude Code v2.1.237 first-launch cases; queued-input screen added 2026
 [[case]]
 name = "startup-trust-dialog"
 state = "blocked"
+blocker = "trust"
 screen = '''
 ──────────────────────────────────────────────────────────────────────────────────
  Accessing workspace:

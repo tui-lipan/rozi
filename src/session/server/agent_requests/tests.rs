@@ -1810,6 +1810,42 @@ fn an_await_answers_once_and_never_holds_up_its_request() {
     assert_eq!(code(refused), Some(ControlErrorCode::Conflict));
 }
 
+#[test]
+fn an_await_ends_at_a_prompt_that_stops_its_undelivered_request() {
+    let mut rig = Rig::new(&[3]);
+    let detected = rig.server.panes.get_mut(&3).unwrap();
+    let detected = detected.runtime.detected_agent.as_mut().unwrap();
+    detected.blocker = Some(
+        protocol::AgentBlocker {
+            kind: "trust".into(),
+            reset: None,
+        }
+        .into(),
+    );
+    rig.set_state(3, DetectedAgentState::Blocked);
+    let request = rig.ask(None, 3, "plan the release");
+    let reply = ReplyTo::Headless {
+        capabilities: protocol::Capabilities::current(),
+        effective_protocol: PROTOCOL_VERSION,
+        permission: crate::session::protocol::Permission::View,
+    };
+    let refused = rig
+        .server
+        .register_request_await(7, None, &request.id, Some(60_000), reply.clone())
+        .unwrap();
+    assert_eq!(code(refused), Some(ControlErrorCode::AgentBlocked));
+
+    // It stays queued, and is delivered once the prompt is answered.
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Queued);
+    rig.set_state(3, DetectedAgentState::Idle);
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
+    assert!(
+        rig.server
+            .register_request_await(7, None, &request.id, Some(60_000), reply)
+            .is_none()
+    );
+}
+
 fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
     let mut store = AgentRequestStore::default();
     for pane in 0..count {

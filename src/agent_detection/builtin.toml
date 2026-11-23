@@ -354,6 +354,13 @@ scope = "footer"
 outranks_reports = true
 screen = { any_of = ["enter continue ·", "enter confirm · esc skip", "enter select · esc back"] }
 
+# Its hook review asks for trust before the first turn, as its folder access question does.
+[[agents.states]]
+state = "blocked"
+blocker = "trust"
+scope = "footer"
+screen = { all_of = ["trust all and continue", "enter confirm · esc skip"] }
+
 [[agents]]
 id = "pi"
 label = "Pi"
@@ -405,11 +412,27 @@ id = "devin"
 label = "Devin CLI"
 match = { names = ["devin", "devin-cli"] }
 
-# The closing line of its sign-in chooser.
+# The closing line of its choosers, the sign-in one among them.
 [[agents.states]]
 state = "blocked"
 scope = "footer"
 screen = { any_of = ["↵ confirm · esc cancel"] }
+
+# Signed out, the chooser asks how to log in. Keyed on its first option rather than on the
+# question, which is the eighth line up and leaves the footer once anything wraps; the hint alone
+# would also mark choosers that are not a sign-in.
+[[agents.states]]
+state = "blocked"
+blocker = "login"
+scope = "footer"
+screen = { all_of = ["log in with browser", "↵ confirm · esc cancel"] }
+
+# Signed in, a directory it has not seen opens on a trust chooser with the same hint.
+[[agents.states]]
+state = "blocked"
+blocker = "trust"
+scope = "footer"
+screen = { all_of = ["do you trust the authors of this directory?", "↵ confirm · esc cancel"] }
 
 [[agents]]
 id = "antigravity"

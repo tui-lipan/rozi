@@ -1444,6 +1444,20 @@ impl SessionServer {
             }));
             return Some(response);
         }
+        if request.state == AgentRequestState::Queued
+            && let Ok(target) = self.request_agent(&request.to)
+            && let Some(blocker) = target.startup_blocker()
+        {
+            return Some(ControlResponse::error_with(
+                ControlErrorCode::AgentBlocked,
+                format!(
+                    "request `{}` is queued: the agent in pane {} is blocked ({}); await the request again once its prompt is answered",
+                    pending.id,
+                    request.to.pane.pane_id,
+                    blocker.reason()
+                ),
+            ));
+        }
         pending
             .deadline
             .filter(|deadline| Instant::now() >= *deadline)

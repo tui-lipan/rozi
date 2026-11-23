@@ -11,6 +11,7 @@ notes = "codex CLI, first launch in an unseen directory"
 [[case]]
 name = "startup-trust-dialog"
 state = "blocked"
+blocker = "trust"
 screen = '''
 > You are in ~/.cache/rozi-agent-lab
 
@@ -29,6 +30,7 @@ screen = '''
 [[case]]
 name = "startup-folder-access-dialog"
 state = "blocked"
+blocker = "trust"
 screen = '''
   Folder access
 
@@ -107,6 +109,7 @@ ChatGPT account.
 [[case]]
 name = "hooks-need-review-dialog"
 state = "blocked"
+blocker = "trust"
 screen = '''
   Hooks need review
   10 hooks are new or changed.

@@ -7,6 +7,7 @@ notes = "Devin CLI 3000.11.234, signed out, 88x39 pane, first launch in an unsee
 [[case]]
 name = "startup-sign-in"
 state = "blocked"
+blocker = "login"
 screen = '''
 ⠀⣴⣾⣶⡄⠀⠀⠀⠀
 ⠀⠛⠿⠟⠻⣶⣾⣶⡄  Devin CLI
@@ -23,4 +24,43 @@ screen = '''
      For enterprise customers only
 
  ↑↓ select · ↵ confirm · esc cancel
+'''
+
+# Captured from Devin CLI 3000.14.30821 on 2026-11-24, signed in, first launch in an unseen
+# repository, nothing pressed; the path is scrubbed. It shares the sign-in chooser's hint, so it
+# read as blocked with no reason, and a wait for it to become ready ran out its whole timeout.
+# Kept as evidence that the hint alone does not mean a sign-in.
+[[case]]
+name = "startup-trust-dialog"
+state = "blocked"
+blocker = "trust"
+screen = '''
+ ✱ Do you trust the authors of this directory?
+   For security, devin should not be run in directories with untrusted content.
+
+ ~/.cache/rozi-agent-lab
+
+ ❭ 1 Yes, trust
+   2 No, exit
+
+ ↑↓ select · ↵ confirm · esc cancel
+'''
+
+# Captured from Devin CLI 3000.14.30821 on 2026-11-24, signed in, asked to run `touch`, nothing
+# pressed. Its approval chooser ends in the same hint as the sign-in and trust ones, and must stay a
+# plain blocked: an approval keeps a wait going, where a sign-in or trust blocker ends it.
+[[case]]
+name = "approval-to-run-a-command"
+state = "blocked"
+screen = '''
+❭ Run the shell command `touch approval-probe.txt` in this directory. Do nothing else.
+
+ ● Running command
+ └ $ touch approval-probe.txt
+
+❭ Allow       ← ◼◼◼◼ → Once     Exec(touch)
+  Bypass mode
+  Deny
+
+↑↓ select · ←→ 1-4 scope · e edit · ↵ confirm · esc cancel
 '''

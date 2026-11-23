@@ -237,6 +237,14 @@ pub struct AgentRuntime {
 }
 
 impl AgentRuntime {
+    /// Why this agent cannot start until someone answers its prompt, if it shows one. See
+    /// [`super::AgentBlocker::stops_startup`].
+    pub fn startup_blocker(&self) -> Option<&super::AgentBlocker> {
+        self.blocker
+            .as_deref()
+            .filter(|blocker| self.state == AgentState::Blocked && blocker.stops_startup())
+    }
+
     /// The finished runs worth the user's attention. See [`AgentRecord::noticed_runs`].
     pub fn noticed_runs(&self) -> u64 {
         self.completions.saturating_sub(self.answered)

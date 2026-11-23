@@ -445,9 +445,12 @@ class ValidationTests(unittest.TestCase):
         )
 
     def test_rejects_a_placeholder_pull_request_link(self):
-        for link in ("([none])", "((none))"):
+        for link in ("([none])", "((none))", "(none)"):
             with self.assertRaisesRegex(ReleaseNotesError, "none"):
                 validate_notes(f"## Fixed\n\n- A fix. {link}\n")
+
+    def test_accepts_none_as_a_call_argument(self):
+        validate_notes("## Fixed\n\n- Call `selected(None)` to clear it.\n")
 
 
 class ReleaseBodyTests(unittest.TestCase):

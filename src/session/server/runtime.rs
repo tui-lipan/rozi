@@ -3821,12 +3821,18 @@ fn read_agent_state(pane: &mut ServerPane, agents: &AgentCatalog) -> Option<Dete
     let resolved = match cached {
         Some(resolved) => resolved,
         None => {
-            let observed = crate::agent_detection::observe(
+            let mut observed = crate::agent_detection::observe(
                 agents,
                 definition,
                 screen.as_ref(),
                 title.as_deref().unwrap_or_default(),
             );
+            // A launching agent that shows nothing readable yet, such as a blank first frame, is
+            // loading. Read as idle, it took a prompt before it read input and dropped the Enter.
+            if observed.state.is_none() && pane.agent.launch.is_some() && pane.agent.hold.is_none()
+            {
+                observed.state = Some(crate::session::protocol::DetectedAgentState::Working);
+            }
             let resolved = resolve_detected_agent(Some(observed), &mut pane.agent.hold, now);
             pane.agent.read = Some(super::AgentRead {
                 screen,
@@ -6249,6 +6255,11 @@ mod tests {
         use crate::session::protocol::DetectedAgentState::{Idle, Working};
 
         let mut rig = LaunchRig::new();
+        assert_eq!(
+            rig.screen("\x1b[2J\x1b[H"),
+            Some(Working),
+            "a blank first frame is loading, not the agent ready"
+        );
         assert_eq!(
             rig.screen(LOADING),
             Some(Working),

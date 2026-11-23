@@ -370,7 +370,8 @@ pub struct AgentDetectionInput<'a> {
 /// of them, so an agent that adds a `working` rule does not thereby outrank the shared `blocked`
 /// vocabulary. `None` is [`AgentStateOutcome::Unknown`]; a screen that matches nothing is idle,
 /// because only a positively observed prompt is idle and a definition whose rules all fail has
-/// observed its agent sitting at one.
+/// observed its agent sitting at one. A blank screen observes nothing, so it is unknown: an agent
+/// that has not drawn yet is not reading input either.
 #[cfg(test)]
 pub fn evaluate(
     definition: &AgentDefinition,
@@ -398,6 +399,9 @@ pub(super) fn evaluate_with_blocker<'a>(
                 .or_else(|| matching.find_map(|rule| rule.blocker.as_deref()));
             return (outcome.resolve(), blocker);
         }
+    }
+    if input.screen.trim().is_empty() {
+        return (None, None);
     }
     (Some(DetectedAgentState::Idle), None)
 }

@@ -64,3 +64,33 @@ screen = '''
 
 ↑↓ select · ←→ 1-4 scope · e edit · ↵ confirm · esc cancel
 '''
+
+# Captured from Devin CLI 3000.14.30821 on 2026-11-24 at launch, 120x40, nothing pressed. For about
+# 300 ms after it starts, Devin draws nothing at all, and the empty screen read as idle: a prompt
+# typed then reached a program that was not reading input yet, and Devin read the paste and its
+# Enter together, as a paste with no Enter.
+[[case]]
+name = "blank-while-starting"
+state = "unknown"
+screen = '''
+'''
+
+# The same launch once it settled, ready for a prompt. The blank screen above reads `unknown` only
+# because it shows nothing; this one, with only a prompt on it, is idle.
+[[case]]
+name = "idle-at-the-prompt"
+state = "idle"
+screen = '''
+⠀⣴⣾⣶⡄⠀⠀⠀⠀
+⠀⠛⠿⠟⠻⣶⣾⣶⡄  Devin CLI
+⠀⣤⣶⣦⣴⠿⢿⠿⠃  v3000.14.30821
+⠀⠻⢿⠿⠃⠀⠀⠀⠀
+
+ Free plan, use /upgrade to access better models · 100% remaining (resets in 21h 13m)
+
+ ● ~/.cache/rozi-agent-lab
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❭ Ask Devin to build features, fix bugs, or work on your code
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+SWE-2 Flash Medium      Type while Devin works to steer it right away; ctrl+Enter queues the message until the turn ends
+'''

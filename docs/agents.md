@@ -168,7 +168,8 @@ unknown, blocked, working, idle
 ```
 
 Declaration order does not matter. For example, an approval prompt (`blocked`) wins over a spinner
-(`working`) on the same screen. If no rule matches, the agent is idle.
+(`working`) on the same screen. If no rule matches, the agent is idle, unless its screen is blank,
+which reads as `unknown`.
 
 `unknown` means the current view does not show the run state, such as a navigator, help page, or
 subagent view that hides the tool's usual status area. rozi keeps the last observed state instead of

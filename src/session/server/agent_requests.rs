@@ -1473,9 +1473,10 @@ impl SessionServer {
             })
     }
 
-    /// Advance every request: settle the turns of delivered ones, deliver what is ready, and
-    /// answer the awaits that can be answered.
+    /// Send the held Enters that are due, then advance every request: settle the turns of delivered
+    /// ones, deliver what is ready, and answer the awaits that can be answered.
     pub(super) fn pump_agent_requests(&mut self) {
+        self.send_due_submits();
         if self.agent_requests.has_work() {
             self.watch_request_screens();
             let targets: Vec<_> = self.agent_requests.slots.keys().cloned().collect();
@@ -1716,8 +1717,8 @@ impl SessionServer {
             .recent_pane_text(target.pane.pane_id)
             .map(|text| fingerprint(&text));
         let typed = self
-            .session_prompt_bytes(target.pane.pane_id, &frame)
-            .and_then(|bytes| self.session_write_input(target.pane.pane_id, bytes));
+            .session_prompt_input(target.pane.pane_id, &frame)
+            .and_then(|input| self.write_prompt(target.pane.pane_id, input, false));
         if typed.is_err() {
             return false;
         }
@@ -1994,8 +1995,8 @@ impl SessionServer {
         let to = request.to.clone();
         let no_reply = request.no_reply;
         let frame = self.request_frame(request);
-        let bytes = self
-            .session_prompt_bytes(to.pane.pane_id, &frame)
+        let input = self
+            .session_prompt_input(to.pane.pane_id, &frame)
             .map_err(error_text)?;
         let fence = self
             .agent_responses
@@ -2028,7 +2029,7 @@ impl SessionServer {
                 },
             );
         }
-        if let Err(response) = self.session_write_input(to.pane.pane_id, bytes) {
+        if let Err(response) = self.write_prompt(to.pane.pane_id, input, false) {
             if !rider {
                 self.agent_requests.slots.remove(&to);
             }

@@ -16,6 +16,8 @@ impl Rig {
     fn new(panes: &[PaneId]) -> Self {
         let mut server = SessionServer::new_named("requests-test");
         server.agent_requests.quiet = Duration::ZERO;
+        // The fake agents never draw, so a held Enter goes out on the next pump.
+        server.submit_max_delay = Duration::ZERO;
         let mut typed = HashMap::new();
         for &id in panes {
             let (events, received) = mpsc::channel();

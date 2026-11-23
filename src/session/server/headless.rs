@@ -1742,20 +1742,15 @@ impl SessionServer {
         if let Err(response) = self.refuse_blocked_agent_screen(reference.pane.pane_id) {
             return Some(response);
         }
-        let bytes = match self.session_prompt_bytes(reference.pane.pane_id, request.prompt) {
-            Ok(bytes) => bytes,
+        let input = match self.session_prompt_input(reference.pane.pane_id, request.prompt) {
+            Ok(input) => input,
             Err(response) => return Some(response),
         };
         if let Err(response) = self.arm_prompt_wait(client_id, &reference, &request, reply) {
             return Some(response);
         }
 
-        let written = if attached {
-            self.write_running_pane(reference.pane.pane_id, bytes)
-        } else {
-            self.session_write_input(reference.pane.pane_id, bytes)
-        };
-        if let Err(response) = written {
+        if let Err(response) = self.write_prompt(reference.pane.pane_id, input, attached) {
             self.agent_waits.remove(&(client_id, reply_id));
             return Some(response);
         }
@@ -1924,7 +1919,7 @@ impl SessionServer {
     }
 
     /// Write `bytes` to pane `id`'s program once the caller's authority to type is settled.
-    fn write_running_pane(
+    pub(super) fn write_running_pane(
         &mut self,
         id: PaneId,
         bytes: Vec<u8>,
@@ -1970,20 +1965,6 @@ impl SessionServer {
             Ok(()) => ControlResponse::empty(),
             Err(response) => response,
         }
-    }
-
-    pub(super) fn session_prompt_bytes(
-        &self,
-        id: PaneId,
-        prompt: &str,
-    ) -> std::result::Result<Vec<u8>, ControlResponse> {
-        let enter = self.session_key_bytes(id, &["Enter".into()], false)?;
-        let modes = self.panes[&id].screen().key_modes();
-        // Keep Enter outside the paste so bulk-input detection cannot treat it as
-        // an invisible character in the prompt. Honor the child's keyboard protocol too.
-        let mut bytes = tui_lipan::prelude::encode_paste(prompt, modes);
-        bytes.extend(enter);
-        Ok(bytes)
     }
 
     /// Encode `keys` for pane `id`, all of them or none.
@@ -4330,10 +4311,9 @@ mod tests {
     fn agent_prompt_pastes_multiline_text_and_sends_enter_outside_the_paste() {
         let mut server = SessionServer::new_named("prompt");
         pane_with_screen(&mut server, 7, b"\x1b[?2004h");
-        assert_eq!(
-            server.session_prompt_bytes(7, "one\ntwo").unwrap(),
-            b"\x1b[200~one\ntwo\x1b[201~\r"
-        );
+        let input = server.session_prompt_input(7, "one\ntwo").unwrap();
+        assert_eq!(input.paste, b"\x1b[200~one\ntwo\x1b[201~");
+        assert_eq!(input.enter, b"\r");
         // A child that did not enable paste framing must receive plain input.
         server
             .panes
@@ -4341,7 +4321,10 @@ mod tests {
             .unwrap()
             .screen_mut()
             .process_bytes(b"\x1b[?2004l");
-        assert_eq!(server.session_prompt_bytes(7, "hello").unwrap(), b"hello\r");
+        assert_eq!(
+            server.session_prompt_input(7, "hello").unwrap().paste,
+            b"hello"
+        );
     }
 
     #[test]

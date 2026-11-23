@@ -71,7 +71,8 @@ NON_USER_FACING_PATH_PREFIXES = (
     "tests/",
 )
 PR_LINK_RE = re.compile(r"/pull/(\d+)\b")
-PLACEHOLDER_LINK_RE = re.compile(r"\(\[?none\]?\)", re.IGNORECASE)
+# A call argument such as `selected(None)` follows an identifier; a placeholder link does not.
+PLACEHOLDER_LINK_RE = re.compile(r"(?<!\w)\(\[?none\]?\)", re.IGNORECASE)
 TRAILER_RE = re.compile(
     r"^(Signed-off-by|Co-authored-by|Reviewed-by|Acked-by):",
     re.IGNORECASE,

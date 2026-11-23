@@ -159,11 +159,16 @@ jobs:
           # Empty is a valid answer: a release of packaging or tooling fixes has nothing to tell
           # users, and validation publishes a fixed note for it unless a change needed a note.
           # The writer is not deterministic. Each retry gets the previous validation error, so it
-          # repairs the draft instead of rolling the dice again.
+          # repairs the draft instead of rolling the dice again. A writer crash (such as a model
+          # server error) spends an attempt and backs off, keeping the last validator feedback.
           feedback=""
           for attempt in 1 2 3 4; do
             rm -f release-notes.md
-            opencode run --variant low --command changelog ${feedback:+"$feedback"}
+            if ! opencode run --variant low --command changelog ${feedback:+"$feedback"}; then
+              echo "::warning::Release notes attempt $attempt: the writer exited with an error"
+              if [ "$attempt" -lt 4 ]; then sleep $((attempt * 20)); fi
+              continue
+            fi
             if ! test -f release-notes.md; then
               error="release-notes.md was not written"
             elif error=$(python3 scripts/release_notes.py validate \

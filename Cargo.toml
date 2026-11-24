@@ -99,7 +99,8 @@ exclude = [
 # 0.45.7: `Context::set_host_default_background` lets a translucent host terminal show through.
 # 0.45.8: synchronous `Context::set_theme` / `theme_ref` and `Component::on_host_theme_changed`.
 # 0.46.4: `Update::has_command` and `Component::on_viewport_changed`.
-tui-lipan = { version = "0.46.4", features = [
+# 0.46.5: `Context::skip_cursor_trail` from `view`.
+tui-lipan = { version = "0.46.5", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

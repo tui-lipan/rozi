@@ -139,6 +139,19 @@ fn workspace_slide_skips_a_workspace_switched_through_before_a_frame() {
 }
 
 #[test]
+fn a_switch_undone_before_a_frame_keeps_the_cursor_trail() {
+    rozi::test_support::on_deeper_stack(|| {
+        let mut backend = backend();
+        backend.take_cursor_trail_skip();
+        backend.enqueue(Msg::RunAction(Action::SwitchWorkspace(1)));
+        backend.enqueue(Msg::RunAction(Action::SwitchWorkspace(0)));
+        backend.pump().unwrap();
+        backend.render();
+        assert!(!backend.take_cursor_trail_skip());
+    });
+}
+
+#[test]
 fn workspace_slide_snaps_when_disabled_or_resized() {
     rozi::test_support::on_deeper_stack(|| {
         for master in [false, true] {

@@ -694,18 +694,6 @@ pub(crate) fn sync_workspace_slide(ctx: &mut Context<AppRoot>) {
             }
         }
     };
-    // Another workspace or another session replaces the whole screen, and the slide or portal
-    // already shows where the user went. A smear from the old screen's cursor to the new one's
-    // would join two unrelated places, so the cursor arrives without a trail.
-    if switched
-        && ctx
-            .state
-            .workspace_shown
-            .get()
-            .is_some_and(|shown| shown != (epoch, active))
-    {
-        ctx.skip_cursor_trail();
-    }
     let motion =
         workspace_motion_enabled(ctx.state.config.animations, false, slide.same_attachment);
     // A zero-length request leaves a page already sliding toward an unchanged target in motion, so
@@ -731,9 +719,19 @@ pub(crate) fn workspace_offsets(ctx: &Context<AppRoot>, resized: bool) -> Vec<(u
         .workspace_slide
         .filter(|slide| slide.epoch == ctx.state.runtime_epoch && slide.active == active);
     let outgoing = slide.map_or(active, |slide| slide.outgoing);
-    ctx.state
+    let shown = (ctx.state.runtime_epoch, active);
+    // Another workspace or another session replaces the whole screen, and the slide or portal
+    // already shows where the user went. A smear from the old screen's cursor to the new one's
+    // would join two unrelated places, so the cursor arrives without a trail. Decided here, from
+    // what the frame shows, so switches that end back where they started ask for nothing.
+    if ctx
+        .state
         .workspace_shown
-        .set(Some((ctx.state.runtime_epoch, active)));
+        .replace(Some(shown))
+        .is_some_and(|previous| previous != shown)
+    {
+        ctx.skip_cursor_trail();
+    }
     let same_attachment = slide.is_some_and(|slide| slide.same_attachment);
     let enabled = workspace_motion_enabled(ctx.state.config.animations, resized, same_attachment);
     let mut visible = Vec::with_capacity(2);

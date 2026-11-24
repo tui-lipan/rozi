@@ -1,4 +1,4 @@
-use super::super::tests::{add_client, test_pane};
+use super::super::tests::{add_client, attach_client, test_pane};
 use super::*;
 use crate::control::{ControlCommand, ControlRequest};
 use crate::session::protocol::DetectedAgentState;
@@ -888,6 +888,164 @@ fn a_request_asked_now_is_typed_in_mid_turn_unless_that_is_unsafe() {
             .unwrap()
             .contains("after it was typed into the agent")
     );
+}
+
+#[test]
+fn a_submitted_agent_prompt_does_not_count_as_someone_typing() {
+    let mut rig = Rig::new(&[3, 4]);
+    rig.server.agent_requests.quiet = QUIET_WINDOW;
+    let control = |rig: &mut Rig, command: ControlCommand| {
+        let messages = rig.server.handle_session_control(
+            0,
+            "requests-test".into(),
+            PROTOCOL_VERSION,
+            protocol::MIN_SUPPORTED_PROTOCOL,
+            Some(protocol::Capabilities::current()),
+            ControlRequest {
+                command,
+                source_pane: None,
+                source_session: None,
+                extension: None,
+                caller_context: None,
+                credential: None,
+            },
+        );
+        let Some((_, ServerMessage::SessionControlResult { response, .. })) =
+            messages.into_iter().next()
+        else {
+            panic!("a control result")
+        };
+        response
+    };
+    let prompt_cmd = |pane: PaneId, text: &str, allow_working: bool| ControlCommand::AgentPrompt {
+        target: AgentTarget::Pane(pane),
+        prompt: text.into(),
+        wait: None,
+        timeout_ms: None,
+        allow_working,
+        capture: None,
+        result: false,
+    };
+
+    // Repro: `agents prompt` submits text + Enter, agent starts working, then `ask --now`
+    // within the quiet window must succeed instead of being refused as someone typing.
+    assert!(control(&mut rig, prompt_cmd(3, "long task", false)).ok);
+    rig.set_state(3, DetectedAgentState::Working);
+    let pong = info(rig.ask_now(3, "PONG"));
+    assert_eq!(pong.state, AgentRequestState::Active);
+    assert!(rig.typed_into(3, "PONG"));
+
+    // An attached UI forwarding `agents prompt` leaves no draft either.
+    let (client, _stream) = attach_client(&mut rig.server);
+    let attached_messages = rig.server.handle_attached_control(
+        client,
+        1,
+        ControlRequest {
+            command: prompt_cmd(3, "attached prompt", true),
+            source_pane: None,
+            source_session: None,
+            extension: None,
+            caller_context: None,
+            credential: None,
+        },
+    );
+    assert!(matches!(
+        attached_messages.as_slice(),
+        [(_, ServerMessage::AttachedControlResult { response, .. })] if response.ok
+    ));
+    let followup = info(rig.ask_now(3, "after attached prompt"));
+    assert_eq!(followup.state, AgentRequestState::Active);
+
+    // Real typing — keyboard input, `send-text`, and `send-keys` — still refuses `--now`.
+    let generation = rig.server.panes[&3].generation;
+    rig.server
+        .accept_pane_input(client, 3, false, generation, b"draft", true);
+    assert_eq!(
+        code(rig.ask_now(3, "blocked by keyboard")),
+        Some(ControlErrorCode::Conflict)
+    );
+    // Submitting a prompt clears any prior draft mark; subsequent `send-text` marks typing again.
+    assert!(control(&mut rig, prompt_cmd(3, "submit over draft", true)).ok);
+    assert_eq!(
+        info(rig.ask_now(3, "after submit")).state,
+        AgentRequestState::Active
+    );
+    assert!(
+        control(
+            &mut rig,
+            ControlCommand::SendText {
+                target: Some(3),
+                text: "partial".into(),
+                wait: None,
+                capture: None,
+                scale: None,
+            }
+        )
+        .ok
+    );
+    assert_eq!(
+        code(rig.ask_now(3, "blocked by send-text")),
+        Some(ControlErrorCode::Conflict)
+    );
+    rig.set_state(4, DetectedAgentState::Working);
+    assert!(
+        control(
+            &mut rig,
+            ControlCommand::SendKeys {
+                target: Some(4),
+                keys: vec!["x".into()],
+                literal: true,
+                wait: None,
+                capture: None,
+                scale: None,
+            }
+        )
+        .ok
+    );
+    assert_eq!(
+        code(rig.ask_now(4, "blocked by send-keys")),
+        Some(ControlErrorCode::Conflict)
+    );
+
+    // Ordinary queued delivery after an `agents prompt` is not delayed by a bogus `pane_input`
+    // entry, while an idle pane that just received `agents prompt` resets its stopped timer so a
+    // waiting queued request does not barge in before the agent reacts.
+    rig.set_state(4, DetectedAgentState::Idle);
+    assert!(control(&mut rig, prompt_cmd(4, "quick prompt", false)).ok);
+    assert!(!rig.server.agent_requests.pane_input.contains_key(&4));
+    let target4 = rig.agent(4);
+    let queued = rig.ask(None, 4, "queued after prompt");
+    assert_eq!(queued.state, AgentRequestState::Queued);
+    let before_quiet = Instant::now() - QUIET_WINDOW;
+    *rig.server
+        .agent_requests
+        .stopped_since
+        .get_mut(&target4)
+        .unwrap() = before_quiet;
+    if let Some((_, since)) = rig.server.agent_requests.screens.get_mut(&4) {
+        *since = before_quiet;
+    }
+    // Another `agents prompt` while idle clears `stopped_since`, so `queued` waits a fresh window.
+    assert!(control(&mut rig, prompt_cmd(4, "second idle prompt", false)).ok);
+    assert!(
+        !rig.server
+            .agent_requests
+            .stopped_since
+            .contains_key(&target4)
+    );
+    rig.server.pump_agent_requests();
+    assert_eq!(rig.request(&queued.id).state, AgentRequestState::Queued);
+    // Once the agent finishes and stays quiet, delivery proceeds without expiring `pane_input`.
+    *rig.server
+        .agent_requests
+        .stopped_since
+        .get_mut(&target4)
+        .unwrap() = Instant::now() - QUIET_WINDOW;
+    if let Some((_, since)) = rig.server.agent_requests.screens.get_mut(&4) {
+        *since = Instant::now() - QUIET_WINDOW;
+    }
+    rig.server.pump_agent_requests();
+    assert_eq!(rig.request(&queued.id).state, AgentRequestState::Active);
 }
 
 #[test]

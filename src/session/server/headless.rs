@@ -1904,6 +1904,15 @@ impl SessionServer {
         id: PaneId,
         bytes: Vec<u8>,
     ) -> std::result::Result<(), ControlResponse> {
+        self.ensure_headless_input_unlocked()?;
+        self.write_running_pane(id, bytes)?;
+        self.agent_requests.note_pane_input(id);
+        Ok(())
+    }
+
+    pub(super) fn ensure_headless_input_unlocked(
+        &self,
+    ) -> std::result::Result<(), ControlResponse> {
         // The input lock is the session saying nobody but its controller types right now — a
         // presenter's guard against the audience. A headless caller is not the controller and has
         // no screen to notice it, so it is refused rather than quietly allowed through.
@@ -1916,7 +1925,7 @@ impl SessionServer {
                 ),
             ));
         }
-        self.write_running_pane(id, bytes)
+        Ok(())
     }
 
     /// Write `bytes` to pane `id`'s program once the caller's authority to type is settled.
@@ -1944,7 +1953,6 @@ impl SessionServer {
             ));
         }
         let generation = pane.generation;
-        self.agent_requests.note_pane_input(id);
         self.handle_pane_input(None, id, generation, &bytes);
         Ok(())
     }

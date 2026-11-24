@@ -75,11 +75,9 @@ pub(super) struct AgentRequestStore {
     /// The request each agent is answering, until its turn ends.
     slots: HashMap<protocol::AgentRef, DeliverySlot>,
     awaits: HashMap<WaitKey, PendingAwait>,
-    /// When input was last written to a pane, by a client or a headless command, kept for one
-    /// quiet window.
+    /// When unsubmitted input was last written to a pane (keyboard input, `send-text`, or
+    /// `send-keys`), kept for one quiet window so requests do not type over a draft.
     pane_input: HashMap<PaneId, Instant>,
-    /// When a request was last typed into a pane, to tell that input from someone typing.
-    request_input: HashMap<PaneId, Instant>,
     /// Each watched pane's content generation, and since when it has had it.
     screens: HashMap<PaneId, (u64, Instant)>,
     /// Since when each target has been seen stopped.
@@ -101,7 +99,6 @@ impl Default for AgentRequestStore {
             slots: HashMap::new(),
             awaits: HashMap::new(),
             pane_input: HashMap::new(),
-            request_input: HashMap::new(),
             screens: HashMap::new(),
             stopped_since: HashMap::new(),
             quiet: QUIET_WINDOW,
@@ -278,6 +275,15 @@ impl AgentRequestStore {
         self.pane_input.insert(pane, Instant::now());
     }
 
+    /// Record that rozi submitted a complete prompt (text + Enter) to `pane`.
+    /// That leaves no unsent draft, so it clears any prior typing mark and resets the pane's
+    /// stopped-state quiet timer.
+    pub(super) fn note_prompt_submitted(&mut self, pane: PaneId) {
+        self.pane_input.remove(&pane);
+        self.stopped_since
+            .retain(|agent, _| agent.pane.pane_id != pane);
+    }
+
     /// The request `agent` is answering, if any.
     pub(super) fn answering(&self, agent: &protocol::AgentRef) -> Option<&str> {
         self.slots.get(agent).map(|slot| slot.request.as_str())
@@ -290,15 +296,11 @@ impl AgentRequestStore {
             .is_some_and(|slot| slot.request == id || slot.riders.iter().any(|rider| rider == id))
     }
 
-    /// Whether someone other than a request typed into `pane` within the quiet window.
+    /// Whether someone typed into `pane` within the quiet window.
     fn someone_typed(&self, pane: PaneId) -> bool {
-        self.pane_input.get(&pane).is_some_and(|input| {
-            input.elapsed() < self.quiet
-                && self
-                    .request_input
-                    .get(&pane)
-                    .is_none_or(|typed| typed < input)
-        })
+        self.pane_input
+            .get(&pane)
+            .is_some_and(|input| input.elapsed() < self.quiet)
     }
 
     /// Note what `pane` shows now.
@@ -656,8 +658,6 @@ impl AgentRequestStore {
     fn prune(&mut self) {
         let quiet = self.quiet;
         self.pane_input.retain(|_, input| input.elapsed() < quiet);
-        self.request_input
-            .retain(|_, typed| typed.elapsed() < quiet);
         let targets: HashSet<protocol::AgentRef> = self
             .requests
             .iter()
@@ -1722,9 +1722,6 @@ impl SessionServer {
         if typed.is_err() {
             return false;
         }
-        self.agent_requests
-            .request_input
-            .insert(target.pane.pane_id, Instant::now());
         let slot = self
             .agent_requests
             .slots
@@ -2035,9 +2032,6 @@ impl SessionServer {
             }
             return Err(error_text(response));
         }
-        self.agent_requests
-            .request_input
-            .insert(to.pane.pane_id, Instant::now());
         if rider {
             let slot = slot_mut(&mut self.agent_requests, &to);
             slot.riders.push(id.to_owned());

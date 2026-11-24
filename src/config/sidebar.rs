@@ -384,7 +384,7 @@ pub(super) fn apply_sidebar_config(
             )),
             Some(style) => sidebar.tab_style = style,
             None => warnings.push(format!(
-                "Ignored unknown sidebar.tab_style \"{tab_style}\" (expected one of: padded, round, arrow)"
+                "Ignored unknown sidebar.tab_style \"{tab_style}\" (expected one of: padded, round, arrow, slant, trapezoid, or two single-width characters)"
             )),
         }
     }

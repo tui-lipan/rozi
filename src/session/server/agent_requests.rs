@@ -85,6 +85,8 @@ pub(super) struct AgentRequestStore {
     pub(super) quiet: Duration,
     undetected_turn: Duration,
     delivery_check: Duration,
+    /// Deliveries so far. Follow-up headers order by this, not the wall clock.
+    next_delivery: u64,
     /// Bumped on every change to `requests`, so attached clients are told only when it moves.
     revision: u64,
     /// The revision attached clients were last sent, and what they were sent.
@@ -104,6 +106,7 @@ impl Default for AgentRequestStore {
             quiet: QUIET_WINDOW,
             undetected_turn: UNDETECTED_TURN,
             delivery_check: DELIVERY_CHECK,
+            next_delivery: 0,
             revision: 0,
             sent_revision: 0,
             sent: Vec::new(),
@@ -120,6 +123,9 @@ struct StoredRequest {
     /// Its agent will reply after the turn it was delivered in, so that turn's end does not
     /// answer it from the terminal.
     later: bool,
+    /// When this request was typed in, as a count of deliveries in this session. Absent until
+    /// then. The wall clock can step backwards or repeat a millisecond; this does not.
+    delivered_order: Option<u64>,
 }
 
 /// One side of a conversation: an agent, in the native conversation it was in. A `/clear` or
@@ -275,6 +281,15 @@ impl AgentRequestStore {
         self.pane_input.insert(pane, Instant::now());
     }
 
+    /// Record that request `id` was typed into its agent, after the deliveries before it.
+    fn note_delivery(&mut self, id: &str) {
+        self.next_delivery = self.next_delivery.saturating_add(1);
+        let order = self.next_delivery;
+        if let Some(stored) = self.requests.iter_mut().find(|stored| stored.info.id == id) {
+            stored.delivered_order = Some(order);
+        }
+    }
+
     /// Record that rozi submitted a complete prompt (text + Enter) to `pane`.
     /// That leaves no unsent draft, so it clears any prior typing mark and resets the pane's
     /// stopped-state quiet timer.
@@ -418,13 +433,18 @@ impl AgentRequestStore {
                 };
                 let asker = Party::new(asker, info.from_native_session.as_deref());
                 let asked = Party::new(&info.to, info.to_native_session.as_deref());
-                if asker.agent == from.agent && asked.agent == to.agent {
-                    Some((info, asker.is(&from) && asked.is(&to)))
+                let still_held = if asker.agent == from.agent && asked.agent == to.agent {
+                    asker.is(&from) && asked.is(&to)
                 } else if asker.agent == to.agent && asked.agent == from.agent {
-                    Some((info, asker.is(&to) && asked.is(&from)))
+                    asker.is(&to) && asked.is(&from)
                 } else {
-                    None
-                }
+                    return None;
+                };
+                // A cancelled, unseen request cannot start a conversation. Keep evidence of
+                // native conversation changes so an older conversation cannot come back.
+                let unseen_cancellation = info.state == AgentRequestState::Cancelled
+                    && info.delivered_at_unix_ms.is_none();
+                (!still_held || !unseen_cancellation).then_some((info, still_held))
             });
         Ok(latest
             .filter(|(_, still_held)| *still_held)
@@ -864,6 +884,7 @@ impl SessionServer {
             target_agent: target_agent.identity.id,
             depth,
             later: false,
+            delivered_order: None,
         });
         if let Some(state) = now_state {
             if to_native_session.is_none() {
@@ -2069,6 +2090,7 @@ impl SessionServer {
             };
             self.record_request_task(&to, task);
         }
+        self.agent_requests.note_delivery(id);
         Ok(())
     }
 
@@ -2117,20 +2139,22 @@ impl SessionServer {
         if request.no_reply {
             return format!("Message{asker} (no reply needed)\n\n{}", request.prompt);
         }
-        // The exchange before this one in its conversation; requests are stored as asked.
-        let requests = &self.agent_requests.requests;
-        let asked_before = requests
+        // Only name a request that has already reached the conversation. Order is
+        // the order they were typed, not `delivered_at_unix_ms`: that clock is what
+        // a person sees, and it can step backwards or repeat a millisecond.
+        let follows = self
+            .agent_requests
+            .requests
             .iter()
-            .position(|stored| stored.info.id == request.id)
-            .unwrap_or(requests.len());
-        let follows = requests[..asked_before]
-            .iter()
-            .map(|stored| &stored.info)
             .filter(|_| request.parent.is_none())
-            .rfind(|earlier| {
-                earlier.parent.is_none() && earlier.conversation() == request.conversation()
+            .filter(|earlier| {
+                earlier.info.id != request.id
+                    && earlier.info.parent.is_none()
+                    && earlier.info.conversation() == request.conversation()
             })
-            .map(|earlier| format!(", following {}", earlier.id))
+            .filter_map(|earlier| Some((earlier.delivered_order?, &earlier.info.id)))
+            .max_by_key(|(order, _)| *order)
+            .map(|(_, id)| format!(", following {id}"))
             .unwrap_or_default();
         format!(
             "Request {id}{asker}{follows}:\n\n{prompt}\n\nAnswer with `rozi agents reply {id} --format text --stdin`. To answer after this turn ends, such as when a background command finishes, run `rozi agents reply {id} --format text --later` first.",

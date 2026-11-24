@@ -1576,6 +1576,10 @@ fn exchanges_between_the_same_two_agents_make_one_conversation() {
     let mut rig = Rig::new(&[2, 3, 4]);
     let first = rig.ask(Some(2), 3, "plan the release");
     assert_eq!(first.conversation.as_deref(), Some(first.id.as_str()));
+    let cancelled = rig.ask(Some(2), 3, "skip this question");
+    assert_eq!(cancelled.state, AgentRequestState::Queued);
+    let asker = rig.agent(2);
+    assert!(rig.server.cancel_request(Some(asker), &cancelled.id).ok);
     let again = rig.ask(Some(2), 3, "and the changelog?");
     assert_eq!(again.conversation, first.conversation);
     assert_eq!(again.parent, None);
@@ -1614,7 +1618,11 @@ fn exchanges_between_the_same_two_agents_make_one_conversation() {
         code(follows_while_owing),
         Some(ControlErrorCode::InvalidArgument)
     );
-    // That delegated request is not something 3 and 4 discussed themselves.
+    // Neither the delegated request nor a cancelled, undelivered exchange starts their thread.
+    let cancelled = rig.ask(Some(4), 3, "skip this too");
+    assert_eq!(cancelled.state, AgentRequestState::Queued);
+    let asker = rig.agent(4);
+    assert!(rig.server.cancel_request(Some(asker), &cancelled.id).ok);
     let other_pair = rig.ask(Some(4), 3, "status?");
     assert_eq!(
         other_pair.conversation.as_deref(),
@@ -1970,6 +1978,48 @@ fn an_await_answers_once_and_never_holds_up_its_request() {
     assert_eq!(code(refused), Some(ControlErrorCode::Conflict));
 }
 
+/// The earlier delivery can carry the later wall-clock time: the clock stepped
+/// backwards, or both deliveries shared one millisecond. The follow-up names
+/// the one that was typed last.
+#[test]
+fn a_follow_up_names_the_later_delivery_when_the_clock_moves_backwards() {
+    let mut rig = Rig::new(&[2, 3]);
+    let first = rig.ask(Some(2), 3, "plan the release");
+    assert!(first.delivered_at_unix_ms.is_some());
+    let second = rig.ask(Some(2), 3, "and the changelog?");
+    assert_eq!(second.state, AgentRequestState::Queued);
+    assert!(rig.reply(3, &first.id, "planned").ok);
+    rig.run_turn(3);
+    let second = rig.request(&second.id);
+    assert!(second.delivered_at_unix_ms.is_some());
+
+    let first_id = first.id.clone();
+    let later_than_second = second.delivered_at_unix_ms.unwrap().saturating_add(60_000);
+    rig.server
+        .agent_requests
+        .requests
+        .iter_mut()
+        .find(|stored| stored.info.id == first_id)
+        .unwrap()
+        .info
+        .delivered_at_unix_ms = Some(later_than_second);
+
+    rig.set_state(3, DetectedAgentState::Working);
+    let third = rig.ask(Some(2), 3, "and the notes?");
+    assert_eq!(third.state, AgentRequestState::Queued);
+    let header = rig
+        .server
+        .request_frame(&third)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        header.ends_with(&format!(", following {}:", second.id)),
+        "{header}"
+    );
+}
+
 #[test]
 fn an_await_ends_at_a_prompt_that_stops_its_undelivered_request() {
     let mut rig = Rig::new(&[3]);
@@ -2035,6 +2085,7 @@ fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
             target_agent: "claude".into(),
             depth: 1,
             later: false,
+            delivered_order: Some(pane as u64 + 1),
         });
         store.slots.insert(
             to,

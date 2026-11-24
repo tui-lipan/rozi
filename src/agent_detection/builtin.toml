@@ -361,6 +361,22 @@ blocker = "trust"
 scope = "footer"
 screen = { all_of = ["trust all and continue", "enter confirm · esc skip"] }
 
+# At its usage limit Codex reports an error and prints the limit as a `■` line in the transcript,
+# above an empty composer. The line is live only while nothing but the composer and its status
+# chrome follows it: once a later turn starts, its `›` prompt and `•` output sit at column 0 below.
+#
+# Deliberately unscoped: in a narrow pane (30-40 columns) the wrapped warning, composer, and status
+# chrome exceed the 8-row footer window, and wrapped status lines continue at column 0 without
+# indentation. Anchoring to the end of the screen while rejecting any `›`, `•`, or `■` below the
+# warning (other than the single composer line) keeps earlier warnings from blocking later turns.
+[[agents.states]]
+state = "blocked"
+blocker = "usage-limit"
+outranks_reports = true
+screen = { regex = true, any_of = [
+    "(?m)^■ you.ve hit your usage limit\\b[^\\n]*(?:\\n(?:[^›•■\\n][^\\n]*)?)*\\n›[^\\n]*(?:\\n(?:[^›•■\\n][^\\n]*)?)*\\z",
+] }
+
 [[agents]]
 id = "pi"
 label = "Pi"

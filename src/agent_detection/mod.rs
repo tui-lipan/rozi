@@ -126,38 +126,126 @@ pub(crate) fn launch_carries_prompt(
         .is_some_and(|program| rule.matches(&process.argv[program + 1..]))
 }
 
+/// Visible terminal text with terminal soft-wrapped rows rejoined into logical lines.
+///
+/// Explicit line breaks (such as an agent's own word-wrapping) stay `\n`; only rows the terminal
+/// emulator itself overflowed into the next row are concatenated directly so narrow-pane wraps
+/// cannot split words, numbers, or anchors mid-token.
+fn logical_screen_text(snapshot: &tui_lipan::TerminalRenderSnapshot) -> std::borrow::Cow<'_, str> {
+    if !snapshot.wrapped_rows.iter().any(|&wrapped| wrapped) {
+        return std::borrow::Cow::Borrowed(snapshot.text.as_ref());
+    }
+    let mut unwrapped = String::with_capacity(snapshot.text.len());
+    for (index, row) in snapshot.text.split('\n').enumerate() {
+        if index > 0
+            && !snapshot
+                .wrapped_rows
+                .get(index - 1)
+                .copied()
+                .unwrap_or(false)
+        {
+            unwrapped.push('\n');
+        }
+        unwrapped.push_str(row);
+    }
+    std::borrow::Cow::Owned(unwrapped)
+}
+
+/// The last [`FOOTER_ROWS`] non-empty *physical* terminal rows, with terminal soft-wraps rejoined
+/// within that window.
+///
+/// Bounding the footer by physical rows keeps a single long wrapped paragraph from shrinking to one
+/// logical line and pulling historical dialogs (such as Cursor's answered trust prompt) back into
+/// the footer, while still matching live footer phrases that wrap across rows inside the window.
+fn logical_footer_text(snapshot: &tui_lipan::TerminalRenderSnapshot) -> String {
+    let rows: Vec<&str> = snapshot.text.split('\n').collect();
+    let mut kept: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(_, row)| !row.trim().is_empty())
+        .take(FOOTER_ROWS)
+        .map(|(index, _)| index)
+        .collect();
+    kept.reverse();
+    let mut footer = String::new();
+    for (position, &row_index) in kept.iter().enumerate() {
+        if position > 0 {
+            let prev = kept[position - 1];
+            let continued =
+                prev + 1 == row_index && snapshot.wrapped_rows.get(prev).copied().unwrap_or(false);
+            if !continued {
+                footer.push('\n');
+            }
+        }
+        footer.push_str(rows[row_index]);
+    }
+    footer
+}
+
+/// What an already-identified agent is doing right now, reading a terminal snapshot with
+/// soft-wrapped rows rejoined while preserving the physical-row footer window.
+pub(crate) fn observe_snapshot(
+    catalog: &AgentCatalog,
+    definition: &AgentDefinition,
+    snapshot: &tui_lipan::TerminalRenderSnapshot,
+    title: &str,
+) -> AgentObservation {
+    let screen = logical_screen_text(snapshot);
+    let footer = logical_footer_text(snapshot);
+    observe_parts(catalog, definition, screen.as_ref(), &footer, title)
+}
+
 /// What an already-identified agent is doing right now.
 ///
 /// The cheap half: a lowercase and a handful of patterns over text the pane already keeps
 /// rendered, with no process table involved. Reading a run's *state* therefore costs nothing like
 /// finding out *whose* run it is, which is why the two are separately paced.
+#[cfg(test)]
 pub(crate) fn observe(
     catalog: &AgentCatalog,
     definition: &AgentDefinition,
     screen: &str,
     title: &str,
 ) -> AgentObservation {
-    let (state, blocker) = evaluate_with_blocker(
+    let footer = definition::footer_text(screen);
+    observe_parts(catalog, definition, screen, &footer, title)
+}
+
+fn observe_parts(
+    catalog: &AgentCatalog,
+    definition: &AgentDefinition,
+    screen: &str,
+    footer: &str,
+    title: &str,
+) -> AgentObservation {
+    let lower_screen = screen.to_lowercase();
+    let lower_footer = footer.to_lowercase();
+    let lower_title = title.to_lowercase();
+    let (state, blocker_rule) = evaluate_with_blocker(
         definition,
         catalog.base(),
         AgentDetectionInput {
-            screen: &screen.to_lowercase(),
-            title: &title.to_lowercase(),
+            screen: &lower_screen,
+            title: &lower_title,
         },
+        &lower_footer,
     );
-    let blocker = blocker.map(|kind| {
+    let blocker = blocker_rule.and_then(|rule| {
+        let kind = rule.blocker.as_deref()?;
         let reset = (kind == "usage-limit")
             .then(|| {
-                definition::footer_text(screen)
-                    .lines()
-                    .find_map(|line| line.split_once("limit resets "))
-                    .and_then(|(_, time)| crate::session::protocol::clean_pane_text(time, 80))
+                let warning =
+                    rule.matched_screen_tail(screen, footer, &lower_screen, &lower_footer)?;
+                usage_limit_reset(&warning)
             })
             .flatten();
-        std::sync::Arc::new(crate::session::protocol::AgentBlocker {
-            kind: kind.into(),
-            reset,
-        })
+        Some(std::sync::Arc::new(
+            crate::session::protocol::AgentBlocker {
+                kind: kind.into(),
+                reset,
+            },
+        ))
     });
     AgentObservation {
         agent: definition.identity.clone(),
@@ -166,7 +254,48 @@ pub(crate) fn observe(
     }
 }
 
+/// The reset time a usage-limit warning displays: Claude's `limit resets 2pm` status line, or the
+/// `try again at …` that ends Codex's warning sentence, which a narrow pane can word-wrap across
+/// lines.
+fn usage_limit_reset(warning: &str) -> Option<String> {
+    if let Some((_, time)) = warning
+        .lines()
+        .find_map(|line| line.split_once("limit resets "))
+    {
+        return crate::session::protocol::clean_pane_text(time, 80);
+    }
+    let joined = warning
+        .lines()
+        .take_while(|line| !line.starts_with('›'))
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let (_, rest) = joined.split_once("try again at ")?;
+    let time = rest.split_once(". ").map_or(rest, |(time, _)| time);
+    crate::session::protocol::clean_pane_text(time.trim_end_matches('.'), 80)
+}
+
+/// Whether the visible terminal snapshot blocks automated input regardless of the agent report.
+pub(crate) fn blocked_screen_outranks_reports_snapshot(
+    definition: &AgentDefinition,
+    snapshot: &tui_lipan::TerminalRenderSnapshot,
+    title: &str,
+) -> bool {
+    let screen = logical_screen_text(snapshot);
+    let footer = logical_footer_text(snapshot);
+    definition::blocked_screen_outranks_reports_in(
+        definition,
+        AgentDetectionInput {
+            screen: &screen.to_lowercase(),
+            title: &title.to_lowercase(),
+        },
+        &footer.to_lowercase(),
+    )
+}
+
 /// Whether the visible screen blocks automated input regardless of the agent report.
+#[cfg(test)]
 pub(crate) fn blocked_screen_outranks_reports(
     definition: &AgentDefinition,
     screen: &str,
@@ -555,6 +684,269 @@ mod tests {
         let catalog = AgentCatalog::builtin();
         let claude = catalog.by_id("claude").unwrap();
         assert!(!blocked_screen_outranks_reports(claude, screen, ""));
+    }
+
+    #[test]
+    fn codex_usage_limit_counts_only_above_the_composer() {
+        // The captured warning, wrapped as a narrow pane draws it: still live, reset intact.
+        let live = "\
+■ You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit
+https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 25th,
+2026 8:11 PM.
+
+› Ask Codex to do anything
+
+  GPT-6.2-Sol medium · ~/Projects/rozi";
+        let catalog = AgentCatalog::builtin();
+        let codex = catalog.by_id("codex").unwrap();
+        let observed = observe(&catalog, codex, live, "");
+        assert_eq!(observed.state, Some(DetectedAgentState::Blocked));
+        assert_eq!(
+            observed.blocker.and_then(|blocker| blocker.reset.clone()),
+            Some("Nov 25th, 2026 8:11 PM".into())
+        );
+
+        // After the limit lifts, a short turn leaves the old warning inside the footer window.
+        let later = live.replace("› Ask Codex", "› Continue\n\n• Done.\n\n› Ask Codex");
+        assert_eq!(
+            detect_state("codex", &later, ""),
+            Some(DetectedAgentState::Idle)
+        );
+        assert!(!blocked_screen_outranks_reports(codex, &later, ""));
+    }
+
+    /// Narrow panes wrap Codex's warning, composer, and status chrome past the 8-row footer and
+    /// split tokens across physical rows (`try ag\nain at`, `20\n26`, `8:\n11`, column-0 status
+    /// continuations). Rejoining terminal soft-wrapped rows recovers the exact reset time across
+    /// every width, and explicit word-wrapping at 30 and 40 columns stays readable without soft
+    /// wraps too.
+    #[test]
+    fn codex_usage_limit_matches_across_narrow_pane_widths() {
+        let catalog = AgentCatalog::builtin();
+        let codex = catalog.by_id("codex").unwrap();
+
+        let captured = "\
+    + 458 lines (^t to expand)\r\n\
+\r\n\
+■ You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 25th, 2026 8:11 PM.\r\n\
+\r\n\
+\r\n\
+› Ask Codex to do anything\r\n\
+\r\n\
+  GPT-6.2-Sol medium · ~/Projects/rozi-worktrees/fix-request-parent-await-race · Fix parent await race\r\n\
+  ← for agents · ? for shortcuts   ⚠ 2 warnings · f2 to view";
+        let later = captured.replace(
+            "› Ask Codex",
+            "› Continue\r\n\r\n• Done.\r\n\r\n› Ask Codex",
+        );
+
+        let assert_live = |label: &str, observed: AgentObservation, outranks: bool| {
+            assert_eq!(
+                observed.state,
+                Some(DetectedAgentState::Blocked),
+                "{label} should detect the usage limit"
+            );
+            let blocker = observed
+                .blocker
+                .as_deref()
+                .unwrap_or_else(|| panic!("{label} missing blocker"));
+            assert_eq!(blocker.kind, "usage-limit", "{label}");
+            assert_eq!(
+                blocker.reset.as_deref(),
+                Some("Nov 25th, 2026 8:11 PM"),
+                "{label} should keep the exact reset time"
+            );
+            assert!(outranks, "{label} should outrank reports");
+        };
+
+        let assert_historical = |label: &str, observed: AgentObservation, outranks: bool| {
+            assert_eq!(
+                observed.state,
+                Some(DetectedAgentState::Idle),
+                "{label} should ignore a historical warning after a later turn"
+            );
+            assert!(!outranks);
+        };
+
+        // Direct output at every width from 20 to 120 columns, hitting mid-word splits in
+        // `usage limit`, `try again at`, `Nov 25th`, `2026`, and `8:11`.
+        for cols in 20..=120u16 {
+            let mut terminal = crate::pane::engine::screen(60, cols, 0);
+            terminal.process_bytes(captured.as_bytes());
+            let snapshot = terminal.render_snapshot();
+            assert_live(
+                &format!("{cols}-col direct"),
+                observe_snapshot(&catalog, codex, &snapshot, ""),
+                blocked_screen_outranks_reports_snapshot(codex, &snapshot, ""),
+            );
+
+            let mut later_terminal = crate::pane::engine::screen(60, cols, 0);
+            later_terminal.process_bytes(later.as_bytes());
+            let later_snapshot = later_terminal.render_snapshot();
+            assert_historical(
+                &format!("{cols}-col direct"),
+                observe_snapshot(&catalog, codex, &later_snapshot, ""),
+                blocked_screen_outranks_reports_snapshot(codex, &later_snapshot, ""),
+            );
+        }
+
+        // Reflowing a wide screen whose prompt sits at the bottom down to each narrow width
+        // preserves soft-wrap markers too.
+        let bottom_captured = format!("{}{captured}", "\r\n".repeat(40));
+        for cols in 20..=80u16 {
+            let mut resized = crate::pane::engine::screen(60, 120, 100);
+            resized.process_bytes(bottom_captured.as_bytes());
+            resized.resize(60, cols);
+            let snapshot = resized.render_snapshot();
+            assert_live(
+                &format!("{cols}-col reflow"),
+                observe_snapshot(&catalog, codex, &snapshot, ""),
+                blocked_screen_outranks_reports_snapshot(codex, &snapshot, ""),
+            );
+        }
+
+        // Explicit word-wrapped 40- and 30-column screens (no terminal soft-wrap flags), where the
+        // warning still starts above the 8-row footer and status lines wrap onto column 0.
+        let word_wrapped_40 = "\
+    + 458 lines (^t to expand)
+
+■ You’ve hit your usage limit. Upgrade
+to Pro (https://chatgpt.com/explore/pro),
+visit https://chatgpt.com/settings/usage
+to purchase more credits or try again
+at Nov 25th, 2026 8:11 PM.
+
+
+› Ask Codex to do anything
+
+  GPT-6.2-Sol medium · ~/Projects/rozi-w
+orktrees/fix-request-parent-await-race ·
+ Fix parent await race
+  ← for agents · ? for shortcuts
+        ⚠ 2 warnings · f2 to view";
+
+        let word_wrapped_30 = "\
+    + 458 lines (^t to expand)
+
+■ You’ve hit your usage limit.
+Upgrade to Pro
+(https://chatgpt.com/explore/pro),
+visit
+https://chatgpt.com/settings/usage
+to purchase more credits or
+try again at Nov 25th, 2026
+8:11 PM.
+
+
+› Ask Codex to do anything
+
+  GPT-6.2-Sol medium · ~/Proje
+cts/rozi-worktrees/fix-request
+-parent-await-race · Fix paren
+t await race
+  ← for agents · ? for shortcu
+ts
+                            ⚠
+2 warnings · f2 to view";
+
+        for (width, screen) in [(40, word_wrapped_40), (30, word_wrapped_30)] {
+            assert_live(
+                &format!("{width}-col word-wrapped"),
+                observe(&catalog, codex, screen, ""),
+                blocked_screen_outranks_reports(codex, screen, ""),
+            );
+            let later_wrapped =
+                screen.replace("› Ask Codex", "› Continue\n\n• Done.\n\n› Ask Codex");
+            assert_historical(
+                &format!("{width}-col word-wrapped"),
+                observe(&catalog, codex, &later_wrapped, ""),
+                blocked_screen_outranks_reports(codex, &later_wrapped, ""),
+            );
+        }
+    }
+
+    /// Rejoining terminal soft-wraps must not shrink a long wrapped paragraph into one logical line
+    /// and pull an older dialog back inside the 8-row footer window; live footer text wrapped
+    /// within those 8 physical rows still matches whole.
+    #[test]
+    fn historical_trust_prompt_stays_outside_footer_after_long_wrapped_output() {
+        let catalog = AgentCatalog::builtin();
+        let cursor = catalog.by_id("cursor").unwrap();
+
+        // One single logical line that soft-wraps across 10 physical rows at 30 columns: enough
+        // physical rows to push the answered trust prompt out of the 8-row footer, even though it
+        // collapses to one logical line when unwrapped.
+        let long_paragraph = "word ".repeat(60);
+        let screen_bytes = format!(
+            "Do you trust the contents of this directory?\r\n{long_paragraph}\r\n› ready\r\n"
+        );
+        let mut terminal = crate::pane::engine::screen(30, 30, 0);
+        terminal.process_bytes(screen_bytes.as_bytes());
+        let snapshot = terminal.render_snapshot();
+
+        assert_eq!(
+            observe_snapshot(&catalog, cursor, &snapshot, "").state,
+            Some(DetectedAgentState::Idle),
+            "long soft-wrapped output must keep the historical trust prompt outside the 8-row footer"
+        );
+
+        // Inside those 8 physical rows, a soft-wrapped live footer warning still matches whole.
+        let claude = catalog.by_id("claude").unwrap();
+        let claude_bytes = format!(
+            "{}\r\n  ⚠ Usage limit reached · limit resets 2pm\r\n  ⏵⏵ bypass permissions on",
+            "─".repeat(30)
+        );
+        let mut claude_terminal = crate::pane::engine::screen(12, 30, 0);
+        claude_terminal.process_bytes(claude_bytes.as_bytes());
+        let claude_snapshot = claude_terminal.render_snapshot();
+        let observed = observe_snapshot(&catalog, claude, &claude_snapshot, "");
+        assert_eq!(observed.state, Some(DetectedAgentState::Blocked));
+        assert_eq!(
+            observed.blocker.and_then(|blocker| blocker.reset.clone()),
+            Some("2pm".into())
+        );
+    }
+
+    /// When an earlier usage-limit warning remains visible above the live one, the reset time must
+    /// come from the warning that triggered the blocked state rather than the older one.
+    #[test]
+    fn usage_limit_reset_reads_the_live_warning_not_an_earlier_one() {
+        let catalog = AgentCatalog::builtin();
+
+        let codex = catalog.by_id("codex").unwrap();
+        let codex_screen = "\
+■ You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 24th, 2026 8:00 PM.
+
+› Continue
+
+■ You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 25th, 2026 8:11 PM.
+
+
+› Ask Codex to do anything
+
+  GPT-6.2-Sol medium · ~/Projects/rozi";
+        let observed = observe(&catalog, codex, codex_screen, "");
+        assert_eq!(observed.state, Some(DetectedAgentState::Blocked));
+        assert_eq!(
+            observed.blocker.and_then(|blocker| blocker.reset.clone()),
+            Some("Nov 25th, 2026 8:11 PM".into())
+        );
+
+        let claude = catalog.by_id("claude").unwrap();
+        let claude_screen = "\
+● Earlier error: limit resets 1pm
+─────────────────────────────────────────────────────────────────
+❯
+─────────────────────────────────────────────────────────────────
+  ⚠ Usage limit reached · limit resets 2pm
+    Continuing automatically at 2pm · Esc to cancel
+  ⏵⏵ bypass permissions on (shift+tab to cycle)";
+        let observed = observe(&catalog, claude, claude_screen, "");
+        assert_eq!(observed.state, Some(DetectedAgentState::Blocked));
+        assert_eq!(
+            observed.blocker.and_then(|blocker| blocker.reset.clone()),
+            Some("2pm".into())
+        );
     }
 
     /// Reduced from two live panes: an idle Claude Code pane that read as a run in flight because

@@ -115,6 +115,12 @@ struct StoredRequest {
     info: AgentRequestInfo,
     /// Agent kind that can prove it resumed the recorded native conversation.
     target_agent: String,
+    /// The native conversation the request was bound to before a handoff to a reference that
+    /// names none stopped it insisting on one. Its agent can still exit and resume it.
+    resumable_session: Option<String>,
+    /// The pane's agent launch the request was delivered to, or later resumed in. Only a later
+    /// launch can have resumed it in a conversation other than the row it was sent to.
+    launch: u64,
     /// 1 for a request asked outside any other.
     depth: usize,
     /// Its agent will reply after the turn it was delivered in, so that turn's end does not
@@ -223,6 +229,14 @@ struct PendingAwait {
     reply: ReplyTo,
 }
 
+/// Which native conversation an agent is in now, as a request trusts it.
+enum Answering {
+    Known(String),
+    Unknown,
+    /// Its row and its own report name different ones.
+    Contradicted,
+}
+
 /// Whether a queued request can be typed into its target now.
 enum Readiness {
     Ready(protocol::AgentState),
@@ -250,7 +264,11 @@ impl AgentRequestStore {
         for stored in &mut self.requests {
             if stored.info.to == *old {
                 stored.info.to = new.clone();
+                let known = stored.info.to_native_session.clone();
                 handoff.rename_session(&mut stored.info.to_native_session);
+                if stored.info.to_native_session.is_none() && known.is_some() {
+                    stored.resumable_session = known;
+                }
             }
             if stored.info.from.as_ref() == Some(old) {
                 stored.info.from = Some(new.clone());
@@ -341,6 +359,13 @@ impl AgentRequestStore {
             .iter_mut()
             .find(|stored| stored.info.id == id)
             .map(|stored| &mut stored.info)
+    }
+
+    /// Note the agent launch request `id` is answered from. Clients are not shown it.
+    fn set_launch(&mut self, id: &str, launch: u64) {
+        if let Some(stored) = self.requests.iter_mut().find(|stored| stored.info.id == id) {
+            stored.launch = launch;
+        }
     }
 
     fn lookup(&self, id: &str) -> std::result::Result<&AgentRequestInfo, ControlResponse> {
@@ -804,10 +829,8 @@ impl SessionServer {
         } else {
             None
         };
-        let from_native_session = from
-            .as_ref()
-            .and_then(|from| self.response_native_session(from));
-        let to_native_session = self.response_native_session(&to);
+        let from_native_session = from.as_ref().and_then(|from| self.answering_session(from));
+        let to_native_session = self.answering_session(&to);
         let conversation = match self.agent_requests.conversation(
             from.as_ref()
                 .map(|from| Party::new(from, from_native_session.as_deref())),
@@ -862,12 +885,14 @@ impl SessionServer {
         self.agent_requests.requests.push(StoredRequest {
             info,
             target_agent: target_agent.identity.id,
+            resumable_session: None,
+            launch: 0,
             depth,
             later: false,
         });
         if let Some(state) = now_state {
             if to_native_session.is_none() {
-                let native_session = self.response_native_session(&to);
+                let native_session = self.answering_session(&to);
                 let info = self.agent_requests.info_mut(&id).expect("just asked");
                 info.to_native_session = native_session;
             }
@@ -1106,13 +1131,67 @@ impl SessionServer {
         ControlResponse::ok(deferred)
     }
 
+    /// The native conversation the agent `reference` names is in now, as far as a request trusts
+    /// it: what every reply to a request bound to a conversation must match. None when that is
+    /// unknown or contradicted.
+    fn answering_session(&self, reference: &protocol::AgentRef) -> Option<String> {
+        match self.answering(reference) {
+            Answering::Known(session) => Some(session),
+            Answering::Unknown | Answering::Contradicted => None,
+        }
+    }
+
+    /// A row says which conversation it shows, unless the agent's own report on the pane names
+    /// another for the row on screen. A row that lingered across its agent's exit or relaunch says
+    /// nothing until that report confirms it.
+    fn answering(&self, reference: &protocol::AgentRef) -> Answering {
+        let current = self.response_native_session(reference);
+        let known = |session: Option<String>| session.map_or(Answering::Unknown, Answering::Known);
+        let Some(pane) = self.panes.get(&reference.pane.pane_id) else {
+            return Answering::Unknown;
+        };
+        let Some(row) = reference
+            .slot
+            .as_ref()
+            .and_then(|slot| pane.runtime.rows.iter().find(|row| row.has_key(slot)))
+        else {
+            return known(current);
+        };
+        let agent = pane
+            .runtime
+            .detected_agent
+            .as_ref()
+            .map(|detected| detected.agent.id.as_str());
+        let claim = pane.runtime.integration.as_deref().filter(|claim| {
+            row.active
+                && claim.native_session.is_some()
+                && Some(claim.identity.id.as_str()) == agent
+        });
+        if let Some(claim) = claim {
+            return match protocol::row_reporting_session(row) {
+                // A row that names no conversation cannot be held to one.
+                None => Answering::Unknown,
+                Some(session) if claim.native_session.as_deref() == Some(session) => known(current),
+                Some(_) => Answering::Contradicted,
+            };
+        }
+        if pane
+            .agent
+            .row_resume
+            .is_stale(&row.publisher, &pane.agent.publisher_epochs)
+        {
+            return Answering::Unknown;
+        }
+        known(current)
+    }
+
     /// Rebind a pending reply to a verified resume in its original pane.
     fn resumed_request_target(
         &self,
-        target: &protocol::AgentRef,
-        agent: &str,
+        stored: &StoredRequest,
         native_session: &str,
     ) -> std::result::Result<Option<protocol::AgentRef>, String> {
+        let target = &stored.info.to;
         let pane_id = target.pane.pane_id;
         let pane = self
             .panes
@@ -1122,37 +1201,55 @@ impl SessionServer {
         if pane.generation != target.pane.generation {
             return Err(format!("pane {pane_id} has been replaced"));
         }
+        if let Some(detected) = &pane.runtime.detected_agent
+            && detected.agent.id != stored.target_agent
+        {
+            return Err("another agent runs in the pane now".into());
+        }
 
         let runtimes = self.agent_runtimes_for(pane_id, pane);
-        let candidate = if let Some(slot) = &target.slot {
-            // An explicit published slot can only resume in that slot. Existing row handoffs
-            // update the stored reference when the server has evidence that a slot moved.
+        // A published slot resumes in that slot while its row lasts. Existing row handoffs update
+        // the stored reference when the server has evidence that a slot moved. Once the agent
+        // has been launched again, the request follows the conversation on screen instead; none
+        // on screen, as while the agent lists conversations to resume, is not yet a resume.
+        let listed = target.slot.as_ref().and_then(|slot| {
             runtimes
-                .into_iter()
+                .iter()
                 .find(|runtime| runtime.reference.slot.as_ref() == Some(slot))
-        } else {
-            // A request to the pane's own agent may follow the conversation on screen.
-            match protocol::pane_agent(runtimes, &pane.runtime.rows) {
-                protocol::PaneAgent::One(runtime) => Some(*runtime),
-                protocol::PaneAgent::Missing => None,
-                protocol::PaneAgent::NoneOnScreen => {
-                    return Err("the pane no longer shows the requested conversation".into());
+                .cloned()
+        });
+        let relaunched = pane.runtime.agent_launch != stored.launch;
+        let candidate = match listed {
+            Some(runtime) => Some(runtime),
+            None if target.slot.is_none() || relaunched => {
+                match protocol::pane_agent(runtimes, &pane.runtime.rows) {
+                    protocol::PaneAgent::One(runtime) => Some(*runtime),
+                    protocol::PaneAgent::Missing | protocol::PaneAgent::NoneOnScreen => None,
                 }
             }
+            None => None,
         };
         let Some(candidate) = candidate else {
             return Ok(None);
         };
-        if candidate.identity.id != agent {
-            return Err("the agent moved to another conversation".into());
+        // A row outlives the agent that ran it. With no agent detected under it, it stands in for
+        // one under its own id, so the pane is still between agents.
+        if candidate.identity.id != stored.target_agent {
+            return if candidate.reference.slot.is_some() && pane.runtime.detected_agent.is_none() {
+                Ok(None)
+            } else {
+                Err("another agent runs in the pane now".into())
+            };
         }
-        match self
-            .response_native_session(&candidate.reference)
-            .as_deref()
-        {
-            Some(current) if current == native_session => Ok(Some(candidate.reference)),
-            Some(_) => Err("the agent moved to another conversation".into()),
-            None => Ok(None),
+        // The launch that owes the request can show another conversation and come back to it, and
+        // its publisher and its own report can disagree while it switches. Only a later launch
+        // in another conversation has left it for good.
+        match self.answering(&candidate.reference) {
+            Answering::Known(current) if current == native_session => Ok(Some(candidate.reference)),
+            Answering::Known(_) | Answering::Contradicted if relaunched => {
+                Err("the agent moved to another conversation".into())
+            }
+            Answering::Known(_) | Answering::Contradicted | Answering::Unknown => Ok(None),
         }
     }
 
@@ -1166,18 +1263,25 @@ impl SessionServer {
             return false;
         }
         let slot = &self.agent_requests.slots[target];
-        let Some(session) = slot
-            .tracker
-            .fence()
-            .and_then(|fence| fence.native_session.clone())
-        else {
-            return false;
-        };
         let ids: Vec<_> = std::iter::once(&slot.request)
             .chain(&slot.riders)
             .filter(|id| self.settles_in_run(id))
             .cloned()
             .collect();
+        let Some(session) = slot
+            .tracker
+            .fence()
+            .and_then(|fence| fence.native_session.clone())
+            .or_else(|| {
+                ids.iter().find_map(|id| {
+                    self.agent_requests
+                        .get(id)
+                        .and_then(|stored| stored.resumable_session.clone())
+                })
+            })
+        else {
+            return false;
+        };
         if ids.is_empty() {
             return false;
         }
@@ -1230,7 +1334,12 @@ impl SessionServer {
         let route = self.deferred_reply_route(stored);
         match route {
             Ok(Some((target, native_session))) => {
-                if info.to == target && info.to_native_session == native_session && !waiting {
+                let unchanged =
+                    info.to == target && info.to_native_session == native_session && !waiting;
+                // The launch it is answered from now, even one that resumed it unobserved.
+                let launch = self.panes[&target.pane.pane_id].runtime.agent_launch;
+                self.agent_requests.set_launch(id, launch);
+                if unchanged {
                     return;
                 }
                 let info = self.agent_requests.info_mut(id).expect("listed above");
@@ -1265,8 +1374,14 @@ impl SessionServer {
     ) -> std::result::Result<Option<(protocol::AgentRef, Option<String>)>, String> {
         let target = &stored.info.to;
         let agent = self.request_agent(target);
-        let current = self.response_native_session(target);
-        let Some(expected) = stored.info.to_native_session.as_deref() else {
+        let current = self.answering_session(target);
+        // An agent that exits leaves the conversation it was last bound to, even one the request
+        // no longer insisted on: only that one can answer it once the agent resumes.
+        let resumable = agent
+            .is_err()
+            .then_some(stored.resumable_session.as_deref())
+            .flatten();
+        let Some(expected) = stored.info.to_native_session.as_deref().or(resumable) else {
             return agent.map(|agent| Some((agent.reference, current)));
         };
         if let Ok(agent) = agent
@@ -1275,7 +1390,7 @@ impl SessionServer {
             return Ok(Some((agent.reference, current)));
         }
         Ok(self
-            .resumed_request_target(target, &stored.target_agent, expected)?
+            .resumed_request_target(stored, expected)?
             .map(|target| (target, Some(expected.to_string()))))
     }
 
@@ -1293,7 +1408,7 @@ impl SessionServer {
             )));
         }
         if request.to_native_session.is_some()
-            && self.response_native_session(&request.to) != request.to_native_session
+            && self.answering_session(&request.to) != request.to_native_session
         {
             return Some(not_permitted(format!(
                 "the agent has moved to another conversation since request `{id}` was sent"
@@ -1527,7 +1642,7 @@ impl SessionServer {
                 return;
             }
         };
-        let native_session = self.response_native_session(target);
+        let native_session = self.answering_session(target);
         let slot = self.agent_requests.slots.get(target).expect("listed slot");
         if slot.tracker.native_session_changed(&native_session) {
             if native_session.is_none() && self.suspend_request_slot(target) {
@@ -1875,7 +1990,7 @@ impl SessionServer {
         if let Err(reason) = self.request_agent(from) {
             return Some(format!("the asking agent is gone: {reason}"));
         }
-        let native_session = self.response_native_session(from);
+        let native_session = self.answering_session(from);
         if info.from_native_session.is_none() {
             self.agent_requests.info_mut(id)?.from_native_session = native_session;
             return None;
@@ -1896,7 +2011,17 @@ impl SessionServer {
         {
             return Err("the agent's pane has exited".into());
         }
-        self.current_agent_runtime(agent).map_err(error_text)
+        self.current_agent_runtime(agent).map_err(|response| {
+            let exited = response.code == Some(ControlErrorCode::AgentReplaced)
+                && self.panes.get(&agent.pane.pane_id).is_some_and(|pane| {
+                    pane.runtime.detected_agent.is_none() && pane.runtime.integration.is_none()
+                });
+            if exited {
+                "the agent exited".into()
+            } else {
+                error_text(response)
+            }
+        })
     }
 
     fn request_readiness(&mut self, id: &str) -> Readiness {
@@ -1907,7 +2032,7 @@ impl SessionServer {
             Ok(runtime) => runtime,
             Err(reason) => return Readiness::Fail(reason),
         };
-        let native_session = self.response_native_session(&to);
+        let native_session = self.answering_session(&to);
         if recorded_session.is_some() && native_session != recorded_session {
             return Readiness::Fail("the agent moved to another conversation".into());
         }
@@ -1995,9 +2120,9 @@ impl SessionServer {
         let input = self
             .session_prompt_input(to.pane.pane_id, &frame)
             .map_err(error_text)?;
-        let fence = self
-            .agent_responses
-            .fence(self.response_native_session(&to));
+        // Only a conversation the request trusts filters the answers: behind a stale or
+        // contradicted row, any answer is the new agent's.
+        let fence = self.agent_responses.fence(self.answering_session(&to));
         let before = self
             .recent_pane_text(to.pane.pane_id)
             .map(|text| fingerprint(&text))
@@ -2044,6 +2169,8 @@ impl SessionServer {
         } else {
             DELIVERED
         };
+        let launch = self.panes[&to.pane.pane_id].runtime.agent_launch;
+        self.agent_requests.set_launch(id, launch);
         let info = self.agent_requests.info_mut(id).expect("queued request");
         if info.no_reply {
             settle(info, AgentRequestState::Delivered, None);

@@ -303,11 +303,16 @@ fn a_request_follows_a_detected_agent_into_its_published_row() {
             .resolve_agent_wait_target(crate::control::AgentTarget::Ref(detected.clone()))
             .ok();
         if !follows {
-            assert_eq!(
-                rig.request(&request.id).state,
-                AgentRequestState::Failed,
-                "{scenario}"
-            );
+            let left = rig.request(&request.id);
+            if scenario == "hook on another conversation" {
+                // The agent still reports the conversation it took the request in, so the
+                // request waits for that one to come back on screen.
+                assert_eq!(left.state, AgentRequestState::Active, "{scenario}");
+                assert_eq!(left.reason.as_deref(), Some(WAITING_FOR_RESUME));
+                assert!(!rig.reply(3, &request.id, "5").ok, "{scenario}");
+            } else {
+                assert_eq!(left.state, AgentRequestState::Failed, "{scenario}");
+            }
             assert!(
                 followed.is_none_or(|reference| reference.slot.is_none()),
                 "{scenario}"
@@ -1177,14 +1182,16 @@ fn a_request_answered_later_outlives_its_turn_until_the_reply() {
     assert_eq!(answered.state, AgentRequestState::Answered);
     assert_eq!(answered.response.unwrap().content.text, "the suite passed");
 
-    // A promised answer fails once its agent is replaced.
+    // A promised answer in no known conversation fails once its agent exits.
     let target = rig.agent(3);
     rig.server.reply_later(Some(target), &second.id);
     let pane = rig.server.panes.get_mut(&3).unwrap();
-    pane.runtime.agent_launch += 1;
+    pane.runtime.detected_agent = None;
     pane.agent.sync_references(&pane.runtime);
     rig.server.pump_agent_requests();
-    assert_eq!(rig.request(&second.id).state, AgentRequestState::Failed);
+    let failed = rig.request(&second.id);
+    assert_eq!(failed.state, AgentRequestState::Failed);
+    assert_eq!(failed.reason.as_deref(), Some("the agent exited"));
 }
 
 #[test]
@@ -1241,40 +1248,83 @@ fn an_agent_owing_several_requests_names_the_one_it_asks_for() {
     );
 }
 
+/// An agent exits in its pane: its hooks, its screen detection, and the row a publisher lists it
+/// under all go, the row before or after the agent. A request it owes, whether it promised to
+/// reply later or not, waits for the agent to resume, and only the same conversation answers it.
 #[test]
-fn an_active_reply_survives_an_agent_restart_only_in_its_original_conversation() {
-    for resumed_session in ["original", "different"] {
-        let mut rig = Rig::new(&[3]);
-        rig.move_to(3, "original");
-        let first = rig.agent(3);
-        let request = rig.ask(None, 3, "Wait for the long check and reply.");
-        assert_eq!(request.state, AgentRequestState::Active);
+fn an_open_request_survives_an_agent_restart_only_in_its_original_conversation() {
+    for deferred in [false, true] {
+        for rows_first in [false, true] {
+            for resumed_session in ["original", "different"] {
+                let case = format!("deferred={deferred} rows_first={rows_first} {resumed_session}");
+                let mut rig = Rig::new(&[3]);
+                let (client, _stream) = super::super::tests::attach_client(&mut rig.server);
+                let publish_row = |rig: &mut Rig, native_session: Option<&str>| {
+                    let rows = native_session
+                        .map_or_else(Vec::new, |session| vec![agent_row(session, true)]);
+                    publish_rows(rig, client, rows);
+                    rig.server.pump_agent_requests();
+                };
+                let set_agent = |rig: &mut Rig, detected: Option<protocol::DetectedAgent>| {
+                    let pane = rig.server.panes.get_mut(&3).unwrap();
+                    let before = pane.agent.agent_states(&pane.runtime);
+                    pane.runtime.integration = None;
+                    // An agent coming back is a new launch of it.
+                    if detected.is_some() {
+                        pane.runtime.agent_launch += 1;
+                    }
+                    pane.runtime.detected_agent = detected;
+                    pane.agent.observe(before, &pane.runtime);
+                    rig.server.pump_agent_requests();
+                };
+                rig.move_to(3, "original");
+                publish_row(&mut rig, Some("original"));
+                let first = rig.agent(3);
+                let request = rig.ask(None, 3, "Wait for the long check and reply.");
+                assert_eq!(request.state, AgentRequestState::Active, "{case}");
+                assert!(rig.typed_into(3, "Wait for the long check and reply."));
+                if deferred {
+                    assert!(rig.server.reply_later(Some(first.clone()), &request.id).ok);
+                }
 
-        let pane = rig.server.panes.get_mut(&3).unwrap();
-        let detected = pane.runtime.detected_agent.take();
-        pane.runtime.integration = None;
-        pane.agent.sync_references(&pane.runtime);
-        rig.server.pump_agent_requests();
-        assert_eq!(
-            rig.request(&request.id).reason.as_deref(),
-            Some(WAITING_FOR_RESUME)
-        );
+                let detected = rig.server.panes[&3].runtime.detected_agent.clone();
+                if rows_first {
+                    rig.server.panes.get_mut(&3).unwrap().runtime.integration = None;
+                    publish_row(&mut rig, None);
+                }
+                set_agent(&mut rig, None);
+                publish_row(&mut rig, None);
+                let waiting = rig.request(&request.id);
+                assert_eq!(waiting.state, AgentRequestState::Active, "{case}");
+                assert_eq!(
+                    waiting.reason.as_deref(),
+                    Some(WAITING_FOR_RESUME),
+                    "{case}"
+                );
 
-        rig.server.panes.get_mut(&3).unwrap().runtime.detected_agent = detected;
-        rig.move_to(3, resumed_session);
-        rig.server.pump_agent_requests();
-        assert_ne!(rig.agent(3), first);
-        if resumed_session == "original" {
-            assert!(
-                !rig.server
-                    .reply_to_request(Some(first), &request.id, "stale answer".into())
-                    .ok
-            );
-            assert!(rig.reply(3, &request.id, "The check passed.").ok);
-            assert_eq!(rig.request(&request.id).state, AgentRequestState::Answered);
-        } else {
-            assert_eq!(rig.request(&request.id).state, AgentRequestState::Failed);
-            assert!(!rig.reply(3, &request.id, "wrong conversation").ok);
+                set_agent(&mut rig, detected);
+                rig.move_to(3, resumed_session);
+                publish_row(&mut rig, Some(resumed_session));
+                assert_ne!(rig.agent(3), first);
+                if resumed_session == "original" {
+                    assert!(
+                        !rig.server
+                            .reply_to_request(Some(first), &request.id, "stale answer".into())
+                            .ok
+                    );
+                    assert!(rig.reply(3, &request.id, "The check passed.").ok, "{case}");
+                    assert_eq!(rig.request(&request.id).state, AgentRequestState::Answered);
+                } else {
+                    let failed = rig.request(&request.id);
+                    assert_eq!(failed.state, AgentRequestState::Failed, "{case}");
+                    assert_eq!(
+                        failed.reason.as_deref(),
+                        Some("the agent moved to another conversation"),
+                        "{case}"
+                    );
+                    assert!(!rig.reply(3, &request.id, "wrong conversation").ok);
+                }
+            }
         }
     }
 }
@@ -1321,8 +1371,10 @@ fn replacing_the_pane_generation_fails_requests_even_for_the_same_conversation()
     }
 }
 
+/// Within one launch, an agent that owes a promised answer can show another conversation and come
+/// back. The request waits meanwhile and only the conversation it is bound to answers it.
 #[test]
-fn a_promised_answer_fails_when_its_agent_changes_conversation() {
+fn a_promised_answer_waits_while_its_agent_shows_another_conversation() {
     let mut rig = Rig::new(&[3]);
     let request = rig.ask(None, 3, "run the slow suite");
     assert!(rig.typed_into(
@@ -1332,34 +1384,69 @@ fn a_promised_answer_fails_when_its_agent_changes_conversation() {
     let target = rig.agent(3);
     info(rig.server.reply_later(Some(target.clone()), &request.id));
 
-    let generation = rig.server.panes[&3].generation;
-    let mut report = |seq, native_session: &str| {
-        let update = super::super::runtime::AgentIntegrationUpdate {
-            agent: Some("claude".into()),
-            integration: "hooks".into(),
-            state: Some(protocol::AgentState::Working),
-            reason: None,
-            native_session: Some(native_session.into()),
-            unless_quiet: None,
-            ended: false,
-            seq,
-            response: None,
-        };
-        rig.server
-            .apply_agent_integration(None, 3, generation, update)
-            .unwrap();
-    };
     // Delivered before the agent named its conversation, the request binds to the first one. Two
     // reports read in one server iteration still see it bound in between.
-    report(1, "conversation a");
-    report(2, "conversation b");
+    rig.move_to(3, "conversation a");
+    rig.move_to(3, "conversation b");
     rig.server.pump_agent_requests();
-    let failed = rig.request(&request.id);
-    assert_eq!(failed.state, AgentRequestState::Failed);
-    assert_eq!(
-        failed.reason.as_deref(),
-        Some("the agent moved to another conversation")
-    );
+    let waiting = rig.request(&request.id);
+    assert_eq!(waiting.state, AgentRequestState::Active);
+    assert_eq!(waiting.to_native_session.as_deref(), Some("conversation a"));
+    assert!(!rig.reply(3, &request.id, "From the wrong conversation.").ok);
+
+    rig.move_to(3, "conversation a");
+    rig.server.pump_agent_requests();
+    assert!(rig.reply(3, &request.id, "The suite passed.").ok);
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Answered);
+}
+
+/// A publisher and the agent's own report can each be first to say the agent switched
+/// conversations. Switching away and back within one launch keeps a promised answer open.
+#[test]
+fn a_promised_answer_survives_a_switch_back_in_either_update_order() {
+    for rows_first in [false, true] {
+        let case = format!("rows_first={rows_first}");
+        let mut rig = Rig::new(&[3]);
+        let (client, _stream) = super::super::tests::attach_client(&mut rig.server);
+        let switch = |rig: &mut Rig, to: &str, from: &str| {
+            let rows = vec![agent_row(to, true), agent_row(from, false)];
+            if rows_first {
+                publish_rows(rig, client, rows);
+                rig.server.pump_agent_requests();
+                rig.move_to(3, to);
+            } else {
+                rig.move_to(3, to);
+                rig.server.pump_agent_requests();
+                publish_rows(rig, client, rows);
+            }
+            rig.server.pump_agent_requests();
+        };
+        rig.move_to(3, "a");
+        publish_rows(
+            &mut rig,
+            client,
+            vec![agent_row("a", true), agent_row("b", false)],
+        );
+        let request = rig.ask(None, 3, "Check and answer later.");
+        assert_eq!(request.state, AgentRequestState::Active, "{case}");
+        assert!(rig.server.reply_later(Some(rig.agent(3)), &request.id).ok);
+
+        switch(&mut rig, "b", "a");
+        assert_eq!(
+            rig.request(&request.id).state,
+            AgentRequestState::Active,
+            "{case}"
+        );
+        switch(&mut rig, "a", "b");
+        let open = rig.request(&request.id);
+        assert_eq!(open.state, AgentRequestState::Active, "{case}: {open:?}");
+        assert!(rig.reply(3, &request.id, "The check passed.").ok, "{case}");
+        assert_eq!(
+            rig.request(&request.id).state,
+            AgentRequestState::Answered,
+            "{case}"
+        );
+    }
 }
 
 /// The request lists queued for `client` and not yet sent, in order.
@@ -2033,6 +2120,8 @@ fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
                 no_reply: false,
             },
             target_agent: "claude".into(),
+            resumable_session: None,
+            launch: 0,
             depth: 1,
             later: false,
         });
@@ -2116,4 +2205,261 @@ fn protected_answers_cannot_exceed_the_session_storage_budget() {
     // Retaining an old answer after releasing its slot frees protected capacity.
     store.slots.remove(&store.requests[0].info.to);
     assert!(store.admit_reply(&request, &response.content.text).is_ok());
+}
+
+/// An agent row a publisher lists for conversation `id`.
+fn agent_row(id: &str, active: bool) -> protocol::PublishedRow {
+    protocol::PublishedRow {
+        publisher: String::new(),
+        kind: protocol::PublisherKind::Agent,
+        id: id.into(),
+        title: id.into(),
+        status: "idle".into(),
+        active,
+        native_session: Some(id.into()),
+        live_session: None,
+        reported: false,
+        reason: None,
+        work_started_at: None,
+        cwd: None,
+        project: None,
+    }
+}
+
+fn publish_rows(rig: &mut Rig, client: ClientId, rows: Vec<protocol::PublishedRow>) {
+    rig.server
+        .report_pane_rows(
+            client,
+            3,
+            1,
+            false,
+            super::super::runtime::PanePublisher {
+                id: "sessions".into(),
+                kind: protocol::PublisherKind::Agent,
+                epoch: 1,
+                responses: Vec::new(),
+            },
+            rows,
+        )
+        .unwrap();
+}
+
+/// Another kind of agent taking the pane over ends a wait for a resume, even with no conversation on
+/// screen.
+#[test]
+fn another_agent_in_the_pane_fails_a_request_waiting_for_a_resume() {
+    let mut rig = Rig::new(&[3]);
+    let (client, _stream) = super::super::tests::attach_client(&mut rig.server);
+    rig.move_to(3, "original");
+    let request = rig.ask(None, 3, "Check and answer later.");
+    assert_eq!(request.state, AgentRequestState::Active);
+    assert!(rig.server.reply_later(Some(rig.agent(3)), &request.id).ok);
+    let pane = rig.server.panes.get_mut(&3).unwrap();
+    pane.runtime.integration = None;
+    pane.runtime.detected_agent = None;
+    pane.agent.sync_references(&pane.runtime);
+    rig.server.pump_agent_requests();
+    assert_eq!(
+        rig.request(&request.id).reason.as_deref(),
+        Some(WAITING_FOR_RESUME)
+    );
+
+    let pane = rig.server.panes.get_mut(&3).unwrap();
+    pane.runtime.agent_launch += 1;
+    pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+        agent: protocol::AgentIdentity::new("codex", "Codex").into(),
+        state: DetectedAgentState::Idle,
+        blocker: None,
+    });
+    publish_rows(
+        &mut rig,
+        client,
+        vec![agent_row("background-thread", false)],
+    );
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Failed);
+}
+
+/// A row the publisher still lists after its agent exits does not speak for the agent launched
+/// next, which reports another conversation.
+#[test]
+fn a_row_left_from_before_an_exit_cannot_answer_for_a_new_conversation() {
+    let mut rig = Rig::new(&[3]);
+    let (client, _stream) = super::super::tests::attach_client(&mut rig.server);
+    rig.move_to(3, "original");
+    publish_rows(&mut rig, client, vec![agent_row("original", true)]);
+    let request = rig.ask(None, 3, "Check and answer later.");
+    assert_eq!(request.state, AgentRequestState::Active);
+    assert!(rig.server.reply_later(Some(rig.agent(3)), &request.id).ok);
+
+    let pane = rig.server.panes.get_mut(&3).unwrap();
+    let detected = pane.runtime.detected_agent.take().unwrap();
+    pane.runtime.integration = None;
+    pane.agent.sync_references(&pane.runtime);
+    rig.server.pump_agent_requests();
+
+    let pane = rig.server.panes.get_mut(&3).unwrap();
+    pane.runtime.agent_launch += 1;
+    pane.runtime.detected_agent = Some(detected);
+    pane.agent.sync_references(&pane.runtime);
+    rig.move_to(3, "different");
+    assert!(
+        !rig.reply(3, &request.id, "Answer from the wrong conversation.")
+            .ok
+    );
+}
+
+/// A conversation sent to the background and then dropped from the list is still running, so the
+/// conversation on screen does not decide its request.
+#[test]
+fn a_request_to_a_background_row_waits_while_its_agent_runs() {
+    let mut rig = Rig::new(&[3]);
+    let (client, _stream) = super::super::tests::attach_client(&mut rig.server);
+    rig.move_to(3, "original");
+    publish_rows(
+        &mut rig,
+        client,
+        vec![agent_row("original", true), agent_row("other", false)],
+    );
+    let request = rig.ask(None, 3, "Check and answer later.");
+    assert_eq!(request.state, AgentRequestState::Active);
+    assert!(rig.server.reply_later(Some(rig.agent(3)), &request.id).ok);
+    publish_rows(
+        &mut rig,
+        client,
+        vec![agent_row("original", false), agent_row("other", true)],
+    );
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
+    publish_rows(&mut rig, client, vec![agent_row("other", true)]);
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
+}
+
+/// A launch can replace the process behind a published row without the row changing. Neither a
+/// reply in its turn nor a promised one is taken from the new agent while it reports another
+/// conversation.
+#[test]
+fn a_row_kept_across_a_relaunch_cannot_answer_for_another_conversation() {
+    let accepted = [false, true].map(|deferred| {
+        let mut rig = Rig::new(&[3]);
+        let (client, _stream) = super::super::tests::attach_client(&mut rig.server);
+        rig.move_to(3, "original");
+        publish_rows(&mut rig, client, vec![agent_row("original", true)]);
+        let request = rig.ask(None, 3, "Check and answer.");
+        assert_eq!(request.state, AgentRequestState::Active);
+        let original_ref = rig.agent(3);
+        if deferred {
+            assert!(
+                rig.server
+                    .reply_later(Some(original_ref.clone()), &request.id)
+                    .ok
+            );
+        }
+
+        // A real launch can replace the process behind a published row without an intermediate
+        // sample of the shell. The published reference is intentionally retained.
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        pane.runtime.agent_launch += 1;
+        pane.runtime.integration = None;
+        pane.agent
+            .row_resume
+            .mark_stale(pane.agent.publisher_epochs.clone());
+        pane.agent.sync_references(&pane.runtime);
+        rig.move_to(3, "different");
+        assert_eq!(rig.agent(3), original_ref);
+        rig.reply(3, &request.id, "Reply from the wrong conversation.")
+            .ok
+    });
+    assert_eq!(accepted, [false, false], "ordinary and deferred replies");
+}
+
+/// A request queued before a launch belongs to the launch that took it, so losing its row while
+/// that launch runs is not a resume.
+#[test]
+fn a_request_belongs_to_the_launch_it_was_delivered_to() {
+    let mut rig = Rig::new(&[3]);
+    let (client, _stream) = super::super::tests::attach_client(&mut rig.server);
+    rig.move_to(3, "original");
+    publish_rows(
+        &mut rig,
+        client,
+        vec![agent_row("original", true), agent_row("other", false)],
+    );
+    rig.server.agent_requests.quiet = Duration::from_secs(60);
+    let request = rig.ask(None, 3, "Queue until the process is ready.");
+    assert_eq!(request.state, AgentRequestState::Queued);
+
+    let pane = rig.server.panes.get_mut(&3).unwrap();
+    pane.runtime.agent_launch += 1;
+    pane.agent.sync_references(&pane.runtime);
+    rig.server.agent_requests.quiet = Duration::ZERO;
+    rig.server.pump_agent_requests();
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
+    assert!(rig.server.reply_later(Some(rig.agent(3)), &request.id).ok);
+
+    publish_rows(
+        &mut rig,
+        client,
+        vec![agent_row("original", false), agent_row("other", true)],
+    );
+    publish_rows(&mut rig, client, vec![agent_row("other", true)]);
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
+}
+
+/// A fresh request delivered to an agent running behind a stale or contradicted published row
+/// must fence on `answering_session`, not the stale row's raw `response_native_session`.
+#[test]
+fn a_new_request_behind_a_stale_or_contradicted_row_does_not_inherit_the_old_session() {
+    for contradicted in [false, true] {
+        let mut rig = Rig::new(&[3]);
+        let (client, _stream) = super::super::tests::attach_client(&mut rig.server);
+        rig.move_to(3, "original");
+        publish_rows(&mut rig, client, vec![agent_row("original", true)]);
+
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        pane.runtime.agent_launch += 1;
+        pane.runtime.integration = None;
+        pane.agent
+            .row_resume
+            .mark_stale(pane.agent.publisher_epochs.clone());
+        pane.agent.sync_references(&pane.runtime);
+        if contradicted {
+            rig.move_to(3, "different");
+        }
+
+        let request = rig.ask(None, 3, "Fresh request after relaunch.");
+        rig.server.pump_agent_requests();
+        let after = rig.request(&request.id);
+        assert_eq!(
+            after.state,
+            AgentRequestState::Active,
+            "contradicted={contradicted}: {after:?}"
+        );
+        assert_eq!(after.to_native_session, None);
+        assert!(rig.reply(3, &request.id, "Answered by the new agent.").ok);
+        assert_eq!(rig.request(&request.id).state, AgentRequestState::Answered);
+    }
+}
+
+/// A row that names no conversation holds its requests to none, even while the agent reports one,
+/// so the answer its turn publishes still answers the request.
+#[test]
+fn a_row_without_a_conversation_is_answered_by_its_turn() {
+    let mut rig = Rig::new(&[3]);
+    let (client, _stream) = super::super::tests::attach_client(&mut rig.server);
+    rig.move_to(3, "original");
+    let row = |status: &str| protocol::PublishedRow {
+        native_session: None,
+        status: status.into(),
+        ..agent_row("original", true)
+    };
+    publish_rows(&mut rig, client, vec![row("idle")]);
+    let request = rig.ask(None, 3, "Check and answer.");
+    assert!(rig.typed_into(3, "Check and answer."));
+    publish_rows(&mut rig, client, vec![row("working")]);
+    rig.server.pump_agent_requests();
+    rig.publish(3, "Checked.");
+    publish_rows(&mut rig, client, vec![row("idle")]);
+    rig.server.pump_agent_requests();
+    let answered = rig.request(&request.id);
+    assert_eq!(answered.state, AgentRequestState::Answered, "{answered:?}");
+    assert_eq!(answered.response.unwrap().content.text, "Checked.");
 }

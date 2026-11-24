@@ -1,4 +1,8 @@
 use tui_lipan::prelude::*;
+use tui_lipan::{
+    GraphicsDamage, GraphicsMediaPolicy, TerminalClipboardEvent, TerminalClipboardTarget,
+    TerminalDamage, TerminalMutation,
+};
 
 use crate::AppRoot;
 use crate::pane::id::PaneId;

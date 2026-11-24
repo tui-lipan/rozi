@@ -9,7 +9,7 @@ use crate::{AppRoot, Msg};
 
 pub(super) fn tick(ctx: &mut Context<AppRoot>) -> Update {
     compress_state(&mut ctx.state);
-    Update::command_only(Command::after(POLL_INTERVAL, |link| {
+    Update::command_only(ctx.link().command_after(POLL_INTERVAL, |link| {
         link.send(Msg::IdleCompressionTick);
     }))
 }

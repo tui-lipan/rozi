@@ -1,6 +1,7 @@
 //! Reconciling a client's live `State` with the shared layout document.
 
 use super::*;
+use tui_lipan::FloatRect;
 
 use crate::state::State;
 
@@ -131,7 +132,7 @@ struct DrainedPanes {
 struct RebuiltWorkspaces {
     next_pane_id: PaneId,
     next_generation: u64,
-    orphan_clipboard_events: Vec<tui_lipan::prelude::TerminalClipboardEvent>,
+    orphan_clipboard_events: Vec<tui_lipan::TerminalClipboardEvent>,
     opened: Vec<(PaneId, u64)>,
 }
 
@@ -545,10 +546,7 @@ pub(crate) fn apply_shared_layout(
     }
     if ctx.state.config.clipboard.enable_osc52 {
         for event in orphan_clipboard_events {
-            if matches!(
-                event.target,
-                tui_lipan::prelude::TerminalClipboardTarget::Clipboard
-            ) {
+            if matches!(event.target, tui_lipan::TerminalClipboardTarget::Clipboard) {
                 ctx.clipboard().relay_osc52(&event.text);
             }
         }
@@ -592,7 +590,8 @@ fn shared_lifecycle_update(
     }
     let epoch = ctx.state.runtime_epoch;
     if opened.is_empty() {
-        return Update::with_command(crate::pane::lifecycle::prune_closed_batch_command(
+        return Update::full_with_command(crate::pane::lifecycle::prune_closed_batch_command(
+            ctx.link(),
             epoch,
             closed,
             close_delay,
@@ -605,7 +604,7 @@ fn shared_lifecycle_update(
     } else {
         open_delay.min(close_delay)
     };
-    Update::with_command(Command::after(
+    Update::full_with_command(ctx.link().command_after(
         delay,
         move |link: CommandLink<crate::Msg>| {
             for (id, generation) in opened {
@@ -668,7 +667,7 @@ fn drain_orphan_output(
     shared: Option<&mut crate::state::SharedSessionState>,
     pane: &mut crate::state::Pane,
     shared_pane: &SharedPane,
-) -> Vec<tui_lipan::prelude::TerminalClipboardEvent> {
+) -> Vec<tui_lipan::TerminalClipboardEvent> {
     let Some(shared) = shared else {
         return Vec::new();
     };
@@ -2061,9 +2060,7 @@ mod reconciler_tests {
         state.current_mut().connection = crate::state::ConnectionState::Connecting;
     }
 
-    fn frame_colors(
-        backend: &TestBackend<AppRoot>,
-    ) -> Vec<(tui_lipan::prelude::Color, tui_lipan::prelude::Color)> {
+    fn frame_colors(backend: &TestBackend<AppRoot>) -> Vec<(tui_lipan::Color, tui_lipan::Color)> {
         backend
             .capture_frame()
             .cells

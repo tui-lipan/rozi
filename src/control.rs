@@ -1680,17 +1680,17 @@ pub(crate) enum RequestedRect {
 
 impl RequestedRect {
     /// The rect in canvas cells.
-    pub(crate) fn to_cells(self, canvas: (u16, u16)) -> tui_lipan::prelude::FloatRect {
+    pub(crate) fn to_cells(self, canvas: (u16, u16)) -> tui_lipan::FloatRect {
         let cols = f32::from(canvas.0.max(1));
         let rows = f32::from(canvas.1.max(1));
         match self {
-            Self::Cells(rect) => tui_lipan::prelude::FloatRect {
+            Self::Cells(rect) => tui_lipan::FloatRect {
                 x: rect.x as f32,
                 y: rect.y as f32,
                 w: rect.width as f32,
                 h: rect.height as f32,
             },
-            Self::Fraction(rect) => tui_lipan::prelude::FloatRect {
+            Self::Fraction(rect) => tui_lipan::FloatRect {
                 x: rect.x as f32 * cols,
                 y: rect.y as f32 * rows,
                 w: rect.width as f32 * cols,
@@ -1995,7 +1995,7 @@ fn report_ratio(value: f32) -> f64 {
 
 impl CellRect {
     /// Whole cells, rounded the way a rendered rect lands on the grid.
-    pub(crate) fn from_float(rect: tui_lipan::prelude::FloatRect) -> Self {
+    pub(crate) fn from_float(rect: tui_lipan::FloatRect) -> Self {
         Self {
             x: rect.x.round() as i32,
             y: rect.y.round() as i32,
@@ -2011,7 +2011,7 @@ impl FractionRect {
     /// Geometry is `f32` internally - a stored float of `0.42` comes back as `0.41999998` - and
     /// JSON widens it to `f64`, so without rounding a script reads `0.4199999784811949` for a pane
     /// that is plainly 42% wide.
-    pub(crate) fn of_canvas(rect: tui_lipan::prelude::FloatRect, canvas: (u16, u16)) -> Self {
+    pub(crate) fn of_canvas(rect: tui_lipan::FloatRect, canvas: (u16, u16)) -> Self {
         let fraction = |value: f32, extent: u16| {
             let fraction = f64::from(value) / f64::from(extent.max(1));
             (fraction * 1e6).round() / 1e6

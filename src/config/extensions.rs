@@ -6,7 +6,7 @@ use serde::Serialize;
 use super::schema::{
     NamedCommand, ServiceConfig, ServiceLaunch, ServiceRestart, UserCommandAction,
 };
-use tui_lipan::prelude::KeyBinding;
+use tui_lipan::KeyBinding;
 
 mod actions;
 mod advice;

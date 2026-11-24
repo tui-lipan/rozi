@@ -1,4 +1,5 @@
 use tui_lipan::prelude::*;
+use tui_lipan::{FloatRect, ForwardedMouseEvent, TerminalLinkKind};
 
 use crate::input::routing::handle_key_routing;
 use crate::layout::anim::GeometryAnimation;
@@ -327,11 +328,11 @@ pub(super) fn alert_pulse_tick(ctx: &mut Context<AppRoot>) -> Update {
     let half = crate::layout::anim::alert_pulse_half_period(ctx.state.config.animations);
     let was_off = ctx.state.alert_pulse_calm_phase;
     let delay = turn_alert_pulse(&mut ctx.state, now, half);
-    let command = schedule_alert_pulse_tick(delay);
+    let command = schedule_alert_pulse_tick(ctx.link(), delay);
     // Borders, content tints and tabs breathe on registry pulses the renderer resolves by the
     // clock, so a turn changes nothing they draw. Only a recording dot's blink lives in the view.
     if ctx.state.alert_pulse_calm_phase != was_off && visible_recording_dot(&ctx.state) {
-        Update::with_command(command)
+        Update::full_with_command(command)
     } else {
         Update::command_only(command)
     }
@@ -480,7 +481,7 @@ mod tests {
     use crate::config::Config;
     use crate::pane::chrome::PaneBorderMode;
     use crate::state::{Pane, PaneAlertPaint};
-    use tui_lipan::prelude::{Color, Style};
+    use tui_lipan::{Color, Style};
 
     fn blocked_pane(id: PaneId) -> Pane {
         let mut pane = Pane::new(

@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use rozi::AppRoot;
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{KeyBinding, KeyCode, KeyEvent, KeyMods, Rect};
+use tui_lipan::{KeyBinding, KeyCode, KeyEvent, KeyMods, Rect};
 
 fn backend() -> TestBackend<AppRoot> {
     rozi::test_support::isolate_user_dirs();

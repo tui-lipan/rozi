@@ -2,7 +2,7 @@ use crate::AppRoot;
 use crate::platform::sound::Cue;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use tui_lipan::prelude::Context;
+use tui_lipan::Context;
 
 /// Whether an enabled, unthrottled sound was dispatched to the platform.
 pub(crate) fn cue(ctx: &mut Context<AppRoot>, cue: Cue) -> bool {

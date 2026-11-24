@@ -339,11 +339,12 @@ pub(crate) fn flush_layout_commit(ctx: &mut Context<AppRoot>, epoch: u64) -> Upd
 }
 
 pub(crate) fn replay_input_deadline_command(
+    link: &tui_lipan::Link<crate::Msg>,
     epoch: u64,
     pane_id: PaneId,
     generation: u64,
 ) -> Command {
-    Command::after(REPLAY_PROMPT_WAIT, move |link: CommandLink<crate::Msg>| {
+    link.command_after(REPLAY_PROMPT_WAIT, move |link: CommandLink<crate::Msg>| {
         link.send(crate::Msg::ReplayInputDeadline {
             epoch,
             pane_id,
@@ -645,7 +646,8 @@ fn background_spawn_result(
         reply.error.as_deref(),
     );
     if replay {
-        Update::with_command(replay_input_deadline_command(
+        Update::full_with_command(replay_input_deadline_command(
+            ctx.link(),
             epoch,
             reply.pane_id,
             reply.generation,
@@ -734,7 +736,8 @@ fn current_spawn_result(
         return remove_pane_after_exit(ctx, reply.pane_id, reply.local);
     }
     if replay {
-        Update::with_command(replay_input_deadline_command(
+        Update::full_with_command(replay_input_deadline_command(
+            ctx.link(),
             epoch,
             reply.pane_id,
             reply.generation,

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use tui_lipan::prelude::{ExitQueue, GraphicsMediaPolicy};
+use tui_lipan::{ExitQueue, GraphicsMediaPolicy};
 
 use super::{
     ORPHAN_OUTPUT_GLOBAL_CAP, ORPHAN_OUTPUT_KEY_CAP, Pane, PendingPaneSpawn, PendingSessionAttach,
@@ -260,7 +260,7 @@ impl Attachment {
             retired_panes: ExitQueue::with_exit_timeout(
                 crate::layout::anim::retained_pane_timeout(
                     crate::layout::anim::WindowAnimationConfig::default(),
-                    tui_lipan::prelude::DEFAULT_FRAME_RATE,
+                    tui_lipan::DEFAULT_FRAME_RATE,
                 ),
             ),
             shared: None,
@@ -404,7 +404,7 @@ impl Attachment {
             .flat_map(|workspace| workspace.panes.iter_mut())
         {
             pane.terminal.status =
-                tui_lipan::prelude::ManagedTerminalStatus::Error("session disconnected".into());
+                tui_lipan::ManagedTerminalStatus::Error("session disconnected".into());
         }
     }
 

@@ -3,8 +3,8 @@
 //! Parsed bindings use `KeyBinding::label`. This module only formats handwritten help text
 //! (ranges, mouse gestures, mixed descriptions) and the recorder's in-progress modifier preview.
 
+use tui_lipan::KeyMods;
 use tui_lipan::format_binding;
-use tui_lipan::prelude::KeyMods;
 
 /// The recorder's preview while only modifiers are held (`Ctrl+Shift+`), in the same order the
 /// completed chord's `KeyBinding::label` will use. tui-lipan writes the names; the trailing `+`
@@ -97,7 +97,7 @@ fn take_modifier(step: &str) -> Option<(&'static str, &str)> {
 mod tests {
     use std::str::FromStr;
 
-    use tui_lipan::prelude::KeyBinding;
+    use tui_lipan::KeyBinding;
 
     use super::*;
 

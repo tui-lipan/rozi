@@ -5,7 +5,7 @@ use rozi::config::{SidebarTab, SidebarTabId};
 use rozi::state::SidebarClose;
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
-use tui_lipan::prelude::{KeyMods, Rect};
+use tui_lipan::{KeyMods, Rect};
 
 /// Park the pointer at `(x, y)` and let the frames that crossing asks for run.
 fn move_to(backend: &mut TestBackend<AppRoot>, x: u16, y: u16) {

@@ -2,6 +2,7 @@ use super::panes::ImageMedia;
 use super::*;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
+use tui_lipan::GraphicsMediaPolicy;
 
 use crate::layout::shared::SHARED_LAYOUT_VERSION;
 

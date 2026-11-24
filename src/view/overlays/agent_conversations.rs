@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::{SearchEntry, TreeGuides};
 
 use crate::control::{AgentRequestState, AgentRequestSummary};
 use crate::view::agent_requests::{

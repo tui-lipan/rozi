@@ -1,4 +1,7 @@
 use tui_lipan::prelude::*;
+use tui_lipan::{
+    FileTreeChange, FileTreeChangeStatus, FileTreeDirectoryListing, GitChangeState, GitFileStatus,
+};
 
 use crate::AppRoot;
 use crate::config::{SidebarTab, SidebarTabId};
@@ -43,7 +46,7 @@ pub(crate) fn tree_refresh(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
         return Update::none();
     }
     ctx.state.sidebar.git_refresh_token = ctx.state.sidebar.git_refresh_token.wrapping_add(1);
-    Update::with_command(Command::after(
+    Update::full_with_command(ctx.link().command_after(
         TREE_REFRESH_INTERVAL,
         move |link: CommandLink<crate::Msg>| {
             link.send(crate::Msg::SidebarTreeRefresh { epoch });

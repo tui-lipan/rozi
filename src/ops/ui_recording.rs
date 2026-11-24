@@ -24,6 +24,7 @@ use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
 use tui_lipan::PaintedFrame;
+use tui_lipan::TerminalColorPalette;
 use tui_lipan::prelude::*;
 
 use crate::control::{ControlErrorCode, ControlResponse, UiRecordingInfo, UiRecordingStopped};
@@ -75,7 +76,7 @@ pub(crate) fn start_command(
     reply: Sender<ControlResponse>,
 ) -> Update {
     match start(ctx, request, Some(reply.clone()), false) {
-        Ok(command) => Update::with_command(command),
+        Ok(command) => Update::full_with_command(command),
         Err(response) => {
             let _ = reply.send(response);
             Update::none()
@@ -147,7 +148,7 @@ pub(crate) fn toggle(ctx: &mut Context<AppRoot>) -> Update {
         return end(ctx, EndReason::Stopped, Vec::new(), true);
     }
     match start(ctx, StartRequest::default(), None, true) {
-        Ok(command) => Update::with_command(command),
+        Ok(command) => Update::full_with_command(command),
         Err(response) => {
             notify_error(
                 ctx,
@@ -247,11 +248,11 @@ fn start(
         seen: UiRecordingSeen::default(),
         from_action,
     });
-    Ok(poll_after(id, POLL_INTERVAL))
+    Ok(poll_after(ctx.link(), id, POLL_INTERVAL))
 }
 
-fn poll_after(id: u64, delay: Duration) -> Command {
-    Command::after(delay, move |link: CommandLink<Msg>| {
+fn poll_after(link: &tui_lipan::Link<crate::Msg>, id: u64, delay: Duration) -> Command {
+    link.command_after(delay, move |link: CommandLink<Msg>| {
         link.send(Msg::UiRecordingPoll { id });
     })
 }
@@ -269,6 +270,7 @@ pub(crate) fn frame(ctx: &mut Context<AppRoot>, painted: PaintedFrame) -> Update
         seen: seen(&ctx.state),
     };
     let palette = palette(&ctx.state);
+    let link = ctx.link().clone();
     let Some(recording) = ctx.state.ui_recording.as_mut() else {
         return Update::none();
     };
@@ -297,7 +299,7 @@ pub(crate) fn frame(ctx: &mut Context<AppRoot>, painted: PaintedFrame) -> Update
         let wait = recording.last_written.map_or(interval, |last| {
             (last + interval).saturating_duration_since(painted_at)
         });
-        command = Some(arm_flush(recording, wait));
+        command = Some(arm_flush(&link, recording, wait));
     }
     if recorder_closed(recording) {
         return end(ctx, EndReason::Stopped, Vec::new(), true);
@@ -340,12 +342,16 @@ fn commit(
 }
 
 /// A timer that writes the waiting frame after `wait`, replacing any armed before it.
-fn arm_flush(recording: &mut UiRecording, wait: Duration) -> Command {
+fn arm_flush(
+    link: &tui_lipan::Link<crate::Msg>,
+    recording: &mut UiRecording,
+    wait: Duration,
+) -> Command {
     recording.flush_revision = recording.flush_revision.wrapping_add(1);
     let revision = recording.flush_revision;
     recording.armed_flush = Some(revision);
     let id = recording.id;
-    Command::after(wait, move |link: CommandLink<Msg>| {
+    link.command_after(wait, move |link: CommandLink<Msg>| {
         link.send(Msg::UiRecordingFlush { id, revision });
     })
 }
@@ -439,6 +445,7 @@ fn begin(ctx: &mut Context<AppRoot>, painted: PaintedFrame) -> Update {
 /// which is when the terminal was showing it. A frame the writer refused earlier that changed the
 /// meta keeps the moment it was painted, since that is when its events happened.
 pub(crate) fn flush(ctx: &mut Context<AppRoot>, id: u64, revision: u64) -> Update {
+    let link = ctx.link().clone();
     let palette = palette(&ctx.state);
     let Some(recording) = ctx
         .state
@@ -463,7 +470,7 @@ pub(crate) fn flush(ctx: &mut Context<AppRoot>, id: u64, revision: u64) -> Updat
     };
     if commit(recording, &pending, at, palette, |_| Vec::new(), false).is_none() {
         recording.pending = Some(pending);
-        return Update::command_only(arm_flush(recording, interval));
+        return Update::command_only(arm_flush(&link, recording, interval));
     }
     if recorder_closed(recording) {
         return end(ctx, EndReason::Stopped, Vec::new(), true);
@@ -483,7 +490,7 @@ pub(crate) fn poll(ctx: &mut Context<AppRoot>, id: u64) -> Update {
             if requested.elapsed() >= FIRST_FRAME_TIMEOUT {
                 return fail_start(ctx, "the UI painted no frame to record");
             }
-            Update::command_only(poll_after(id, POLL_INTERVAL))
+            Update::command_only(poll_after(ctx.link(), id, POLL_INTERVAL))
         }
         UiRecordingPhase::Running(file) => {
             if file.recorder.closed() {
@@ -493,7 +500,11 @@ pub(crate) fn poll(ctx: &mut Context<AppRoot>, id: u64) -> Update {
             if elapsed >= deadline {
                 return end(ctx, EndReason::Duration, Vec::new(), true);
             }
-            Update::command_only(poll_after(id, POLL_INTERVAL.min(deadline - elapsed)))
+            Update::command_only(poll_after(
+                ctx.link(),
+                id,
+                POLL_INTERVAL.min(deadline - elapsed),
+            ))
         }
     }
 }
@@ -756,6 +767,7 @@ mod tests {
     use crate::control::{ControlCommand, ControlEnvelope, ControlRequest};
     use crate::input::Action;
     use crate::recording::{RecorderOptions, RecordingEnd, Replay, ReplayStep};
+    use tui_lipan::{FloatRect, UpdateLevel};
 
     /// A client with motion off, so nothing paints unless a test makes it, whose mount has
     /// delivered the command link a finished recording reports back through.

@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::{ItemDescription, ListItemGutter, SearchEntry, SearchHighlight};
 
 use std::borrow::Cow;
 
@@ -710,9 +711,9 @@ pub(super) fn wrap_palette(
             .child(body),
         Some(header_right) => {
             let panel: Element = Frame::new()
-                .header_left(title.into_owned())
-                .header_right(header_right.into_owned())
-                .header_style(rozi_chrome(&ctx.state.theme).bold())
+                .title(title.into_owned())
+                .title_right(header_right.into_owned())
+                .title_style(rozi_chrome(&ctx.state.theme).bold())
                 .border_style(overlay_border_style(ctx))
                 .padding(0)
                 .style(Style::new().bg(ctx.state.theme.surface.element))
@@ -772,11 +773,10 @@ pub(super) fn picker_tabs(
         .state
         .config
         .effective_cap_style(ctx.state.config.pane.picker_tab_style)
-        .glyphs()
-        .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
+        .chars();
     crate::view::scrolling_tab_bar(theme, strip)
         .tabs(labels.iter().map(|label| DraggableTab::new(*label)))
-        .active(active)
+        .selected(active)
         .draggable(false)
         .focusable(false)
         .tab_stop(false)
@@ -797,7 +797,7 @@ pub(super) fn picker_tabs(
                 .bold()
         })
         .tab_hover_style(Style::new().transform_bg(crate::view::hover_lift()))
-        .on_change(on_change)
+        .on_select(on_change)
         .into()
 }
 
@@ -816,8 +816,8 @@ pub(super) fn tabbed_picker_panel(
     body: Element,
 ) -> Element {
     Frame::new()
-        .header_left(title)
-        .header_style(rozi_chrome(&ctx.state.theme).bold())
+        .title(title)
+        .title_style(rozi_chrome(&ctx.state.theme).bold())
         .border(true)
         .border_style(overlay_border_style(ctx))
         .style(Style::new().bg(ctx.state.theme.surface.element))

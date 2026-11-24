@@ -286,7 +286,7 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
         || update_check_interval.is_some()
     {
         let services_epoch = ctx.state.services.epoch;
-        Update::with_command(Command::spawn(move |link: CommandLink<Msg>| {
+        Update::full_with_command(ctx.link().command(move |link: CommandLink<Msg>| {
             if start_theme_tick {
                 // Arming the first tick must not hold this worker for 150ms while the pollers
                 // below are still waiting to start.

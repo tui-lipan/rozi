@@ -23,7 +23,7 @@ use rozi::layout::tiling::build_dwindle_tree;
 use rozi::pane::id::PaneId;
 use rozi::state::Pane;
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{FloatRect, Rect};
+use tui_lipan::{FloatRect, Rect};
 
 const VIEWPORT: Rect = Rect {
     x: 0,

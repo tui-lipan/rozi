@@ -199,7 +199,8 @@ pub(crate) fn apply_discovered_sessions(
     );
     sort_session_rows(&mut rows);
     replace_picker_rows(ctx, rows);
-    Update::with_command(session_watch_command(
+    Update::full_with_command(session_watch_command(
+        ctx.link(),
         epoch,
         ctx.state.local_current_session_name().map(str::to_string),
     ))
@@ -235,10 +236,14 @@ pub(crate) fn replace_picker_rows(ctx: &mut Context<AppRoot>, mut rows: Vec<Disc
     }
 }
 
-pub(crate) fn session_watch_command(epoch: u64, current_name: Option<String>) -> Command {
+pub(crate) fn session_watch_command(
+    link: &tui_lipan::Link<crate::Msg>,
+    epoch: u64,
+    current_name: Option<String>,
+) -> Command {
     // Recurring watch: see `profile_session_watch_command` -- the wait belongs on the timer
     // thread, not on a pooled worker held open for the life of the picker.
-    Command::after(
+    link.command_after(
         SESSION_PICKER_REFRESH_INTERVAL,
         move |link: CommandLink<Msg>| {
             // Discovery runs here (off the UI thread); a failed sweep simply skips this tick and lets

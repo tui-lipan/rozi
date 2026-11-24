@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::{DocumentStyles, DocumentTableWidthMode, TableRowSeparators};
 
 /// The rozi mark, sampled from `assets/logo.png`: two pixel rows per text row, drawn with half
 /// blocks. `#` is the mark, `.` the background.

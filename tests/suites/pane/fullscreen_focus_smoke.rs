@@ -9,8 +9,8 @@
 use rozi::input::Action;
 use rozi::state::Pane;
 use rozi::{AppRoot, Msg};
+use tui_lipan::Rect;
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::Rect;
 use tui_lipan::style::geometry::FloatRect;
 
 /// A pane in the state a live one is in: terminal up, open animation finished. `request_pane_focus`

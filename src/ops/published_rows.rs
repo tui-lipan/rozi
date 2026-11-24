@@ -1176,7 +1176,7 @@ mod tests {
             b.workspaces[0].panes.push(crate::state::Pane::new(
                 1,
                 100,
-                tui_lipan::prelude::FloatRect {
+                tui_lipan::FloatRect {
                     x: 0.0,
                     y: 0.0,
                     w: 20.0,
@@ -1245,7 +1245,7 @@ mod tests {
                 crate::state::Pane::new(
                     1,
                     100,
-                    tui_lipan::prelude::FloatRect {
+                    tui_lipan::FloatRect {
                         x: 0.0,
                         y: 0.0,
                         w: 20.0,
@@ -1366,7 +1366,7 @@ mod tests {
                 crate::state::Pane::new(
                     1,
                     100,
-                    tui_lipan::prelude::FloatRect {
+                    tui_lipan::FloatRect {
                         x: 0.0,
                         y: 0.0,
                         w: 20.0,

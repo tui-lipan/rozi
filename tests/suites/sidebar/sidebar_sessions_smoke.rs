@@ -8,7 +8,7 @@ use rozi::session::remote::RemoteTarget;
 use rozi::state::HostProbe;
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
-use tui_lipan::prelude::{KeyMods, Rect};
+use tui_lipan::{KeyMods, Rect};
 
 fn session(name: &str, panes: usize, clients: u32, host: Option<&str>) -> DiscoveredSession {
     DiscoveredSession {

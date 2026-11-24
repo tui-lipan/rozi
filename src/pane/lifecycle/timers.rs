@@ -5,13 +5,14 @@ use crate::Msg;
 use crate::pane::id::PaneId;
 
 pub(crate) fn open_timers_command(
+    link: &tui_lipan::Link<crate::Msg>,
     epoch: u64,
     id: PaneId,
     generation: u64,
     open_delay: Duration,
     activate_delay: Duration,
 ) -> Command {
-    Command::after(open_delay, move |link: CommandLink<Msg>| {
+    link.command_after(open_delay, move |link: CommandLink<Msg>| {
         run_open_timers(epoch, id, generation, open_delay, activate_delay, link);
     })
 }
@@ -42,12 +43,13 @@ fn run_open_timers(
 /// [`crate::update`]; without these timers they would stay invisible. Interactive spawns get their
 /// timers from [`spawn_pane_in_workspace`] instead.
 pub(crate) fn open_timers_batch_command(
+    link: &tui_lipan::Link<crate::Msg>,
     epoch: u64,
     targets: Vec<(PaneId, u64)>,
     open_delay: Duration,
     activate_delay: Duration,
 ) -> Command {
-    Command::after(open_delay, move |link: CommandLink<Msg>| {
+    link.command_after(open_delay, move |link: CommandLink<Msg>| {
         for (id, generation) in &targets {
             link.send(Msg::FinishOpen(epoch, *id, *generation));
         }
@@ -90,7 +92,10 @@ pub fn lifecycle_epoch(state: &crate::state::State, id: PaneId) -> u64 {
 /// Without fresh ones an opening pane stays hidden and unfocusable, and a closing pane is never
 /// pruned. Call this whenever an attachment becomes current again. Scratch and popup panes need
 /// none of this: their timers carry [`LOCAL_PANE_EPOCH`].
-pub(crate) fn rearm_pane_transitions(state: &crate::state::State) -> Update {
+pub(crate) fn rearm_pane_transitions(
+    link: &tui_lipan::Link<crate::Msg>,
+    state: &crate::state::State,
+) -> Update {
     let animations = state.config.animations;
     let frame_rate = state.runtime_frame_rate();
     let epoch = state.runtime_epoch;
@@ -112,7 +117,8 @@ pub(crate) fn rearm_pane_transitions(state: &crate::state::State) -> Update {
             ));
         } else if pane.opening {
             let (open_delay, activation_delay) = open_stages(animations, pane);
-            update = update.merge(Update::with_command(open_timers_command(
+            update = update.merge(Update::full_with_command(open_timers_command(
+                link,
                 epoch,
                 id,
                 generation,
@@ -122,7 +128,7 @@ pub(crate) fn rearm_pane_transitions(state: &crate::state::State) -> Update {
         } else if crate::layout::anim::pane_opening_transition(pane) {
             // Opened but not yet activated: only the second stage is outstanding.
             let (open_delay, activation_delay) = open_stages(animations, pane);
-            update = update.merge(Update::with_command(Command::after(
+            update = update.merge(Update::full_with_command(link.command_after(
                 activation_delay.saturating_sub(open_delay),
                 move |link: CommandLink<Msg>| {
                     link.send(Msg::ActivatePane(epoch, id, generation));
@@ -131,11 +137,9 @@ pub(crate) fn rearm_pane_transitions(state: &crate::state::State) -> Update {
         }
     }
     if !closing.is_empty() {
-        update = update.merge(Update::with_command(super::prune_closed_batch_command(
-            epoch,
-            closing,
-            close_delay,
-        )));
+        update = update.merge(Update::full_with_command(
+            super::prune_closed_batch_command(link, epoch, closing, close_delay),
+        ));
     }
     update
 }

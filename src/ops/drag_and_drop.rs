@@ -5,6 +5,10 @@ use std::sync::Arc;
 
 use tui_lipan::dnd::{Output, ProgramCommand, TEXT_PLAIN, TEXT_PLAIN_UTF8, URI_LIST};
 use tui_lipan::prelude::*;
+use tui_lipan::{
+    ClipboardContent, PasteOrigin, TerminalKeyModes, TerminalPasteEvent, encode_paste,
+    paste_sequences,
+};
 
 use crate::AppRoot;
 use crate::state::{DropPane, HostRegistration, Pane, State};

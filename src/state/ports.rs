@@ -6,7 +6,7 @@ use crate::pane::id::PaneId;
 use crate::session::protocol::SessionInstanceId;
 use crate::session::remote::RemoteTarget;
 use crate::session::remote::forward::{ForwardHandle, ForwardHost, ForwardKey, LocalPortMode};
-use tui_lipan::prelude::TextInput;
+use tui_lipan::TextInput;
 
 /// Lifecycle state of a client-owned SSH port forward.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

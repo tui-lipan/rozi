@@ -80,7 +80,7 @@ pub(crate) fn open_rename_workspace(ctx: &mut Context<AppRoot>) -> Update {
 #[cfg(test)]
 mod tests {
     use crate::state::{Pane, Workspace};
-    use tui_lipan::prelude::*;
+    use tui_lipan::FloatRect;
 
     #[test]
     fn rename_pane_by_id_sets_custom_title() {

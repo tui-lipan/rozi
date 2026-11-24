@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use tui_lipan::prelude::*;
+use tui_lipan::{HostTerminalColors, load_theme_from_toml};
 
 use crate::state::{ThemePreset, ensure_rozi_color};
 

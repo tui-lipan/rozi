@@ -1,4 +1,5 @@
 use std::time::Duration;
+use tui_lipan::FloatRect;
 use tui_lipan::prelude::*;
 
 use crate::layout::anim::{self, GeometryAnimation};
@@ -29,7 +30,8 @@ pub(crate) fn close_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
     let scratch = crate::scratchpad::contains(&ctx.state, id);
     let epoch = super::lifecycle_epoch(&ctx.state, id);
     match close_pane_inner(ctx, id, true) {
-        Some(generation) => Update::with_command(prune_closed_command(
+        Some(generation) => Update::full_with_command(prune_closed_command(
+            ctx.link(),
             epoch,
             id,
             generation,
@@ -78,7 +80,8 @@ pub(crate) fn remove_pane_after_exit(
     // the server stays in `list-panes` with no place in the layout and nothing that can close it,
     // keeping its scrollback for as long as the session runs.
     match close_pane_inner_with_focus(ctx, id, true, true, Some(local)) {
-        Some(generation) => Update::with_command(prune_closed_command(
+        Some(generation) => Update::full_with_command(prune_closed_command(
+            ctx.link(),
             epoch,
             id,
             generation,
@@ -404,19 +407,26 @@ pub(crate) fn prune_closed_pane(
             ctx.state.current_mut().retire_pane(pane, timeout);
             // Wake once more after the correction window: an idle client otherwise keeps the
             // retired screen until another user action reaches post-update expiry.
-            return Update::with_command(prune_closed_command(epoch, id, generation, timeout));
+            return Update::full_with_command(prune_closed_command(
+                ctx.link(),
+                epoch,
+                id,
+                generation,
+                timeout,
+            ));
         }
     }
     Update::full()
 }
 
 pub(crate) fn prune_closed_command(
+    link: &tui_lipan::Link<crate::Msg>,
     epoch: u64,
     id: PaneId,
     generation: u64,
     delay: Duration,
 ) -> Command {
-    Command::after(delay, move |link: CommandLink<Msg>| {
+    link.command_after(delay, move |link: CommandLink<Msg>| {
         link.send(Msg::PruneClosed(epoch, id, generation));
     })
 }
@@ -424,11 +434,12 @@ pub(crate) fn prune_closed_command(
 /// Prune several panes closed in the same batch (e.g. [`crate::ops::exit::kill_workspace`]) after
 /// one shared delay, since an [`Update`] can only carry a single [`Command`].
 pub(crate) fn prune_closed_batch_command(
+    link: &tui_lipan::Link<crate::Msg>,
     epoch: u64,
     targets: Vec<(PaneId, u64)>,
     delay: Duration,
 ) -> Command {
-    Command::after(delay, move |link: CommandLink<Msg>| {
+    link.command_after(delay, move |link: CommandLink<Msg>| {
         for (id, generation) in targets {
             link.send(Msg::PruneClosed(epoch, id, generation));
         }

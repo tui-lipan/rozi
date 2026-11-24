@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::SearchEntry;
 
 use crate::ops::sharing::{search_items, selected_grant};
 use crate::update::sharing::Msg as SharingMsg;

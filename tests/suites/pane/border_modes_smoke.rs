@@ -8,7 +8,7 @@ use rozi::layout::tiling::build_dwindle_tree;
 use rozi::pane::chrome::{PaneBorderMode, PaneTitlebarMode};
 use rozi::pane::id::PaneId;
 use rozi::state::{MoveSession, Pane, PaneBorderStyle, Workspace};
-use tui_lipan::prelude::{CapStyle, FloatRect, Rect};
+use tui_lipan::{CapStyle, FloatRect, Rect};
 use tui_lipan::{CapturedFrame, TestBackend};
 
 fn backend(mode: PaneBorderMode, pane_count: usize) -> TestBackend<AppRoot> {
@@ -840,7 +840,8 @@ fn floating_title_caps_clear_underlying_terminal_attributes() {
             backend.state_mut().current_mut().workspaces[0].focused_pane = Some(11);
             backend.render();
             let frame = backend.capture_frame();
-            let (left, right) = caps.glyphs().expect("capped style");
+            let (left, right) = caps.chars().expect("capped style");
+            let (left, right) = (left.to_string(), right.to_string());
             let mut found = 0;
             for y in 3..9 {
                 for x in 7..33 {

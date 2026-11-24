@@ -6,7 +6,7 @@ use rozi::state::Pane;
 use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseKind};
-use tui_lipan::prelude::{FloatRect, MouseEvent, Rect};
+use tui_lipan::{FloatRect, MouseEvent, Rect};
 
 fn backend() -> TestBackend<AppRoot> {
     rozi::test_support::isolate_user_dirs();
@@ -52,6 +52,11 @@ fn switch(backend: &mut TestBackend<AppRoot>, index: usize) {
         .dispatch(Msg::RunAction(Action::SwitchWorkspace(index)))
         .unwrap();
     backend.render();
+}
+
+/// Settings and session changes reach the app as messages, never as a bare redraw.
+fn refresh(backend: &mut TestBackend<AppRoot>) {
+    backend.dispatch(Msg::RefreshPaintLayers).unwrap();
 }
 
 fn grid(backend: &TestBackend<AppRoot>) -> String {
@@ -116,6 +121,33 @@ fn workspace_slide_reverses_and_skips_intermediate_workspaces() {
         assert!(grid(&backend).contains("FIRST"));
         assert!(!grid(&backend).contains("FIFTH"));
         assert_eq!(backend.state().current().focused_pane, Some(1));
+    });
+}
+
+#[test]
+fn workspace_slide_skips_a_workspace_switched_through_before_a_frame() {
+    rozi::test_support::on_deeper_stack(|| {
+        let mut backend = backend();
+        backend.enqueue(Msg::RunAction(Action::SwitchWorkspace(1)));
+        backend.enqueue(Msg::RunAction(Action::SwitchWorkspace(4)));
+        backend.pump().unwrap();
+        backend.advance(Duration::from_millis(500));
+        let frame = grid(&backend);
+        assert!(!frame.contains("SECOND"), "{frame}");
+        assert!(frame.contains("FIFTH"), "{frame}");
+    });
+}
+
+#[test]
+fn a_switch_undone_before_a_frame_keeps_the_cursor_trail() {
+    rozi::test_support::on_deeper_stack(|| {
+        let mut backend = backend();
+        backend.take_cursor_trail_skip();
+        backend.enqueue(Msg::RunAction(Action::SwitchWorkspace(1)));
+        backend.enqueue(Msg::RunAction(Action::SwitchWorkspace(0)));
+        backend.pump().unwrap();
+        backend.render();
+        assert!(!backend.take_cursor_trail_skip());
     });
 }
 
@@ -192,13 +224,13 @@ fn workspace_slide_handles_empty_pages_zero_duration_and_attachment_changes() {
         assert!(grid(&backend).contains("FIRST"));
         switch(&mut backend, 1);
         backend.state_mut().config.animations.workspace_duration = Duration::ZERO;
-        backend.render();
+        refresh(&mut backend);
         assert!(grid(&backend).contains("SECOND"));
         assert!(!grid(&backend).contains("FIRST"));
         backend.state_mut().config.animations.workspace_duration = Duration::from_secs(2);
         switch(&mut backend, 0);
         backend.state_mut().runtime_epoch += 1;
-        backend.render();
+        refresh(&mut backend);
         assert!(grid(&backend).contains("FIRST"));
         assert!(!grid(&backend).contains("SECOND"));
     });
@@ -212,7 +244,7 @@ fn workspace_slide_keeps_same_target_timing_and_can_animate_after_a_snap() {
         backend.advance(Duration::from_millis(400));
         // Ordinary reads of the same target retain the duration they started with.
         backend.state_mut().config.animations.workspace_duration = Duration::from_secs(20);
-        backend.render();
+        refresh(&mut backend);
         backend.advance(Duration::from_millis(1700));
         let frame = grid(&backend);
         assert!(frame.contains("SECOND"), "{frame}");
@@ -224,7 +256,7 @@ fn workspace_slide_keeps_same_target_timing_and_can_animate_after_a_snap() {
         switch(&mut backend, 0);
         backend.advance(Duration::from_millis(100));
         backend.state_mut().config.animations.workspace = false;
-        backend.render();
+        refresh(&mut backend);
         assert!(!grid(&backend).contains("SECOND"));
         backend.state_mut().config.animations.workspace = true;
         backend.state_mut().config.animations.workspace_duration = Duration::from_secs(2);

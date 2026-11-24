@@ -90,7 +90,7 @@ pub(crate) fn tab_reordered(
         return Update::none();
     }
     sync_and_persist_panels(ctx);
-    Update::layout()
+    Update::render()
 }
 
 pub(crate) fn tab_transferred(

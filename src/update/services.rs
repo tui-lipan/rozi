@@ -184,7 +184,7 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
 
     // 3. Schedule next tick if any running or pending
     if !ctx.state.services.running.is_empty() || !ctx.state.services.pending.is_empty() {
-        Update::command_only(Command::after(
+        Update::command_only(ctx.link().command_after(
             Duration::from_secs(1),
             move |link: CommandLink<Msg>| {
                 link.send(Msg::ServicesTick { epoch });

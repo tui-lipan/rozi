@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use rozi::AppRoot;
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
+use tui_lipan::{KeyCode, KeyEvent, KeyMods, Rect};
 
 /// Long on purpose: the report echoes the extension's directory into several lines, and a deep
 /// directory (a Windows temp path is one) makes them wrap, which is the case worth covering on
@@ -1185,7 +1185,7 @@ fn closing_an_installed_or_catalog_detail_returns_to_the_list_at_once() {
                 backend.dispatch(rozi::Msg::ExtensionsSelect(row)).unwrap();
                 backend.dispatch(rozi::Msg::ExtensionsOpenDetail).unwrap();
                 backend.advance(std::time::Duration::from_millis(500));
-                let key = tui_lipan::prelude::Key::from(modal_key);
+                let key = tui_lipan::Key::from(modal_key);
                 assert!(
                     backend.rect_of_key(&key).is_some(),
                     "{style:?}: detail is mounted"
@@ -1203,7 +1203,7 @@ fn closing_an_installed_or_catalog_detail_returns_to_the_list_at_once() {
                 );
                 assert!(
                     backend
-                        .rect_of_key(&tui_lipan::prelude::Key::from("rozi-extensions-modal"))
+                        .rect_of_key(&tui_lipan::Key::from("rozi-extensions-modal"))
                         .is_some(),
                     "{style:?}: the list is back"
                 );

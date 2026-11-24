@@ -6,7 +6,7 @@ use rozi::AppRoot;
 use rozi::input::Action;
 use rozi::state::{KeybindingEditorStage, ModifierChoice};
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
+use tui_lipan::{KeyCode, KeyEvent, KeyMods, Rect};
 
 fn backend() -> TestBackend<AppRoot> {
     rozi::test_support::isolate_user_dirs();

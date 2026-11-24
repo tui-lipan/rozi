@@ -372,11 +372,13 @@ pub(crate) fn tick(ctx: &mut Context<AppRoot>) -> Update {
             crate::update::sidebar::worktrees::request_list(ctx);
         }
     }
-    let again = Command::after(std::time::Duration::from_secs(1), |link| {
-        link.send(Msg::WorktreeTick)
-    });
+    let again = ctx
+        .link()
+        .command_after(std::time::Duration::from_secs(1), |link| {
+            link.send(Msg::WorktreeTick)
+        });
     if retired {
-        Update::with_command(again)
+        Update::full_with_command(again)
     } else {
         Update::command_only(again)
     }
@@ -816,7 +818,7 @@ pub(crate) fn form_changed(
         form.pending_preview = None;
         let revision = form.preview_revision;
         let epoch = ctx.state.runtime_epoch;
-        return Update::with_command(Command::after(
+        return Update::full_with_command(ctx.link().command_after(
             std::time::Duration::from_millis(250),
             move |link: CommandLink<Msg>| {
                 link.send(Msg::WorktreePreviewTick { epoch, revision });
@@ -1602,7 +1604,7 @@ mod tests {
             use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
             use crate::session::origin::{SessionOrigin, WorktreeOrigin};
             use crate::session::protocol::{ClientMessage, WorktreeRequest};
-            use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods};
+            use tui_lipan::{KeyCode, KeyEvent, KeyMods};
 
             crate::test_support::isolate_user_dirs();
             for action in ["open", "remove", "unlock"] {
@@ -1735,7 +1737,7 @@ mod tests {
             use crate::session::protocol::ClientMessage;
             use crate::session::remote::RemoteTarget;
             use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
-            use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods};
+            use tui_lipan::{KeyCode, KeyEvent, KeyMods};
 
             crate::test_support::isolate_user_dirs();
             for (remote, click) in [(false, false), (true, false), (true, true)] {

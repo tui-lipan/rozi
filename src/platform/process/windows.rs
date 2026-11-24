@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use tui_lipan::prelude::TerminalPty;
+use tui_lipan::TerminalPty;
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_ACCESS_DENIED, ERROR_INSUFFICIENT_BUFFER, ERROR_INVALID_PARAMETER, FILETIME,
     GetLastError, HANDLE, INVALID_HANDLE_VALUE, STILL_ACTIVE,

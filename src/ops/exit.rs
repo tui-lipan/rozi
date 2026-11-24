@@ -377,7 +377,8 @@ pub(crate) fn kill_workspace_with_confirmation(
     }
     crate::ops::focus::request_current_pane_focus(ctx);
 
-    Update::with_command(crate::pane::lifecycle::prune_closed_batch_command(
+    Update::full_with_command(crate::pane::lifecycle::prune_closed_batch_command(
+        ctx.link(),
         ctx.state.runtime_epoch,
         targets,
         crate::layout::anim::retained_pane_timeout(
@@ -561,6 +562,7 @@ mod tests {
     use crate::state::SharedSessionState;
     use std::collections::HashSet;
     use std::time::Duration;
+    use tui_lipan::FloatRect;
     use tui_lipan::TestBackend;
 
     fn confirming_backend() -> TestBackend<AppRoot> {
@@ -941,7 +943,7 @@ mod tests {
     fn killing_a_scrollable_workspace_resolves_focus_once_after_batch_teardown() {
         crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(tui_lipan::prelude::Rect {
+            backend.set_viewport(tui_lipan::Rect {
                 x: 0,
                 y: 0,
                 w: 80,

@@ -2,6 +2,7 @@ use super::*;
 use crate::config::{SidebarTab, SidebarTabId, UserCommandAction};
 use crate::state::{Pane, SidebarCommandOutput, SidebarCommandRow};
 use tui_lipan::TestBackend;
+use tui_lipan::{FileTreeChange, FileTreeChangeStatus, FileTreeDirectoryListing, FloatRect};
 
 fn row(text: &str) -> SidebarCommandRow {
     SidebarCommandRow {

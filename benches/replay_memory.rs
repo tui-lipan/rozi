@@ -11,7 +11,7 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use tui_lipan::prelude::TerminalScreen;
+use tui_lipan::TerminalScreen;
 
 const ROWS: u16 = 64;
 const COLS: u16 = 253;

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tui_lipan::prelude::*;
+use tui_lipan::{ItemDescription, SearchMatchMode};
 
 use crate::AppRoot;
 use crate::config::{
@@ -321,7 +322,7 @@ pub(crate) fn submit_install(ctx: &mut Context<AppRoot>) -> Update {
         label: source.clone(),
         detail: None,
     });
-    Update::with_command(Command::spawn(move |link| {
+    Update::full_with_command(ctx.link().command(move |link| {
         std::thread::spawn(move || {
             let result = crate::extension_installation::install(
                 crate::extension_installation::InstallRequest::Source(source),
@@ -518,7 +519,7 @@ pub(crate) fn submit_catalog_install(ctx: &mut Context<AppRoot>) -> Update {
         label: entry.title.clone(),
         detail: Some(entry.commit[..12].to_string()),
     });
-    Update::with_command(Command::spawn(move |link| {
+    Update::full_with_command(ctx.link().command(move |link| {
         std::thread::spawn(move || {
             let result = crate::extension_installation::install(
                 crate::extension_installation::InstallRequest::Catalog {
@@ -634,7 +635,7 @@ fn start_updates(ctx: &mut Context<AppRoot>, ids: Vec<String>) -> Update {
     if let Some(state) = ctx.state.extensions.as_mut() {
         state.updating = pending;
     }
-    Update::with_command(Command::spawn(move |link| {
+    Update::full_with_command(ctx.link().command(move |link| {
         std::thread::spawn(move || {
             let mut results = Vec::with_capacity(ids.len());
             for id in ids {

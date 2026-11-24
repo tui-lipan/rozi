@@ -657,6 +657,7 @@ fn apply_program_status(
 mod tests {
     use super::*;
     use crate::session::protocol::{AgentIdentity, DetectedAgent, DetectedAgentState};
+    use tui_lipan::FloatRect;
 
     /// A run that answered another agent's request is not a finish to show the user: no Done
     /// mark, sound, or notification. The agent's own run after it is.

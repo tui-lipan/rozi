@@ -6,6 +6,7 @@
 //! rows from a semantic projection, whose producers describe meaning through [`SidebarTone`].
 
 use tui_lipan::prelude::*;
+use tui_lipan::{ListItemRole, TreeHoverEvent};
 
 use super::row::{Priority, Row, Shape, SidebarRow};
 use crate::AppRoot;

@@ -1,5 +1,5 @@
 use crate::pane::id::PaneId;
-use tui_lipan::prelude::TerminalCopyMode;
+use tui_lipan::TerminalCopyMode;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {

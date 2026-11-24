@@ -39,7 +39,7 @@ use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
-use tui_lipan::prelude::CommandLink;
+use tui_lipan::CommandLink;
 use ureq::tls::{RootCerts, TlsConfig};
 
 use crate::Msg;

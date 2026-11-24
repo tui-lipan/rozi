@@ -3,7 +3,7 @@ use rozi::input::Action;
 use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
-use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
+use tui_lipan::{KeyCode, KeyEvent, KeyMods, Rect};
 
 /// How long a tree may take to show what it was asked for before the test calls it a failure.
 ///
@@ -215,7 +215,7 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
         );
 
         // The global switch changes the mounted tree immediately, without a per-tab option.
-        let icon_color = tui_lipan::prelude::Color::hex_u24(0x35b5a9);
+        let icon_color = tui_lipan::Color::hex_u24(0x35b5a9);
         backend.state_mut().theme.file_icons.blue = icon_color;
         backend.state_mut().config.nerd_icons = true;
         backend.render();
@@ -464,7 +464,7 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
         // untracked purple) cannot be mistaken for a status color.
         let markers = |backend: &mut TestBackend<AppRoot>| {
             let frame = backend.capture_frame();
-            let mut seen: Vec<(String, tui_lipan::prelude::Color)> = Vec::new();
+            let mut seen: Vec<(String, tui_lipan::Color)> = Vec::new();
             for y in 0..24u16 {
                 for x in 12..34u16 {
                     let cell = frame.cell(x, y);
@@ -1110,7 +1110,8 @@ fn file_rows_and_sidebar_tabs_follow_the_mouse_pointer_preference() {
             rozi::config::MousePointer::Off,
         ] {
             backend.state_mut().config.cursor.pointer = mode;
-            backend.render();
+            // The app applies pointer feedback after an update, as a settings change arrives.
+            backend.dispatch(rozi::Msg::RefreshPaintLayers).unwrap();
             assert_eq!(backend.pointer_shape_at(x, y), None);
             assert_eq!(backend.pointer_shape_at(tab_x, tab_y), None);
         }

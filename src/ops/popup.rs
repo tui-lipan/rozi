@@ -1,4 +1,5 @@
 use tui_lipan::prelude::*;
+use tui_lipan::{FloatRect, TerminalColorPalette};
 
 use crate::AppRoot;
 use crate::layout::anim::GeometryAnimation;
@@ -103,7 +104,8 @@ pub(crate) fn open(
             palette,
         },
     );
-    Ok(Update::with_command(open_timers_command(
+    Ok(Update::full_with_command(open_timers_command(
+        ctx.link(),
         crate::pane::lifecycle::LOCAL_PANE_EPOCH,
         POPUP_PANE_ID,
         generation,
@@ -133,7 +135,8 @@ pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state
         .begin_pane_event(crate::layout::anim::GeometryAnimation::Close);
     restore_focus(ctx);
-    Update::with_command(crate::pane::lifecycle::prune_closed_command(
+    Update::full_with_command(crate::pane::lifecycle::prune_closed_command(
+        ctx.link(),
         crate::pane::lifecycle::LOCAL_PANE_EPOCH,
         POPUP_PANE_ID,
         generation,

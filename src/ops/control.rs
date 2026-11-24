@@ -1,4 +1,5 @@
 use tui_lipan::prelude::*;
+use tui_lipan::{TerminalColorPalette, TerminalKeyModes};
 
 use crate::AppRoot;
 use crate::actions::execute_action;
@@ -2597,6 +2598,7 @@ mod tests {
     use crate::session::protocol::ClientMessage;
     use crate::state::{Pane, State};
     use std::sync::mpsc;
+    use tui_lipan::FloatRect;
     use tui_lipan::TestBackend;
 
     fn capture_ui_request(render: CaptureRender) -> (crate::Msg, mpsc::Receiver<ControlResponse>) {
@@ -4016,7 +4018,7 @@ mod tests {
     /// outbound stream.
     fn shared_controller() -> (TestBackend<crate::AppRoot>, mpsc::Receiver<ClientOutbound>) {
         let mut backend = TestBackend::new(crate::AppRoot::default());
-        backend.set_viewport(tui_lipan::prelude::Rect {
+        backend.set_viewport(tui_lipan::Rect {
             x: 0,
             y: 0,
             w: 100,

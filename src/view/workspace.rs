@@ -1,3 +1,4 @@
+use tui_lipan::FloatRect;
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
@@ -397,7 +398,7 @@ pub(crate) fn render_workspace_panes(
                 .state
                 .config
                 .effective_cap_style(ctx.state.config.pane.title_style)
-                .glyphs()
+                .chars()
                 .is_some()
         {
             seam_neighbor_title_bgs(ctx, &placements, pane.id, base_rect, focused_pane)
@@ -1364,6 +1365,7 @@ mod divider_tests {
 
 #[cfg(test)]
 mod pinned_layer_tests {
+    use tui_lipan::FloatRect;
     use tui_lipan::TestBackend;
     use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
     use tui_lipan::prelude::*;

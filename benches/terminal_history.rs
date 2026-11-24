@@ -4,7 +4,7 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 use std::ops::ControlFlow;
-use tui_lipan::prelude::TerminalScreen;
+use tui_lipan::TerminalScreen;
 use tui_lipan::utils::{GridPos, SelectionEnd};
 
 const HISTORY: usize = 5_000;

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use sha2::{Digest, Sha256};
-use tui_lipan::prelude::*;
+use tui_lipan::TerminalColorPalette;
 use tui_lipan::{CapturedFrame, CapturedImage};
 
 use super::format::{

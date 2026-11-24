@@ -13,7 +13,7 @@ use std::ffi::CStr;
 use std::os::raw::c_void;
 use std::path::PathBuf;
 
-use tui_lipan::prelude::TerminalPty;
+use tui_lipan::TerminalPty;
 
 use super::{ForegroundJob, ForegroundLaunch, ForegroundProcess, ProcessInspector};
 

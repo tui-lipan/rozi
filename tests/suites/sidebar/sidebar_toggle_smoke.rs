@@ -3,7 +3,7 @@ use rozi::config::{SidebarPosition, SidebarTab, SidebarTabId};
 use rozi::state::SidebarPanelState;
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
-use tui_lipan::prelude::{KeyMods, Rect};
+use tui_lipan::{KeyMods, Rect};
 
 fn mouse(x: u16, y: u16, kind: MouseKind) -> MouseEvent {
     MouseEvent {
@@ -528,7 +528,7 @@ fn docking_and_undocking_a_sidebar_keeps_the_content_s_nodes() {
             let mut pane = rozi::state::Pane::new(
                 1,
                 5_000,
-                tui_lipan::prelude::FloatRect {
+                tui_lipan::FloatRect {
                     x: 0.0,
                     y: 0.0,
                     w: 100.0,

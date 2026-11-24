@@ -48,7 +48,7 @@ impl SessionServer {
         let modes = self.panes[&id].screen().key_modes();
         // Enter stays outside the paste, so bulk-input detection cannot read it as part of the
         // prompt, and is encoded for the child's keyboard protocol.
-        let paste = tui_lipan::prelude::encode_paste(prompt, modes);
+        let paste = tui_lipan::encode_paste(prompt, modes);
         Ok(PromptInput { paste, enter })
     }
 

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tui_lipan::prelude::FloatRect;
+use tui_lipan::FloatRect;
 
 use crate::layout::model::WORKSPACE_COUNT;
 use crate::layout::tiling::DwindleTree;
@@ -150,7 +150,7 @@ pub fn profile_from_state(state: &State) -> Profile {
 
 pub fn restore_state_from_profile(
     config: crate::config::Config,
-    theme: tui_lipan::prelude::Theme,
+    theme: tui_lipan::Theme,
     profile: Profile,
 ) -> State {
     // A profile only ever seeds the *attachment* (the window-manager layout); everything else on
@@ -852,7 +852,7 @@ mod tests {
     use crate::config::Config;
     use crate::layout::model::{LayoutKind, SplitAxis};
     use crate::state::{Pane, State};
-    use tui_lipan::prelude::Theme;
+    use tui_lipan::Theme;
 
     /// `docs/profiles.md` points readers at this file as the profile format, so a schema change
     /// that leaves it behind hands them a broken starting point.
@@ -876,11 +876,10 @@ mod tests {
     fn client_scratchpad_is_excluded_from_profiles() {
         let mut state = State::new(Config::default(), Theme::default());
         let scratch_id = 1 << 31;
-        state.scratch.panes.push(Pane::new(
-            scratch_id,
-            100,
-            tui_lipan::prelude::FloatRect::default(),
-        ));
+        state
+            .scratch
+            .panes
+            .push(Pane::new(scratch_id, 100, tui_lipan::FloatRect::default()));
         crate::layout::tiling::append_tiled_window(&mut state.scratch, scratch_id);
 
         let profile = profile_from_state(&state);

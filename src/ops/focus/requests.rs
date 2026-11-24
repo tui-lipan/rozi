@@ -185,6 +185,7 @@ pub(crate) fn request_pick_prompt_focus(ctx: &mut Context<AppRoot>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tui_lipan::FloatRect;
 
     #[test]
     fn returning_from_a_palette_focuses_the_displayed_namespace_when_ids_collide() {

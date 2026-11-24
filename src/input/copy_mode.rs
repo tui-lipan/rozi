@@ -1,4 +1,8 @@
 use tui_lipan::prelude::*;
+use tui_lipan::{
+    CopyModeAction, CopyModeGrid, CopyModeViewport, SelectionEnd, SemanticMarkKind,
+    TerminalCopyMode, TerminalSelection, to_viewport,
+};
 
 use crate::AppRoot;
 use crate::ops::focus::request_current_pane_focus;
@@ -81,7 +85,7 @@ pub(crate) fn exit(ctx: &mut Context<AppRoot>, copy: bool) -> Update {
     ctx.state.mode = Mode::Normal;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
-    Update::with_command(feedback)
+    Update::full_with_command(feedback)
 }
 
 /// The text copy mode puts on the clipboard for `selection`, as any terminal copy does: without
@@ -123,9 +127,10 @@ pub(crate) fn flash_copy_feedback(
     let attachment = ctx.state.runtime_epoch;
     ctx.state.copy_feedback_target = Some((attachment, target));
     let duration = crate::app::clipboard_copy_feedback_duration(&ctx.state.config);
-    Command::after(duration, move |link: CommandLink<crate::Msg>| {
-        link.send(crate::Msg::CopyFeedbackExpired(attachment, target, epoch));
-    })
+    ctx.link()
+        .command_after(duration, move |link: CommandLink<crate::Msg>| {
+            link.send(crate::Msg::CopyFeedbackExpired(attachment, target, epoch));
+        })
 }
 
 pub(crate) fn expire_copy_feedback(
@@ -325,6 +330,7 @@ pub(crate) fn apply_copy_search_match(
 mod tests {
     use super::*;
     use tui_lipan::TestBackend;
+    use tui_lipan::{FloatRect, TerminalPos, absolute_line};
 
     #[test]
     fn copy_text_drops_blank_lines_at_the_selection_edges() {

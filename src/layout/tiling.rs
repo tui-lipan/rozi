@@ -1,4 +1,4 @@
-use tui_lipan::prelude::FloatRect;
+use tui_lipan::FloatRect;
 
 use crate::layout::model::{
     DEFAULT_RATIO, DEFAULT_SCROLLABLE_WIDTH, EVEN_SPLIT_RATIO, MAX_SPLIT_RATIO, MIN_SPLIT_RATIO,

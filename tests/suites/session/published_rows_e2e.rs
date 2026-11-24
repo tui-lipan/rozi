@@ -8,7 +8,7 @@ use rozi::session::protocol::{
     ClientMessage, Frame, PaneRuntimeState, PublishedRow, PublisherKind, ServerMessage, WirePalette,
 };
 use rozi::session::server::ServerSettings;
-use tui_lipan::prelude::TerminalColorPalette;
+use tui_lipan::TerminalColorPalette;
 
 use crate::common::{attach_client, read_until, spawn_listener};
 

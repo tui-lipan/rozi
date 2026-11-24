@@ -444,15 +444,15 @@ pub struct SidebarState {
     /// Successful local Git snapshots shared by keyed Files/Git tree mounts. The framework keeps
     /// this bounded and revalidates every mount; retaining the handle here prevents indicators from
     /// disappearing while a remounted tree's background scan runs.
-    pub tree_git_status_cache: tui_lipan::prelude::FileTreeGitStatusCache,
+    pub tree_git_status_cache: tui_lipan::FileTreeGitStatusCache,
     /// Directory listings served by the session server, for the file tree's provided entry source
     /// under `--remote`. A directory absent here is pending: the widget shows a loading row and
     /// emits a request, which is why this is only ever appended to, never cleared per frame.
-    pub tree_listings: Vec<tui_lipan::prelude::FileTreeDirectoryListing>,
+    pub tree_listings: Vec<tui_lipan::FileTreeDirectoryListing>,
     /// Paths with an in-flight `ListDirectory`, so an expand/collapse cycle does not re-ask.
     pub tree_pending: std::collections::HashSet<String>,
     /// Server-side change scan backing the `Changes` tab under `--remote`.
-    pub tree_changes: Vec<tui_lipan::prelude::FileTreeChange>,
+    pub tree_changes: Vec<tui_lipan::FileTreeChange>,
     /// Root of the current [`Self::tree_changes`] scan, so a root switch refetches.
     pub tree_changes_root: Option<String>,
     /// Root most recently requested from the server. A completion for any other root is stale.
@@ -861,7 +861,7 @@ mod docking_tests {
         SidebarPosition::{Left, Right},
         SidebarTab,
     };
-    use tui_lipan::prelude::{Rect, Theme};
+    use tui_lipan::{Rect, Theme};
 
     #[test]
     fn resolving_compacted_panels_preserves_preferences_and_filters_hidden_and_absent_tabs() {

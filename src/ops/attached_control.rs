@@ -459,6 +459,7 @@ mod tests {
     use crate::session::protocol::{ClientMessage, SessionInstanceId};
 
     use super::*;
+    use tui_lipan::FloatRect;
 
     fn start(follow: bool) -> ControlCommand {
         ControlCommand::RecordStart {

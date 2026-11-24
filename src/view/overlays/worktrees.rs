@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::{ItemDescription, ListItemGutter, PointerShape, SearchEntry, SearchHighlight};
 
 use crate::state::{PendingWorktreeRemoveKind, WorktreeFormField, WorktreeFormState};
 

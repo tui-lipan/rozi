@@ -11,6 +11,7 @@ mod worktrees;
 pub(crate) use row::SidebarRow;
 
 use tui_lipan::prelude::*;
+use tui_lipan::{DragReorderMode, FloatRect, PointerShape, SplitterPaneLimits};
 
 use crate::config::SidebarTab;
 use crate::state::State;
@@ -236,7 +237,7 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
         .chars();
     let tab_bar = super::scrolling_tab_bar(theme, strip)
         .tabs(tabs.iter().map(|tab| DraggableTab::new(tab.label())))
-        .active(active)
+        .selected(active)
         .bar_id(bar_id)
         .drag_group("rozi-sidebar-tabs")
         .drop_area(panel_identity(&ctx.state, panel))
@@ -264,7 +265,7 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
                 .bold()
         })
         .tab_hover_style(hover_style)
-        .on_change(crate::view::sidebar::callback(
+        .on_select(crate::view::sidebar::callback(
             ctx,
             move |event: TabsEvent| Msg::SidebarTabSelected {
                 panel,
@@ -623,7 +624,7 @@ mod tests {
     fn workspace_labels_keep_the_number_visible_and_ignore_blank_names() {
         let mut state = crate::state::State::new(
             crate::config::Config::default(),
-            tui_lipan::prelude::Theme::default(),
+            tui_lipan::Theme::default(),
         );
         assert_eq!(workspace_badge(&state, 1), "2");
         assert_eq!(workspace_heading(&state, 1), "Workspace 2");

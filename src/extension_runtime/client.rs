@@ -15,7 +15,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tui_lipan::prelude::CommandLink;
+use tui_lipan::CommandLink;
 
 use super::bundle::Bundle;
 use super::protocol::{self, Frame, Hello, Message, read_frame};

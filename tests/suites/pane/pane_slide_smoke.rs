@@ -19,7 +19,7 @@ use rozi::state::Pane;
 use tui_lipan::TestBackend;
 use tui_lipan::animation::Easing;
 use tui_lipan::core::event::{MouseButton, MouseKind};
-use tui_lipan::prelude::{FloatRect, MouseEvent, Rect};
+use tui_lipan::{FloatRect, MouseEvent, Rect};
 
 const WIDTH: u16 = 40;
 const HEIGHT: u16 = 10;

@@ -114,7 +114,8 @@ pub(crate) fn sync_if_needed(ctx: &mut Context<AppRoot>) {
     sync(ctx);
 }
 
-pub(crate) fn sync(ctx: &Context<AppRoot>) {
+pub(crate) fn sync(ctx: &mut Context<AppRoot>) {
+    let mut entries = Vec::new();
     let state = &ctx.state;
     let config = &state.config;
     let active = commands_active(state);
@@ -129,7 +130,7 @@ pub(crate) fn sync(ctx: &Context<AppRoot>) {
         let action = command.action;
         let enabled = command_available(action, state) && active;
         let link = ctx.link().clone();
-        ctx.register_command(
+        entries.push(
             CommandEntry::builder(id)
                 .label(label)
                 .category(command.category)
@@ -141,11 +142,15 @@ pub(crate) fn sync(ctx: &Context<AppRoot>) {
         );
     }
 
-    register_forward_prefix_command(ctx, config, active);
-    register_workspace_commands(ctx, config, active);
-    register_named_commands(ctx, config, active);
-    register_user_commands(ctx, config, active);
-    register_session_actions(ctx, active);
+    push_forward_prefix_command(ctx, &mut entries, config, active);
+    push_workspace_commands(ctx, &mut entries, config, active);
+    push_named_commands(ctx, &mut entries, config, active);
+    push_user_commands(ctx, &mut entries, config, active);
+    push_session_actions(ctx, &mut entries, active);
+    // Registration needs the context mutably, so it follows the reads that build the entries.
+    for entry in entries {
+        ctx.register_command(entry);
+    }
 }
 
 /// The session's deployed actions this client may run: none if it may only watch.
@@ -162,7 +167,7 @@ pub(crate) fn offered_session_actions(
     attachment.session_actions.clone()
 }
 
-fn register_session_actions(ctx: &Context<AppRoot>, active: bool) {
+fn push_session_actions(ctx: &Context<AppRoot>, entries: &mut Vec<CommandEntry>, active: bool) {
     const PREFIX: &str = "session-action.";
     let actions = offered_session_actions(ctx.state.current());
     let registry = ctx.command_registry();
@@ -179,7 +184,7 @@ fn register_session_actions(ctx: &Context<AppRoot>, active: bool) {
     }
     for action in actions {
         let link = ctx.link().clone();
-        ctx.register_command(
+        entries.push(
             CommandEntry::builder(format!("{PREFIX}{}", action.id))
                 .label(action.title)
                 .category("Session")
@@ -192,12 +197,17 @@ fn register_session_actions(ctx: &Context<AppRoot>, active: bool) {
     }
 }
 
-fn register_forward_prefix_command(ctx: &Context<AppRoot>, config: &Config, active: bool) {
+fn push_forward_prefix_command(
+    ctx: &Context<AppRoot>,
+    entries: &mut Vec<CommandEntry>,
+    config: &Config,
+    active: bool,
+) {
     let (shortcuts, prefix_key) = prefix_forward_binding(config)
         .map(|(binding, key)| (KeyBindings::from_bindings([binding]), Some(key)))
         .unwrap_or_else(|| (KeyBindings::from_bindings([]), None));
     let link = ctx.link().clone();
-    ctx.register_command(
+    entries.push(
         CommandEntry::builder(FORWARD_PREFIX_COMMAND_ID)
             .shortcuts(shortcuts)
             .enabled(active)
@@ -216,27 +226,35 @@ fn prefix_forward_binding(config: &Config) -> Option<(KeyBinding, KeyEvent)> {
     (events.len() == 1).then(|| (binding, events.remove(0)))
 }
 
-fn register_workspace_commands(ctx: &Context<AppRoot>, config: &Config, active: bool) {
+fn push_workspace_commands(
+    ctx: &Context<AppRoot>,
+    entries: &mut Vec<CommandEntry>,
+    config: &Config,
+    active: bool,
+) {
     for index in 0..9 {
         let digit = WORKSPACE_DIGITS[index];
         let symbol = WORKSPACE_SHIFT_SYMBOLS[index];
 
-        register_workspace_command(
+        push_workspace_command(
             ctx,
+            entries,
             &format!("workspace.switch.{}", index + 1),
             default_shortcuts_for(config, &[digit]),
             active,
             Action::SwitchWorkspace(index),
         );
-        register_workspace_command(
+        push_workspace_command(
             ctx,
+            entries,
             &format!("workspace.move.{}", index + 1),
             default_shortcuts_for(config, &[symbol.to_string(), format!("shift-{digit}")]),
             active,
             Action::MoveToWorkspace(index),
         );
-        register_workspace_command(
+        push_workspace_command(
             ctx,
+            entries,
             &format!("workspace.relocate.{}", index + 1),
             default_shortcuts_for(
                 config,
@@ -248,15 +266,16 @@ fn register_workspace_commands(ctx: &Context<AppRoot>, config: &Config, active: 
     }
 }
 
-fn register_workspace_command(
+fn push_workspace_command(
     ctx: &Context<AppRoot>,
+    entries: &mut Vec<CommandEntry>,
     id: &str,
     shortcuts: Vec<KeyBinding>,
     active: bool,
     action: Action,
 ) {
     let link = ctx.link().clone();
-    ctx.register_command(
+    entries.push(
         CommandEntry::builder(id.to_string())
             .category("Workspaces")
             .shortcuts(KeyBindings::from_bindings(shortcuts))
@@ -266,11 +285,16 @@ fn register_workspace_command(
     );
 }
 
-fn register_user_commands(ctx: &Context<AppRoot>, config: &Config, active: bool) {
+fn push_user_commands(
+    ctx: &Context<AppRoot>,
+    entries: &mut Vec<CommandEntry>,
+    config: &Config,
+    active: bool,
+) {
     for (index, command) in config.user_commands.iter().enumerate() {
         let id = format!("user.{index}");
         let link = ctx.link().clone();
-        ctx.register_command(
+        entries.push(
             CommandEntry::builder(id)
                 .label(command.label())
                 .category("Custom")
@@ -302,7 +326,12 @@ fn register_user_commands(ctx: &Context<AppRoot>, config: &Config, active: bool)
     }
 }
 
-fn register_named_commands(ctx: &Context<AppRoot>, config: &Config, active: bool) {
+fn push_named_commands(
+    ctx: &Context<AppRoot>,
+    entries: &mut Vec<CommandEntry>,
+    config: &Config,
+    active: bool,
+) {
     for (index, command) in config.commands.iter().enumerate() {
         let registry_id = format!("command.{}", command.id);
         // An extension's suggested chord is a default, so it behaves like one: `[keys]` still wins,
@@ -324,7 +353,7 @@ fn register_named_commands(ctx: &Context<AppRoot>, config: &Config, active: bool
             (!hint.is_empty()).then(|| Arc::<str>::from(hint))
         };
         let link = ctx.link().clone();
-        ctx.register_command(
+        entries.push(
             CommandEntry::builder(registry_id)
                 .label(command.label())
                 .category(command.category.clone())
@@ -1751,7 +1780,7 @@ mod tests {
         assert!(command_available(Action::PromoteToMaster, &state));
         assert!(!palette_visible(Action::PromoteToMaster, &state));
 
-        let rect = tui_lipan::prelude::FloatRect {
+        let rect = tui_lipan::FloatRect {
             x: 0.0,
             y: 0.0,
             w: 80.0,
@@ -1793,7 +1822,7 @@ mod tests {
             .reported_status = blocked();
         assert!(!palette_visible(Action::FocusNextBlockedPane, &state));
 
-        let rect = tui_lipan::prelude::FloatRect {
+        let rect = tui_lipan::FloatRect {
             x: 0.0,
             y: 0.0,
             w: 80.0,

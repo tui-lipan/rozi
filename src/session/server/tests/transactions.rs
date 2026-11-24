@@ -1,5 +1,6 @@
 //! Exercise the protocol boundary and real PTY spawn, rather than mocking transaction steps.
 use super::*;
+use tui_lipan::{FloatRect, TerminalColorPalette};
 
 fn spawn(server: &SessionServer, id: PaneId) -> ClientMessage {
     let mut message = colliding_spawn(id, false, 1, "cat");

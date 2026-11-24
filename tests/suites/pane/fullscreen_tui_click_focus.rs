@@ -10,7 +10,7 @@ use rozi::pane::id::PaneId;
 use rozi::state::Pane;
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseKind};
-use tui_lipan::prelude::{FloatRect, KeyMods, ManagedTerminalStatus, MouseEvent, Rect};
+use tui_lipan::{FloatRect, KeyMods, ManagedTerminalStatus, MouseEvent, Rect};
 
 const VIEWPORT: Rect = Rect {
     x: 0,
@@ -97,7 +97,7 @@ fn clicking_a_mouse_tracking_pane_focuses_it_with_hover_focus_disabled() {
                 .snapshot()
                 .mouse_mode
                 .mode,
-            tui_lipan::prelude::MouseMode::None,
+            tui_lipan::MouseMode::None,
             "right pane must actually be tracking the mouse, or this tests nothing"
         );
 

@@ -8,13 +8,13 @@ use rozi::state::{ScrollbackSearchScan, ScrollbackSearchState, State};
 use std::cell::RefCell;
 use std::hint::black_box;
 use std::sync::Arc;
-use tui_lipan::prelude::Theme;
+use tui_lipan::Theme;
 
 struct FullSliceFixture {
     state: RefCell<State>,
     epoch: u64,
     seed_matches: Vec<rozi::state::ScrollbackMatch>,
-    seed_items: Arc<[tui_lipan::prelude::SearchItem<usize>]>,
+    seed_items: Arc<[tui_lipan::SearchItem<usize>]>,
     seed_scan: ScrollbackSearchScan,
 }
 

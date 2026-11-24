@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::time::Duration;
 
+use tui_lipan::FocusChanged;
 use tui_lipan::prelude::*;
 
 use crate::Msg;
@@ -333,7 +334,7 @@ impl Component for AppRoot {
         state
     }
 
-    fn init(&mut self, ctx: &mut Context<Self>) -> Option<Command> {
+    fn init(&mut self, ctx: &mut Context<Self>) -> Update {
         let resolved =
             config::resolve_theme(&ctx.state.config.theme.name, ctx.host_terminal_colors());
         self.startup_messages.extend(resolved.warnings);
@@ -341,6 +342,7 @@ impl Component for AppRoot {
         ops::theme::install_theme_watcher(ctx, resolved.watch_path.as_deref());
 
         ctx.set_scroll_wheel_multiplier(ctx.state.config.input.scroll_multiplier);
+        ctx.set_pointer_mode(ctx.state.config.cursor.pointer.runtime());
         sync_cursor_trail(ctx);
         ctx.state.terminal_presentation_subscription =
             Some(ctx.observe_terminal_presentations(ctx.link().callback(Msg::TerminalPresented)));
@@ -383,7 +385,7 @@ impl Component for AppRoot {
             theme_tick: ctx.state.theme_watcher.is_some(),
             workbar_tick: ctx.state.config.workbar.has_clock(),
         };
-        Some(Command::spawn(move |link| tasks.run(link)))
+        Update::command_only(ctx.link().command(move |link| tasks.run(link)))
     }
 
     fn update(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> Update {
@@ -393,9 +395,9 @@ impl Component for AppRoot {
     fn on_key(&mut self, key: KeyEvent, ctx: &mut Context<Self>) -> KeyUpdate {
         let (handled, mut update) = routing::handle_key_routing(ctx, key, None);
         if ops::theme::apply_terminal_palette_to_state(&mut ctx.state) {
-            let command = update.command.take();
-            update = Update::with_command(command);
+            update = update.merge(Update::full());
         }
+        crate::view::animation::sync_workspace_slide(ctx);
         commands::sync_if_needed(ctx);
         crate::update::sync_modifier_key_reporting(ctx);
         crate::update::host_title::sync(ctx);
@@ -428,6 +430,11 @@ impl Component for AppRoot {
         }
     }
 
+    fn on_viewport_changed(&mut self, _viewport: Rect, ctx: &mut Context<Self>) -> Update {
+        crate::view::animation::sync_workspace_slide(ctx);
+        Update::none()
+    }
+
     fn on_window_focus_changed(&mut self, focused: bool, ctx: &mut Context<Self>) -> Update {
         ops::focus::window_focus_changed(ctx, focused)
     }
@@ -450,24 +457,24 @@ impl Component for AppRoot {
         update
     }
 
-    fn on_focus_changed(&self, change: &FocusChanged) -> Option<Self::Message> {
-        framework_focus_message(change)
+    fn on_focus_changed(&mut self, change: &FocusChanged, ctx: &mut Context<Self>) -> Update {
+        if let Some(msg) = framework_focus_message(change) {
+            ctx.link().send(msg);
+        }
+        Update::none()
     }
 
     fn view(&self, ctx: &Context<Self>) -> Element {
-        ctx.set_pointer_mode(ctx.state.config.cursor.pointer.runtime());
-        if ctx.devtools_visible() {
-            ctx.set_devtools_metrics(|| ctx.state.current().runtime_metrics().devtools_rows());
-            if !self.devtools_metrics_ticking.replace(true) {
-                ctx.link().send(Msg::DevtoolsMetricsTick);
-            }
+        // The first tick publishes the App tab's rows, then republishes them on a timer.
+        if ctx.devtools_visible() && !self.devtools_metrics_ticking.replace(true) {
+            ctx.link().send(Msg::DevtoolsMetricsTick);
         }
         view::render(ctx)
     }
 }
 
-pub(crate) fn schedule_theme_tick() -> Command {
-    Command::after(Duration::from_millis(150), move |link: CommandLink<Msg>| {
+pub(crate) fn schedule_theme_tick(link: &tui_lipan::Link<crate::Msg>) -> Command {
+    link.command_after(Duration::from_millis(150), move |link: CommandLink<Msg>| {
         link.send(Msg::ThemeTick);
     })
 }
@@ -475,18 +482,20 @@ pub(crate) fn schedule_theme_tick() -> Command {
 /// Low-frequency repaint so a configured clock segment advances. Only scheduled while a clock
 /// segment is present, so an idle app with the default workbar never wakes for this.
 pub(crate) fn schedule_workbar_tick(ctx: &Context<AppRoot>) -> Command {
-    Command::after(until_next_second(ctx), move |link: CommandLink<Msg>| {
-        link.send(Msg::WorkbarTick);
-    })
+    ctx.link()
+        .command_after(until_next_second(ctx), move |link: CommandLink<Msg>| {
+            link.send(Msg::WorkbarTick);
+        })
 }
 
 /// Low-frequency repaint so the Agents sidebar's elapsed-time column advances. Only scheduled
 /// while that column is actually on screen, so a hidden sidebar or a screen of idle agents never
 /// wakes the app for this.
 pub(crate) fn schedule_agent_tick(ctx: &Context<AppRoot>) -> Command {
-    Command::after(until_next_second(ctx), move |link: CommandLink<Msg>| {
-        link.send(Msg::AgentTick);
-    })
+    ctx.link()
+        .command_after(until_next_second(ctx), move |link: CommandLink<Msg>| {
+            link.send(Msg::AgentTick);
+        })
 }
 
 /// How long past the boundary a once-a-second tick lands, so a timer that fires a hair early still
@@ -550,14 +559,21 @@ fn delay_to_next_second(subsec_nanos: u32) -> Duration {
         + SECOND_TICK_MARGIN
 }
 
-pub(crate) fn check_for_update_and_reschedule(interval: Duration, count_usage: bool) -> Command {
-    Command::spawn(move |link: CommandLink<Msg>| {
+pub(crate) fn check_for_update_and_reschedule(
+    link: &tui_lipan::Link<crate::Msg>,
+    interval: Duration,
+    count_usage: bool,
+) -> Command {
+    link.command(move |link: CommandLink<Msg>| {
         startup::check_for_update(link, interval, count_usage)
     })
 }
 
-pub(crate) fn schedule_alert_pulse_tick(half_period: Duration) -> Command {
-    Command::after(half_period, move |link: CommandLink<Msg>| {
+pub(crate) fn schedule_alert_pulse_tick(
+    link: &tui_lipan::Link<crate::Msg>,
+    half_period: Duration,
+) -> Command {
+    link.command_after(half_period, move |link: CommandLink<Msg>| {
         link.send(Msg::AlertPulseTick);
     })
 }
@@ -566,6 +582,7 @@ pub(crate) fn schedule_alert_pulse_tick(half_period: Duration) -> Command {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use tui_lipan::CapStyle;
     use tui_lipan::{TestBackend, UiSnapshotOptions, UiWidgetKind};
 
     fn reconnect_root(enabled: bool) -> AppRoot {

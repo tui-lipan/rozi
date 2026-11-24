@@ -96,7 +96,7 @@ fn scrollback_search_fixture_produces_sparse_dense_and_empty_workloads() {
 #[test]
 fn resurrection_snapshot_fixture_fills_requested_history() {
     for history_rows in bench_support::SNAPSHOT_HISTORY_ROWS {
-        let mut screen = tui_lipan::prelude::TerminalScreen::new(
+        let mut screen = tui_lipan::TerminalScreen::new(
             bench_support::SNAPSHOT_ROWS,
             bench_support::SNAPSHOT_COLS,
             history_rows,

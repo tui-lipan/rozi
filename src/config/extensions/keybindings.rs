@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use tui_lipan::prelude::KeyBinding;
+use tui_lipan::KeyBinding;
 
 use crate::config::Config;
 

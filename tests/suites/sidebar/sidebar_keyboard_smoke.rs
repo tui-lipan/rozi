@@ -15,8 +15,8 @@ use rozi::state::Pane;
 use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
-use tui_lipan::prelude::{Color, KeyCode, KeyEvent, KeyMods, Rect};
 use tui_lipan::style::geometry::FloatRect;
+use tui_lipan::{Color, KeyCode, KeyEvent, KeyMods, Rect};
 
 /// A pane in the state a live one is in: its terminal is up and the open animation has finished.
 /// Both matter — `request_pane_focus` silently no-ops on an `opening` or inactive pane, so a pane

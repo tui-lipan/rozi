@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use tui_lipan::TerminalLinkKind;
 use tui_lipan::prelude::*;
 use tui_lipan::utils::hints::PathPosition;
 

@@ -155,11 +155,12 @@ mod tests {
         CommandDecoder, DataTarget, DragPosition, DropOperation, DropOperations, EventDecoder,
         OscScanner, ProgramCommand, TaggedEvent, TerminalEvent,
     };
-    use tui_lipan::prelude::encode_paste;
+    use tui_lipan::encode_paste;
 
     use super::*;
     use crate::session::client::{ClientOutbound, SessionClient};
     use crate::session::protocol::{ClientMessage, PaneDragAndDrop, PaneDropRegistration};
+    use tui_lipan::FloatRect;
 
     struct Harness {
         backend: TestBackend<AppRoot>,

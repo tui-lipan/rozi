@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use tui_lipan::prelude::{GitChangeState, GitFileStatus};
+use tui_lipan::{GitChangeState, GitFileStatus};
 
 use crate::git::command::{self, BROWSE_TIMEOUT};
 use crate::session::protocol::{WireChange, WireChangeState, WireDirEntry};

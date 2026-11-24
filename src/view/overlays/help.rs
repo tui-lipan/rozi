@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::ListItemRole;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HelpKind {
@@ -825,7 +826,7 @@ fn keycap_pills(ctx: &Context<AppRoot>, keys: &str, style: Style) -> Vec<Span> {
         .state
         .config
         .effective_cap_style(ctx.state.config.pane.workbar_tab_style)
-        .glyphs();
+        .chars();
     let behind = ctx.state.theme.surface.element;
     let cap_style = Style::new()
         .fg(style.bg.map_or(behind, |bg| bg.color()))
@@ -839,9 +840,9 @@ fn keycap_pills(ctx: &Context<AppRoot>, keys: &str, style: Style) -> Vec<Span> {
         let label = Span::new(keycap_inner(key, caps.is_some())).style(style);
         match caps {
             Some((left, right)) => {
-                spans.push(Span::new(left).style(cap_style));
+                spans.push(Span::new(String::from(left)).style(cap_style));
                 spans.push(label);
-                spans.push(Span::new(right).style(cap_style));
+                spans.push(Span::new(String::from(right)).style(cap_style));
             }
             None => spans.push(label),
         }
@@ -1435,7 +1436,7 @@ mod palette_alias_tests {
     use super::{HelpRow, filtered_help_groups, help_category_priority, scheme_rows};
     use crate::state::HelpTab;
     use std::str::FromStr;
-    use tui_lipan::prelude::SearchEntry;
+    use tui_lipan::SearchEntry;
 
     #[test]
     fn extensions_command_keeps_plugin_aliases() {
@@ -1720,7 +1721,7 @@ mod palette_alias_tests {
     #[test]
     fn scheme_rows_mark_non_default_prefix_and_mod_as_overrides() {
         let input = crate::config::InputConfig {
-            prefix: tui_lipan::prelude::KeyBinding::from_str("ctrl-b").unwrap(),
+            prefix: tui_lipan::KeyBinding::from_str("ctrl-b").unwrap(),
             modifier: crate::config::WmModifier::Super,
             ..crate::config::InputConfig::default()
         };

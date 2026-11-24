@@ -5,7 +5,7 @@
 use rozi::AppRoot;
 use rozi::config::{WorkbarItem, WorkbarSegment};
 use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
-use tui_lipan::prelude::{CapStyle, KeyMods, Rect};
+use tui_lipan::{CapStyle, KeyMods, Rect};
 use tui_lipan::{CapturedCell, PointerShape, TestBackend};
 
 const LEFT_CAP: &str = "\u{e0b6}";

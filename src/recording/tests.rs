@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use tui_lipan::prelude::*;
+use tui_lipan::{TerminalCellSize, TerminalColorPalette};
 
 use super::format::{FrameDelta, RecordingEvent, RecordingMeta};
 use super::*;

@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use rozi::pane::id::PaneId;
 use rozi::state::Pane;
-use tui_lipan::prelude::{FloatRect, TerminalScreen};
+use tui_lipan::{FloatRect, TerminalScreen};
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static ALLOCS: AtomicUsize = AtomicUsize::new(0);

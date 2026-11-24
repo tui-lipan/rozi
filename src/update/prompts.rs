@@ -565,7 +565,7 @@ mod askpass_scope_tests {
     fn only_the_current_reconnect_may_raise_a_scoped_askpass_prompt() {
         let mut state = crate::state::State::new(
             crate::config::Config::default(),
-            tui_lipan::prelude::Theme::default(),
+            tui_lipan::Theme::default(),
         );
         let epoch = state.runtime_epoch;
         assert!(attach_attempt_is_current(&state, None));

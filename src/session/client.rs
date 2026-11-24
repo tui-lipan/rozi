@@ -8,6 +8,7 @@ use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
+use tui_lipan::TerminalColorPalette;
 use tui_lipan::prelude::*;
 
 use crate::layout::shared::{ClientId, SharedLayout};

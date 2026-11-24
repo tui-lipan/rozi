@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tui_lipan::prelude::{ItemDescription, SearchItem, TextInput};
+use tui_lipan::{ItemDescription, SearchItem, TextInput};
 
 use crate::pane::id::PaneId;
 

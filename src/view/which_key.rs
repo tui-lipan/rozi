@@ -22,6 +22,7 @@ use std::collections::HashSet;
 use std::str::FromStr;
 
 use tui_lipan::prelude::*;
+use tui_lipan::{FloatRect, FrameLabel};
 
 use super::fg_only;
 use crate::AppRoot;
@@ -512,7 +513,7 @@ pub(crate) fn layer(ctx: &Context<AppRoot>, content: Rect) -> Option<(Rect, Elem
         .padding((0, 1))
         .child(grid);
     if let Some(overflow) = overflow {
-        frame = frame.header_right(FrameLabel::new(overflow).style(fg_only(&theme.muted)));
+        frame = frame.title_right(FrameLabel::new(overflow).style(fg_only(&theme.muted)));
     }
 
     let rect = FloatRect {

@@ -758,8 +758,8 @@ fn follower_request_control_asks_the_controller_without_stealing() {
 fn shared_controller_backend() -> tui_lipan::TestBackend<crate::AppRoot> {
     use crate::AppRoot;
     use crate::session::client::SessionClient;
+    use tui_lipan::Rect;
     use tui_lipan::TestBackend;
-    use tui_lipan::prelude::Rect;
 
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect {
@@ -1079,8 +1079,8 @@ fn an_unconfirmed_kick_lapses_on_the_shared_confirm_window() {
 fn occupied_session_prompt_keeps_context_in_the_title() {
     use crate::AppRoot;
     use crate::state::FollowPromptState;
+    use tui_lipan::Rect;
     use tui_lipan::TestBackend;
-    use tui_lipan::prelude::Rect;
 
     crate::test_support::on_large_stack(|| {
         let mut backend = TestBackend::new(AppRoot::default());

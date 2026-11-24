@@ -25,6 +25,7 @@ use crate::layout::shared::{
     SHARED_LAYOUT_VERSION, SharedLayout, SharedPane, SharedWorkspace, float_rect_to_frac,
 };
 use crate::session::protocol::{Capabilities, MAX_FRAME_SIZE};
+use tui_lipan::{FloatRect, TerminalColorPalette};
 
 /// Geometry a headless spawn uses when the session has no live pane to copy a size from.
 ///

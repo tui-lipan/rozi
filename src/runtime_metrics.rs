@@ -310,13 +310,10 @@ impl RuntimeMetrics {
                     format_millis(graphics.presentation_ack_latency_max_us)
                 ),
             ),
-            DevToolsMetric::new(
-                "Pointer",
-                format_pointer(tui_lipan::prelude::pixel_pointer_status()),
-            ),
+            DevToolsMetric::new("Pointer", format_pointer(tui_lipan::pixel_pointer_status())),
             DevToolsMetric::new(
                 "Frames",
-                format_frame_transport(tui_lipan::prelude::host_reads_shared_frames()),
+                format_frame_transport(tui_lipan::host_reads_shared_frames()),
             ),
             DevToolsMetric::new("PTY", format_queue(pty, server_age)),
             DevToolsMetric::new(
@@ -424,7 +421,7 @@ fn duration_millis(duration: Duration) -> u64 {
 /// Not part of [`RuntimeMetrics`]: that is a resource sample the control socket serves, and this is
 /// a fact about the host that neither changes with load nor belongs to a session. It is here
 /// because DevTools is where a question about the running client gets answered.
-fn format_pointer(status: tui_lipan::prelude::PixelPointerStatus) -> String {
+fn format_pointer(status: tui_lipan::PixelPointerStatus) -> String {
     let cell = status
         .cell
         .map_or_else(|| "no cell".to_string(), |(w, h)| format!("{w}x{h}"));
@@ -618,7 +615,7 @@ mod tests {
     /// three states have to stay distinguishable at a glance.
     #[test]
     fn pointer_row_names_the_missing_half() {
-        use tui_lipan::prelude::PixelPointerStatus;
+        use tui_lipan::PixelPointerStatus;
 
         assert_eq!(
             format_pointer(PixelPointerStatus {

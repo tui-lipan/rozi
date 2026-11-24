@@ -2,6 +2,7 @@
 
 use base64::Engine as _;
 use std::sync::Arc;
+use tui_lipan::TerminalColorPalette;
 use tui_lipan::prelude::*;
 
 use tui_lipan::{
@@ -392,6 +393,7 @@ fn shown_pixels(image: &CapturedImage, (frame_w, frame_h): (u16, u16)) -> Option
 mod tests {
     use super::*;
     use crate::control::{CaptureContent, CaptureRender};
+    use tui_lipan::TerminalCellSize;
 
     fn span_image(
         image: &CapturedImage,

@@ -6,7 +6,7 @@ use rozi::layout::tiling::build_dwindle_tree;
 use rozi::pane::chrome::PaneBorderMode;
 use rozi::state::Pane;
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{Color, FloatRect, Rect};
+use tui_lipan::{Color, FloatRect, Rect};
 
 fn backend(mode: PaneBorderMode) -> TestBackend<AppRoot> {
     let mut backend = TestBackend::new(AppRoot::default());

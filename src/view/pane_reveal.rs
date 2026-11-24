@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tui_lipan::prelude::{
+use tui_lipan::{
     CellEffect, Color, EffectCell, EffectContext, EffectPrepareContext, EffectScope, Element, Key,
     Paint, PreparedCellEffect, Rect, TerminalColor, Theme,
 };
@@ -12,14 +12,14 @@ pub(super) fn picker_reveal_effect(
     style: crate::layout::anim::PickerAnimationStyle,
     progress: f32,
     opening: bool,
-) -> tui_lipan::prelude::VisualEffect {
+) -> tui_lipan::VisualEffect {
     use crate::layout::anim::PickerAnimationStyle;
     let (pattern, pane_style) = match style {
         PickerAnimationStyle::Portal => (PaneRevealPattern::Portal, PaneAnimationStyle::Portal),
         PickerAnimationStyle::Scan => (PaneRevealPattern::Scan, PaneAnimationStyle::Scan),
         PickerAnimationStyle::Off | PickerAnimationStyle::Fade => unreachable!(),
     };
-    tui_lipan::prelude::VisualEffect::Custom(std::sync::Arc::new(TimedRevealEffect::new(
+    tui_lipan::VisualEffect::Custom(std::sync::Arc::new(TimedRevealEffect::new(
         RevealRecipe::Pane(
             PaneRevealEffect::with_spec(
                 pattern,
@@ -720,7 +720,7 @@ fn portal_symbol(hash: u64) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tui_lipan::prelude::Rect;
+    use tui_lipan::Rect;
 
     #[test]
     fn picker_scan_starts_at_the_corner_and_advances_through_overlapping_frontiers() {
@@ -738,7 +738,7 @@ mod tests {
             let progress = transition
                 .easing
                 .apply(millis as f32 / transition.duration.as_millis() as f32);
-            let tui_lipan::prelude::VisualEffect::Custom(effect) =
+            let tui_lipan::VisualEffect::Custom(effect) =
                 picker_reveal_effect(PickerAnimationStyle::Scan, progress, true)
             else {
                 panic!("scan must use a cell effect")
@@ -771,7 +771,7 @@ mod tests {
                 "even the opening frame must show the scan line"
             );
         }
-        let tui_lipan::prelude::VisualEffect::Custom(effect) =
+        let tui_lipan::VisualEffect::Custom(effect) =
             picker_reveal_effect(PickerAnimationStyle::Scan, 0.0, false)
         else {
             unreachable!()
@@ -1296,7 +1296,7 @@ mod tests {
         recipe: RevealRecipe,
         closing: bool,
     }
-    impl tui_lipan::prelude::Component for RevealPaintProbe {
+    impl tui_lipan::Component for RevealPaintProbe {
         type State = ();
         type Properties = ();
         type Message = ();
@@ -1311,15 +1311,15 @@ mod tests {
                     self.recipe,
                     PanePaintMotion::Timed {
                         started_at: Duration::ZERO,
-                        transition: tui_lipan::prelude::TransitionConfig {
+                        transition: tui_lipan::TransitionConfig {
                             duration: Duration::from_millis(220),
-                            easing: tui_lipan::prelude::Easing::Linear,
+                            easing: tui_lipan::Easing::Linear,
                         },
                         closing: self.closing,
                         interval: Duration::from_nanos(8_333_333),
                     },
                 ))
-                .child(tui_lipan::prelude::Text::new("REVEALED CONTENT"))
+                .child(tui_lipan::Text::new("REVEALED CONTENT"))
                 .into()
         }
     }

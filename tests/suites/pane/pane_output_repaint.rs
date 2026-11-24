@@ -17,7 +17,7 @@ use rozi::pane::chrome::{PaneBorderMode, PaneTitlebarMode};
 use rozi::pane::id::PaneId;
 use rozi::state::Pane;
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{FloatRect, Rect, UpdateLevel};
+use tui_lipan::{FloatRect, Rect, UpdateLevel};
 
 const VIEWPORT: Rect = Rect {
     x: 0,
@@ -424,7 +424,7 @@ fn mouse_pointer_modes_filter_pane_requests_and_chrome_at_runtime() {
             .unwrap();
         assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Grab));
         backend.state_mut().config.cursor.pointer = MousePointer::Panes;
-        backend.render();
+        backend.dispatch(rozi::Msg::RefreshPaintLayers).unwrap();
         assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Grab));
         assert_eq!(backend.pointer_shape_at(split, 12), None);
         assert_eq!(
@@ -433,14 +433,14 @@ fn mouse_pointer_modes_filter_pane_requests_and_chrome_at_runtime() {
             "pane-only mode has no synthetic text fallback"
         );
         backend.state_mut().config.cursor.pointer = MousePointer::Off;
-        backend.render();
+        backend.dispatch(rozi::Msg::RefreshPaintLayers).unwrap();
         for y in 0..24 {
             for x in 0..80 {
                 assert_eq!(backend.pointer_shape_at(x, y), None);
             }
         }
         backend.state_mut().config.cursor.pointer = MousePointer::All;
-        backend.render();
+        backend.dispatch(rozi::Msg::RefreshPaintLayers).unwrap();
         assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Grab));
         assert_eq!(
             backend.pointer_shape_at(split, 12),

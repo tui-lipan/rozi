@@ -7,7 +7,7 @@ use serde::Deserialize;
 use std::fs::OpenOptions;
 use std::io::ErrorKind;
 use std::path::Path;
-use tui_lipan::prelude::CommandLink;
+use tui_lipan::CommandLink;
 use url::Url;
 
 use crate::Msg;
@@ -252,11 +252,9 @@ pub(crate) fn update_offered_here(state: &crate::state::State) -> bool {
 
 /// **Update rozi**: install the known newer release on a card of its own, or bring back the card of
 /// the update already running.
-pub(crate) fn run_update(
-    ctx: &mut tui_lipan::prelude::Context<crate::AppRoot>,
-) -> tui_lipan::prelude::Update {
+pub(crate) fn run_update(ctx: &mut tui_lipan::Context<crate::AppRoot>) -> tui_lipan::Update {
     if !update_offered_here(&ctx.state) {
-        return tui_lipan::prelude::Update::none();
+        return tui_lipan::Update::none();
     }
     crate::ops::self_update::start(ctx)
 }

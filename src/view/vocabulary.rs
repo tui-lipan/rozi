@@ -32,6 +32,7 @@
 //! but never changes which state it is. A view takes the exact [`SessionPresence`] and decides how
 //! much of it to draw; it does not map one presence onto another.
 
+use tui_lipan::ListItemGutter;
 use tui_lipan::prelude::*;
 
 use crate::git::pull_requests::{WorkStatus, WorktreeStatuses};

@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
 use tui_lipan::prelude::*;
+use tui_lipan::{ItemDescription, SearchMatchMode};
 
 use crate::AppRoot;
 use crate::control::ControlResponse;
@@ -113,8 +114,7 @@ pub(crate) fn open_pick_stream(
         actions: actions
             .into_iter()
             .filter(|action| {
-                !action.id.is_empty()
-                    && tui_lipan::prelude::KeyBinding::from_str(&action.key).is_ok()
+                !action.id.is_empty() && tui_lipan::KeyBinding::from_str(&action.key).is_ok()
             })
             .collect(),
         prompt: None,
@@ -462,7 +462,7 @@ pub(crate) fn invoke_action(ctx: &mut Context<AppRoot>, index: usize) -> Update 
             } else {
                 spec.value()
             };
-            let input = tui_lipan::prelude::TextInput::new(seed);
+            let input = tui_lipan::TextInput::new(seed);
             pick.prompt = Some(crate::state::PickPrompt {
                 action: index,
                 title: spec.title().to_string(),
@@ -479,10 +479,7 @@ pub(crate) fn invoke_action(ctx: &mut Context<AppRoot>, index: usize) -> Update 
     report_action(ctx, index, None)
 }
 
-pub(crate) fn prompt_changed(
-    ctx: &mut Context<AppRoot>,
-    event: tui_lipan::prelude::InputEvent,
-) -> Update {
+pub(crate) fn prompt_changed(ctx: &mut Context<AppRoot>, event: tui_lipan::InputEvent) -> Update {
     if let Some(prompt) = ctx
         .state
         .pick

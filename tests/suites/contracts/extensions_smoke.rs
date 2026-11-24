@@ -3,9 +3,7 @@ use std::time::{Duration, Instant};
 use rozi::input::Action;
 use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{
-    App, KeyCode, KeyDispatchPolicy, KeyEvent, KeyMods, Rect, TerminalKeyPolicy,
-};
+use tui_lipan::{App, KeyCode, KeyDispatchPolicy, KeyEvent, KeyMods, Rect, TerminalKeyPolicy};
 
 #[test]
 fn discovered_extension_command_is_registered_and_dispatched() {

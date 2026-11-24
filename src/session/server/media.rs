@@ -549,6 +549,7 @@ fn split_media_event(event: ServerEvent, prefix: Option<usize>) -> MediaSplit {
 mod tests {
     use super::*;
     use base64::Engine as _;
+    use tui_lipan::GraphicsMediaPolicy;
 
     #[test]
     fn ordered_media_envelope_is_not_split_at_the_emission_budget() {

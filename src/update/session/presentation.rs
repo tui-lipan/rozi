@@ -1,3 +1,4 @@
+use tui_lipan::PresentedTerminal;
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;

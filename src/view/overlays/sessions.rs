@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::{SearchEntry, SearchHighlight, SearchMatchMode};
 
 pub(crate) fn session_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(picker) = ctx.state.session_picker.as_ref() else {

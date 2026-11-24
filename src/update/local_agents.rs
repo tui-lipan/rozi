@@ -193,8 +193,7 @@ mod tests {
                 let mut attached = alert_backend();
                 {
                     let state = attached.state_mut();
-                    let mut pane =
-                        crate::state::Pane::new(7, 100, tui_lipan::prelude::FloatRect::default());
+                    let mut pane = crate::state::Pane::new(7, 100, tui_lipan::FloatRect::default());
                     pane.pty_generation = 2;
                     state.current_mut().workspaces[0].panes = vec![pane];
                     state.current_mut().focused_pane = Some(7);

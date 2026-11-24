@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::SearchEntry;
 
 use crate::config::{SettingKind, SettingSpec, SettingsOwner};
 use crate::ops::tab_settings::{TAB_SETTING_CHOICES_KEY, TAB_SETTING_PROMPT_KEY, TAB_SETTINGS_KEY};

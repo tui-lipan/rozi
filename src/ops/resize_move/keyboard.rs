@@ -145,7 +145,7 @@ mod tests {
     fn scratch_backend(axis: SplitAxis) -> TestBackend<AppRoot> {
         use crate::layout::tiling::DwindleTree;
         use crate::state::Pane;
-        use tui_lipan::prelude::FloatRect;
+        use tui_lipan::FloatRect;
 
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(crate::ops::resize_move::test_util::TEST_VIEWPORT);

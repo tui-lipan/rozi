@@ -10,7 +10,7 @@
 
 use std::sync::OnceLock;
 
-use tui_lipan::prelude::TerminalScreen;
+use tui_lipan::TerminalScreen;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TerminalEngine {

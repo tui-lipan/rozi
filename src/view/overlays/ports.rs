@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::{ListItemGutter, SearchEntry};
 
 use crate::ops::ports::{
     PortMsg, browser_open_url, default_forward_target, forward_can_retry, forward_search_item,

@@ -7,6 +7,7 @@
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
+use tui_lipan::TerminalColorPalette;
 use tui_lipan::prelude::*;
 
 use crate::pane::lifecycle::find_pane_in_namespace_mut;

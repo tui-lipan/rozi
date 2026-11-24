@@ -3,6 +3,7 @@
 use std::net::IpAddr;
 
 use tui_lipan::prelude::*;
+use tui_lipan::{ItemDescription, SearchMatchMode};
 
 use crate::AppRoot;
 use crate::config::{LinkAction, UserCommandAction};
@@ -1243,6 +1244,7 @@ mod tests {
     use crate::config::{Config, LinkAction, NamedCommand, UserCommandAction};
     use crate::session::remote::forward::ForwardHandle;
     use crate::state::Pane;
+    use tui_lipan::TerminalLinkKind;
     use tui_lipan::TestBackend;
 
     fn remote_state(target: RemoteTarget) -> (State, PaneId, PaneId, PaneId) {

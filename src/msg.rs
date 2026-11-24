@@ -1,4 +1,8 @@
 use tui_lipan::prelude::*;
+use tui_lipan::{
+    FileTreeExplorerFocusOrigin, FloatRect, ForwardedMouseEvent, TerminalLinkKind,
+    TerminalPasteEvent,
+};
 
 use crate::input::Action;
 use crate::layout::model::ResizeCorner;
@@ -786,7 +790,7 @@ pub enum Msg {
     /// An action chord fired in the picker; the index is into `PickState::actions`.
     PickActionKey(usize),
     /// Editing the text prompt an action raised.
-    PickPromptChanged(tui_lipan::prelude::InputEvent),
+    PickPromptChanged(tui_lipan::InputEvent),
     /// Accepting that prompt, reporting its text to the caller.
     PickPromptSubmit,
     /// Dismissing it, which returns to the picker without reporting anything.

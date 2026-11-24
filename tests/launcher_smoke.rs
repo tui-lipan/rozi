@@ -8,7 +8,7 @@ use rozi::state::{Attachment, PendingSessionAction};
 use std::str::FromStr;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{KeyBinding, Rect};
+use tui_lipan::{KeyBinding, Rect};
 
 /// Serializes every test in this binary. `set_var` is only sound while no other thread reads the
 /// environment, and building a `AppRoot` reads it (`ROZI_CONFIG`, `HOME`, …), so the tests

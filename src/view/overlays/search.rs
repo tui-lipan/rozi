@@ -1,4 +1,5 @@
 use super::*;
+use tui_lipan::{DescriptionPlacement, SearchEntry};
 
 use crate::pane::id::PaneId;
 use crate::state::{ScrollbackMatch, SearchScope};
@@ -15,8 +16,8 @@ pub(crate) fn search_overlay(ctx: &Context<AppRoot>) -> Element {
     let title = format!("Search scrollback · {}", search.scope.label());
 
     let panel: Element = Frame::new()
-        .header_left(title)
-        .header_style(rozi_chrome(&ctx.state.theme).bold())
+        .title(title)
+        .title_style(rozi_chrome(&ctx.state.theme).bold())
         .border_style(overlay_border_style(ctx))
         .padding(0)
         .style(Style::new().bg(ctx.state.theme.surface.element))

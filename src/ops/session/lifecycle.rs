@@ -210,7 +210,8 @@ pub(crate) fn open_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     // A new opening invalidates any in-flight watcher tick from a prior opening.
     ctx.state.session_picker_epoch = ctx.state.session_picker_epoch.wrapping_add(1);
     request_session_picker_focus(ctx);
-    Update::with_command(session_watch_command(
+    Update::full_with_command(session_watch_command(
+        ctx.link(),
         ctx.state.session_picker_epoch,
         ctx.state.local_current_session_name().map(str::to_string),
     ))
@@ -319,7 +320,8 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     picker.selected = selected.min(picker.entries.len().saturating_sub(1));
     picker.keep_selection_in_tab();
     ctx.state.session_picker = Some(picker);
-    Update::with_command(session_watch_command(
+    Update::full_with_command(session_watch_command(
+        ctx.link(),
         ctx.state.session_picker_epoch,
         ctx.state.local_current_session_name().map(str::to_string),
     ))
@@ -1004,11 +1006,13 @@ pub(crate) fn kill_discovered_session(
             .remote
             .killing_sessions
             .push((entry.name.clone(), target.clone()));
-        return Update::with_command(Command::spawn(move |link: CommandLink<crate::Msg>| {
-            let result = shutdown_discovered_session(&entry, &remote_config)
-                .map_err(|error| error.to_string());
-            link.send(crate::Msg::RemoteSessionKilled { entry, result });
-        }));
+        return Update::full_with_command(ctx.link().command(
+            move |link: CommandLink<crate::Msg>| {
+                let result = shutdown_discovered_session(&entry, &remote_config)
+                    .map_err(|error| error.to_string());
+                link.send(crate::Msg::RemoteSessionKilled { entry, result });
+            },
+        ));
     }
     match shutdown_discovered_session(&entry, &remote_config) {
         Ok(()) => {

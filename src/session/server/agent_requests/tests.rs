@@ -2021,8 +2021,10 @@ fn a_follow_up_names_the_later_delivery_when_the_clock_moves_backwards() {
 }
 
 #[test]
-fn an_await_ends_at_a_prompt_that_stops_its_undelivered_request() {
+fn an_await_refuses_a_startup_prompt_until_someone_types_into_it() {
     let mut rig = Rig::new(&[3]);
+    rig.server.agent_requests.quiet = QUIET_WINDOW;
+    rig.server.agent_requests.note_pane_input(3);
     let detected = rig.server.panes.get_mut(&3).unwrap();
     let detected = detected.runtime.detected_agent.as_mut().unwrap();
     detected.blocker = Some(
@@ -2045,15 +2047,78 @@ fn an_await_ends_at_a_prompt_that_stops_its_undelivered_request() {
         .unwrap();
     assert_eq!(code(refused), Some(ControlErrorCode::AgentBlocked));
 
-    // It stays queued, and is delivered once the prompt is answered.
-    assert_eq!(rig.request(&request.id).state, AgentRequestState::Queued);
-    rig.set_state(3, DetectedAgentState::Idle);
-    assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
+    rig.server.agent_requests.note_pane_input(3);
     assert!(
         rig.server
             .register_request_await(7, None, &request.id, Some(60_000), reply)
             .is_none()
     );
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Queued);
+    rig.server.agent_requests.quiet = Duration::ZERO;
+    rig.set_state(3, DetectedAgentState::Idle);
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
+    assert!(rig.server.holds_agent_wait(7));
+}
+
+/// The trust prompt is on screen, and the answer is typed, before the next
+/// detection poll records the prompt. The wait still gives the agent the quiet
+/// window instead of failing `agent-blocked`.
+#[test]
+fn input_into_a_startup_prompt_counts_before_detection_notices_it() {
+    let mut rig = Rig::new(&[3]);
+    rig.server.agent_requests.quiet = QUIET_WINDOW;
+    let pane = rig.server.panes.get_mut(&3).unwrap();
+    pane.agent.identity = Some("claude".into());
+    // The trust dialog is part of the launch: detection has not recorded it yet,
+    // and the launch is what says the screen is worth reading.
+    pane.agent.launch = Some(Default::default());
+    pane.screen_mut().resize(24, 80);
+    pane.screen_mut().process_bytes(
+        b"\x1b[2J\x1b[HYes, I trust this folder\r\nEnter to confirm \xc2\xb7 Esc to cancel\r\n",
+    );
+    rig.server
+        .session_write_input(3, b"\r".to_vec())
+        .expect("the answer is typed");
+
+    let detected = rig.server.panes.get_mut(&3).unwrap();
+    detected.runtime.detected_agent.as_mut().unwrap().blocker = Some(
+        protocol::AgentBlocker {
+            kind: "trust".into(),
+            reset: None,
+        }
+        .into(),
+    );
+    rig.set_state(3, DetectedAgentState::Blocked);
+    let request = rig.ask(None, 3, "plan the release");
+    assert_eq!(request.state, AgentRequestState::Queued);
+    let reply = ReplyTo::Headless {
+        capabilities: protocol::Capabilities::current(),
+        effective_protocol: PROTOCOL_VERSION,
+        permission: crate::session::protocol::Permission::View,
+    };
+    assert!(
+        rig.server
+            .register_request_await(7, None, &request.id, Some(60_000), reply)
+            .is_none()
+    );
+}
+
+/// A running agent is past its launch, and detection has not recorded a startup
+/// prompt. Typing does not read the trust wording still on screen: that read is
+/// what would count the keystroke as an answer before the next poll.
+#[test]
+fn a_keystroke_into_a_running_agent_is_not_a_startup_answer() {
+    let mut rig = Rig::new(&[3]);
+    let pane = rig.server.panes.get_mut(&3).unwrap();
+    pane.agent.identity = Some("claude".into());
+    pane.screen_mut().resize(24, 80);
+    pane.screen_mut().process_bytes(
+        b"\x1b[2J\x1b[HYes, I trust this folder\r\nEnter to confirm \xc2\xb7 Esc to cancel\r\n",
+    );
+    rig.server
+        .session_write_input(3, b"\r".to_vec())
+        .expect("the answer is typed");
+    assert!(rig.server.panes[&3].agent.pending_startup_answer.is_none());
 }
 
 fn answered_requests_with_slots(count: usize) -> AgentRequestStore {

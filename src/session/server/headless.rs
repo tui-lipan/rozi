@@ -1906,7 +1906,7 @@ impl SessionServer {
     ) -> std::result::Result<(), ControlResponse> {
         self.ensure_headless_input_unlocked()?;
         self.write_running_pane(id, bytes)?;
-        self.agent_requests.note_pane_input(id);
+        self.note_human_pane_input(id);
         Ok(())
     }
 

@@ -313,9 +313,15 @@ impl AgentRequestStore {
 
     /// Whether someone typed into `pane` within the quiet window.
     fn someone_typed(&self, pane: PaneId) -> bool {
+        self.recent_human_input(pane).is_some()
+    }
+
+    /// When someone last typed into `pane`, if within the quiet window.
+    pub(super) fn recent_human_input(&self, pane: PaneId) -> Option<Instant> {
         self.pane_input
             .get(&pane)
-            .is_some_and(|input| input.elapsed() < self.quiet)
+            .copied()
+            .filter(|input| input.elapsed() < self.quiet)
     }
 
     /// Note what `pane` shows now.
@@ -1467,7 +1473,7 @@ impl SessionServer {
         }
         if request.state == AgentRequestState::Queued
             && let Ok(target) = self.request_agent(&request.to)
-            && let Some(blocker) = target.startup_blocker()
+            && let Some(blocker) = self.unanswered_startup_blocker(&target)
         {
             return Some(ControlResponse::error_with(
                 ControlErrorCode::AgentBlocked,

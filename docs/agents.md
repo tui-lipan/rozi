@@ -355,8 +355,8 @@ and `gone`. An agent that finishes a turn is `done` until you look at its pane, 
 `error`. The answer names the state the agent reached, and a timeout names the state it was left in.
 
 An agent at a folder-trust or sign-in prompt cannot start, so a wait for any state except `blocked`
-or `gone` fails at once with `agent-blocked`. Answer the prompt, then wait again. Approvals and
-questions keep the wait going.
+or `gone` fails with `agent-blocked`. If you just typed into the prompt, the wait gives the agent
+a moment to update its state. Approvals and questions keep the wait going.
 
 Waiting on a pane whose agent has not been detected yet, such as one you just opened with `split`,
 waits for the agent to appear. `gone` answers at once for a pane with no agent. Use `--format json`
@@ -462,8 +462,8 @@ stays asked, so await that id rather than asking again. When the answer is not t
 (see below) or not all of it, a note on stderr says so; `--require-reply` makes that exit 3.
 
 If the agent shows a folder-trust or sign-in prompt before it has the request, `ask --wait` and
-`await` fail at once with `agent-blocked`. The request stays queued and is delivered once the prompt
-is answered, so answer it and await the id again.
+`await` can fail with `agent-blocked` under the same rules as `agents wait`. The request stays
+queued until the agent is ready, so answer the prompt and await the id again.
 
 ```bash
 rozi agents ask --target 4 --wait --timeout 30m --format text -- "Review the parser changes"

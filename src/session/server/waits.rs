@@ -380,12 +380,30 @@ impl SessionServer {
         let completed = self
             .agent_waits
             .iter()
-            .filter(|(_, wait)| wait.deadline.is_some_and(|deadline| now >= deadline))
-            .map(|(&key, wait)| {
-                (
-                    key,
-                    WaitEvaluation::Error(ControlErrorCode::Timeout, self.timeout_message(wait)),
-                )
+            .filter_map(|(&key, wait)| {
+                if wait.deadline.is_some_and(|deadline| now >= deadline) {
+                    return Some((
+                        key,
+                        WaitEvaluation::Error(
+                            ControlErrorCode::Timeout,
+                            self.timeout_message(wait),
+                        ),
+                    ));
+                }
+                // A startup prompt can outlast the input grace without any runtime change.
+                let reference = wait.subject.agent_reference()?;
+                let pane_id = reference.pane.pane_id;
+                let pane = self.panes.get(&pane_id)?;
+                pane.agent.startup_blocker.as_ref()?;
+                if self.agent_requests.recent_human_input(pane_id).is_some() {
+                    return None;
+                }
+                match self.evaluate_agent_wait(reference, wait.until) {
+                    error @ WaitEvaluation::Error(ControlErrorCode::AgentBlocked, _) => {
+                        Some((key, error))
+                    }
+                    _ => None,
+                }
             })
             .collect();
         self.finish_agent_waits(completed);
@@ -664,8 +682,8 @@ impl SessionServer {
         if let Some(runtime) = find_agent(&runtimes, reference) {
             if condition_matches(until, runtime.state) {
                 WaitEvaluation::Ready(Some(Box::new(runtime.clone())))
-            } else if let Some(blocker) = runtime
-                .startup_blocker()
+            } else if let Some(blocker) = self
+                .unanswered_startup_blocker(runtime)
                 .filter(|_| until != AgentWaitCondition::Gone)
             {
                 WaitEvaluation::Error(
@@ -697,6 +715,22 @@ impl SessionServer {
                 },
             )
         }
+    }
+
+    /// Let detection catch up after someone types into a pane showing a startup prompt.
+    pub(super) fn unanswered_startup_blocker<'a>(
+        &self,
+        runtime: &'a protocol::AgentRuntime,
+    ) -> Option<&'a protocol::AgentBlocker> {
+        let blocker = runtime.startup_blocker()?;
+        let pane_id = runtime.reference.pane.pane_id;
+        let observed = self.panes.get(&pane_id)?.agent.startup_blocker.as_ref();
+        let recent_answer = observed.is_some_and(|(_, since)| {
+            self.agent_requests
+                .recent_human_input(pane_id)
+                .is_some_and(|input| input > *since)
+        });
+        (!recent_answer).then_some(blocker)
     }
 
     pub(super) fn agent_runtimes_for(
@@ -1271,6 +1305,7 @@ mod tests {
                 }
                 .into(),
             );
+            detected.agent.sync_references(&detected.runtime);
             [
                 AgentWaitCondition::Quiescent,
                 AgentWaitCondition::Blocked,
@@ -1289,6 +1324,25 @@ mod tests {
 
         let [quiescent, ..] = show("approval");
         assert!(matches!(quiescent, WaitEvaluation::Pending));
+
+        show("trust");
+        server.agent_requests.note_pane_input(3);
+        assert!(
+            server
+                .register_agent_wait(
+                    1,
+                    AgentTarget::Ref(reference),
+                    AgentWaitCondition::Quiescent,
+                    Some(60_000),
+                    headless(),
+                )
+                .is_none()
+        );
+        server.expire_agent_waits();
+        assert!(server.holds_agent_wait(1));
+        server.agent_requests.quiet = Duration::ZERO;
+        server.expire_agent_waits();
+        assert!(!server.holds_agent_wait(1));
     }
 
     #[test]

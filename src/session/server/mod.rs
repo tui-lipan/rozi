@@ -586,6 +586,15 @@ pub struct AgentScratch {
     pub read: Option<AgentRead>,
     /// Cached screen blocker observation while published rows own the pane's state.
     pub blocker_read: Option<AgentBlockerRead>,
+    /// The startup blocker on screen and when it counts as having appeared.
+    /// Detection's poll is late: input that already answered this prompt on the
+    /// screen supplies an earlier instant. See [`runtime::note_startup_prompt_input`].
+    startup_blocker: Option<(std::sync::Arc<protocol::AgentBlocker>, Instant)>,
+    /// A startup prompt read from the screen at the moment input arrived, with an
+    /// instant just before that input. Applied when detection next notices the
+    /// same prompt, then dropped. A poll that sees the prompt gone drops it too,
+    /// so a later prompt is not answered by the keystroke before it.
+    pending_startup_answer: Option<(std::sync::Arc<protocol::AgentBlocker>, Instant)>,
     /// The last state a sweep positively observed, retained while later sweeps see no evidence.
     pub hold: Option<AgentHold>,
     /// The foreground process group last checked against a shell prompt mark, the phase marked,

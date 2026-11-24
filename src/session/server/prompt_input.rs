@@ -60,12 +60,13 @@ impl SessionServer {
         prompt: PromptInput,
         attached: bool,
     ) -> std::result::Result<(), ControlResponse> {
-        // The paste goes the ordinary way, and waits behind an Enter already held for the pane.
-        if attached {
-            self.write_running_pane(id, prompt.paste)?;
-        } else {
-            self.session_write_input(id, prompt.paste)?;
+        if !attached {
+            self.ensure_headless_input_unlocked()?;
         }
+        // The paste goes the ordinary way, and waits behind an Enter already held for the pane.
+        // A submitted prompt leaves no unsent draft, so it does not count as someone typing.
+        self.write_running_pane(id, prompt.paste)?;
+        self.agent_requests.note_prompt_submitted(id);
         if let Some(held) = self.held_submits.get_mut(&id) {
             held.queued.push_back(Queued::Submit(prompt.enter));
             return Ok(());

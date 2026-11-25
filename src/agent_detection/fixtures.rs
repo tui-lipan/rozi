@@ -199,6 +199,7 @@ fn only_a_live_blocker_outranks_a_report() {
             "codex/offer-to-switch-models",
             "codex/resume-working-directory-dialog",
             "codex/startup-folder-access-dialog",
+            "codex/usage-limit",
         ]
     );
 }

@@ -146,6 +146,89 @@ impl SessionServer {
         }
     }
 
+    /// Encode and deliver a synthetic mouse gesture from an attached client against the server's
+    /// live parser state, replying in the same pump step so `mark: true` acts as a stream barrier.
+    #[allow(clippy::too_many_arguments)]
+    fn handle_send_mouse(
+        &mut self,
+        client_id: ClientId,
+        request_id: u64,
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+        action: &control::MouseAction,
+        mark: bool,
+    ) -> Vec<(Target, ServerMessage)> {
+        let reply = |response| {
+            vec![(
+                Target::Sender,
+                ServerMessage::SendMouseResult {
+                    request_id,
+                    response,
+                },
+            )]
+        };
+        if !self.client_attached(client_id) {
+            return reply(control::ControlResponse::error_with(
+                control::ControlErrorCode::SessionNotAttached,
+                "client is not attached",
+            ));
+        }
+        if self.client_read_only(client_id) {
+            return reply(control::ControlResponse::error_with(
+                control::ControlErrorCode::ReadOnly,
+                "read-only client",
+            ));
+        }
+        if !local && !self.client_may_input(client_id) {
+            return reply(control::ControlResponse::error_with(
+                control::ControlErrorCode::InputLocked,
+                format!(
+                    "session `{}` has input locked; only the controller can send input",
+                    self.session_name
+                ),
+            ));
+        }
+        if !local && self.agent_history.contains_key(&pane_id) {
+            return reply(control::ControlResponse::error_with(
+                control::ControlErrorCode::Conflict,
+                "pane is reading agent history; retry after viewport restoration",
+            ));
+        }
+        let owner = local.then_some(client_id);
+        let Some(pane) = self
+            .pane(owner, pane_id)
+            .filter(|pane| pane.generation == generation)
+        else {
+            return reply(control::ControlResponse::error_with(
+                control::ControlErrorCode::PaneNotFound,
+                format!("pane {pane_id} not found"),
+            ));
+        };
+        if pane.exited.is_some() || pane.pty.is_none() {
+            return reply(control::ControlResponse::error_with(
+                control::ControlErrorCode::PaneNotRunning,
+                format!("pane {pane_id} PTY is not running"),
+            ));
+        }
+        let bytes = match Self::encode_mouse_for_pane(pane_id, pane, action) {
+            Ok(bytes) => bytes,
+            Err(response) => return reply(response),
+        };
+        if mark
+            && let Some(pane) = self
+                .pane_mut(owner, pane_id)
+                .filter(|pane| pane.generation == generation)
+        {
+            pane.output_coalesce_epoch = pane.output_coalesce_epoch.saturating_add(1);
+        }
+        if !local {
+            self.note_human_pane_input(pane_id);
+        }
+        self.handle_pane_input(owner, pane_id, generation, &bytes);
+        reply(control::ControlResponse::empty())
+    }
+
     /// Write a client's pane input, if that client may type into the pane.
     pub(super) fn accept_pane_input(
         &mut self,
@@ -1279,6 +1362,16 @@ impl SessionServer {
                 self.accept_pane_input(client_id, pane_id, local, generation, &bytes, true);
                 vec![(Target::Sender, ServerMessage::InputMarked { token })]
             }
+            ClientMessage::SendMouse {
+                request_id,
+                pane_id,
+                local,
+                generation,
+                action,
+                mark,
+            } => self.handle_send_mouse(
+                client_id, request_id, pane_id, local, generation, &action, mark,
+            ),
             ClientMessage::Pong { seq: _ } => {
                 if let Some(client) = self.client_mut(client_id) {
                     client.last_pong = Instant::now();
@@ -1962,6 +2055,7 @@ fn refused_by_its_handler(message: &ClientMessage) -> bool {
             | ClientMessage::ReportAgentSession { .. }
             | ClientMessage::SpawnPane { .. }
             | ClientMessage::MarkedInput { .. }
+            | ClientMessage::SendMouse { .. }
             | ClientMessage::Attachment { .. }
     )
 }

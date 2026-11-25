@@ -350,6 +350,12 @@ impl SessionClient {
         )
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_capabilities(mut self, capabilities: protocol::Capabilities) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+
     pub fn connect(
         endpoint: &IpcEndpoint,
         session: impl Into<String>,
@@ -1152,6 +1158,25 @@ impl SessionClient {
             token,
         });
     }
+    /// Ask the session server to encode and deliver a synthetic mouse gesture for a pane.
+    pub fn send_mouse(
+        &self,
+        request_id: u64,
+        pane_id: PaneId,
+        generation: u64,
+        local: bool,
+        action: crate::control::MouseAction,
+        mark: bool,
+    ) {
+        self.send_control(ClientMessage::SendMouse {
+            request_id,
+            pane_id,
+            local,
+            generation,
+            action,
+            mark,
+        });
+    }
     /// Reply to a server heartbeat.
     pub fn pong(&self, seq: u64) {
         self.send_control(ClientMessage::Pong { seq });
@@ -1556,9 +1581,11 @@ fn inbound_frame_media(frame: &Frame<ServerMessage>) -> MediaWeight {
 fn invalidate_inbound_replacements(queue: &ByteQueue<InboundEvent>, frame: &Frame<ServerMessage>) {
     match frame {
         // A send's wait takes its baseline at the mark: nothing after it may overtake it.
-        Frame::Control(ServerMessage::Attached { .. } | ServerMessage::InputMarked { .. }) => {
-            queue.clear_replacements()
-        }
+        Frame::Control(
+            ServerMessage::Attached { .. }
+            | ServerMessage::InputMarked { .. }
+            | ServerMessage::SendMouseResult { .. },
+        ) => queue.clear_replacements(),
         Frame::Control(ServerMessage::PaneReset { pane_id, .. }) => {
             queue.invalidate_replacements(*pane_id, false)
         }
@@ -2207,6 +2234,19 @@ mod tests {
         client.capabilities =
             protocol::Capabilities::current().without(protocol::Capability::RuntimeMetrics);
         assert!(!client.send_control(ClientMessage::RequestRuntimeMetrics));
+        client.capabilities =
+            protocol::Capabilities::current().without(protocol::Capability::SendMouse);
+        assert!(!client.send_control(ClientMessage::SendMouse {
+            request_id: 1,
+            pane_id: 1,
+            local: false,
+            generation: 1,
+            action: crate::control::MouseAction::Move {
+                position: crate::control::MousePoint { x: 0, y: 0 },
+                modifiers: crate::control::MouseModifiers::default(),
+            },
+            mark: false,
+        }));
         assert!(client.send_control(ClientMessage::Pong { seq: 1 }));
         assert_eq!(
             outbound.try_recv().unwrap(),

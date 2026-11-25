@@ -59,6 +59,12 @@ enum Stage {
     Marking {
         token: u64,
     },
+    /// `send-mouse` is on its way to the server; the wait starts when `SendMouseResult` succeeds,
+    /// or answers immediately with the server's error if it fails.
+    SendingMouse {
+        request_id: u64,
+        origin_epoch: Option<u64>,
+    },
     Watching(ScreenWait),
 }
 
@@ -91,14 +97,27 @@ fn register(
     let started = Instant::now();
     let epoch = ctx.state.runtime_epoch;
     let (pane_id, local, generation, stage) = if plan.after_input {
-        let token = ctx.state.capture_waits.next_token();
-        let input = crate::ops::control::deliver_send(ctx, target, &request.command, token)?;
-        let stage = if input.starting {
-            Stage::Queued
+        if let crate::control::ControlCommand::SendMouse { action, .. } = &request.command {
+            let sent = crate::ops::control::send_mouse_marked(ctx, target, *action)?;
+            (
+                sent.id,
+                sent.local,
+                sent.generation,
+                Stage::SendingMouse {
+                    request_id: sent.request_id,
+                    origin_epoch: sent.origin_epoch,
+                },
+            )
         } else {
-            Stage::Marking { token }
-        };
-        (input.id, input.local, input.generation, stage)
+            let token = ctx.state.capture_waits.next_token();
+            let input = crate::ops::control::deliver_send(ctx, target, &request.command, token)?;
+            let stage = if input.starting {
+                Stage::Queued
+            } else {
+                Stage::Marking { token }
+            };
+            (input.id, input.local, input.generation, stage)
+        }
     } else {
         let Some(id) = target.or(ctx.state.focused_pane()) else {
             return Err(ControlResponse::error_with(
@@ -205,6 +224,79 @@ pub(crate) fn input_marked(ctx: &mut Context<AppRoot>, token: u64) -> Update {
     Update::none()
 }
 
+/// The server answered a waiting `send-mouse`: a refusal answers the caller at once; acceptance
+/// acts as the stream barrier so the wait starts against the post-input screen.
+pub(crate) fn send_mouse_result(
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    request_id: u64,
+    response: ControlResponse,
+) -> Update {
+    let now = Instant::now();
+    let state = &mut ctx.state;
+    let mut waits = std::mem::take(&mut state.capture_waits.waits);
+    let mut matched = false;
+    let mut response = Some(response);
+    waits.retain_mut(|wait| {
+        let Stage::SendingMouse {
+            request_id: id,
+            origin_epoch,
+        } = wait.stage
+        else {
+            return true;
+        };
+        if id != request_id || origin_epoch.is_some_and(|origin| origin != epoch) {
+            return true;
+        }
+        matched = true;
+        let reply = response.take().unwrap_or_else(ControlResponse::empty);
+        if !reply.ok {
+            let _ = wait.reply.send(reply);
+            return false;
+        }
+        if let Some(pane) = find_pane_in_namespace_mut(state, wait.pane_id, wait.local)
+            .filter(|pane| pane.pty_generation == wait.generation)
+        {
+            let screen = pane.terminal.with_screen_mut(|screen| {
+                ScreenWait::start(&wait.plan.wait, screen, true, wait.started, now)
+            });
+            wait.stage = Stage::Watching(screen);
+        }
+        true
+    });
+    waits.append(&mut state.capture_waits.waits);
+    state.capture_waits.waits = waits;
+    if matched {
+        evaluate(ctx, None);
+    }
+    Update::none()
+}
+
+/// Fail every waiting `send-mouse` whose server connection dropped before answering.
+pub(crate) fn fail_send_mouse(
+    state: &mut crate::state::State,
+    origin_epoch: Option<u64>,
+    message: &str,
+) {
+    state.capture_waits.waits.retain(|wait| {
+        let Stage::SendingMouse {
+            origin_epoch: wait_epoch,
+            ..
+        } = wait.stage
+        else {
+            return true;
+        };
+        if wait_epoch != origin_epoch {
+            return true;
+        }
+        let _ = wait.reply.send(ControlResponse::error_with(
+            ControlErrorCode::SessionNotConnected,
+            message,
+        ));
+        false
+    });
+}
+
 /// The periodic look at every pending wait.
 pub(crate) fn tick(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.capture_waits.ticking = false;
@@ -250,7 +342,7 @@ fn evaluate(ctx: &mut Context<AppRoot>, only: Option<(PaneId, bool)>) {
                             .with_screen_mut(|terminal| screen.observe(terminal, now));
                         screen.status(now)
                     }
-                    Stage::Queued | Stage::Marking { .. } => {
+                    Stage::Queued | Stage::Marking { .. } | Stage::SendingMouse { .. } => {
                         let deadline =
                             wait.started + Duration::from_millis(wait.plan.wait.timeout_ms);
                         if now >= deadline {

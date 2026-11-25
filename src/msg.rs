@@ -1095,6 +1095,11 @@ pub enum Msg {
         request_id: u64,
         response: crate::control::ControlResponse,
     },
+    SessionSendMouseResult {
+        epoch: u64,
+        request_id: u64,
+        response: crate::control::ControlResponse,
+    },
     /// A session server answered a control request this UI forwarded to it.
     SessionAttachedControlResult {
         epoch: u64,

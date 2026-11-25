@@ -112,6 +112,7 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::Metrics
         | ControlCommand::SendText { .. }
         | ControlCommand::SendKeys { .. }
+        | ControlCommand::SendMouse { .. }
         | ControlCommand::NewPane { .. }
         | ControlCommand::CapturePane { .. }
         | ControlCommand::PaneLogging { .. }
@@ -891,6 +892,9 @@ impl SessionServer {
                 literal,
                 ..
             } => self.session_send_keys(target, &keys, literal),
+            ControlCommand::SendMouse { target, action, .. } => {
+                self.session_send_mouse(target, &action)
+            }
             ControlCommand::NewPane {
                 command,
                 argv,
@@ -2012,6 +2016,57 @@ impl SessionServer {
             }
         }
         Ok(bytes)
+    }
+
+    fn session_send_mouse(
+        &mut self,
+        target: Option<PaneId>,
+        action: &crate::control::MouseAction,
+    ) -> ControlResponse {
+        let id = match self.session_target_pane(target) {
+            Ok(id) => id,
+            Err(response) => return response,
+        };
+        match self
+            .session_mouse_bytes(id, action)
+            .and_then(|bytes| self.session_write_input(id, bytes))
+        {
+            Ok(()) => ControlResponse::empty(),
+            Err(response) => response,
+        }
+    }
+
+    /// Encode a synthetic mouse gesture for shared pane `id` against its server-side parser state.
+    pub(super) fn session_mouse_bytes(
+        &self,
+        id: PaneId,
+        action: &crate::control::MouseAction,
+    ) -> std::result::Result<Vec<u8>, ControlResponse> {
+        let Some(pane) = self.panes.get(&id) else {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::PaneNotFound,
+                format!("pane {id} not found"),
+            ));
+        };
+        if pane.exited.is_some() || pane.pty.is_none() {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::PaneNotRunning,
+                format!("pane {id} PTY is not running"),
+            ));
+        }
+        Self::encode_mouse_for_pane(id, pane, action)
+    }
+
+    /// Encode `action` for `pane` using its live parser mouse mode, cell dimensions, and grid size.
+    pub(super) fn encode_mouse_for_pane(
+        id: PaneId,
+        pane: &ServerPane,
+        action: &crate::control::MouseAction,
+    ) -> std::result::Result<Vec<u8>, ControlResponse> {
+        let mode = pane.screen().mouse_mode();
+        crate::input::send_mouse::encode_mouse_action(
+            id, action, pane.cols, pane.rows, pane.cell, mode,
+        )
     }
 
     fn session_set_status(

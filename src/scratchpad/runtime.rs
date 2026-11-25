@@ -135,6 +135,7 @@ pub(crate) fn message_for_frame(
         | crate::Msg::SessionPaneLoggingChanged { local: true, .. }
         | crate::Msg::SessionPaneRuntimeChanged { local: true, .. }
         | crate::Msg::SessionAgentReportResult { .. }
+        | crate::Msg::SessionSendMouseResult { .. }
         | crate::Msg::DragAndDrop(crate::update::drag_and_drop::Msg::Pane {
             local: true, ..
         }) => Some(message),
@@ -165,6 +166,27 @@ pub(crate) fn failed(ctx: &mut Context<AppRoot>, message: String) -> Update {
                 ));
         }
     }
+    let pending_mouse = ctx
+        .state
+        .pending_send_mouse_replies
+        .iter()
+        .filter_map(|(&request_id, pending)| pending.origin_epoch.is_none().then_some(request_id))
+        .collect::<Vec<_>>();
+    for request_id in pending_mouse {
+        if let Some(pending) = ctx.state.pending_send_mouse_replies.remove(&request_id) {
+            let _ = pending
+                .reply
+                .send(crate::control::ControlResponse::error_with(
+                    crate::control::ControlErrorCode::SessionNotConnected,
+                    "scratch runtime disconnected before answering send-mouse",
+                ));
+        }
+    }
+    crate::ops::capture_wait::fail_send_mouse(
+        &mut ctx.state,
+        None,
+        "scratch runtime disconnected before answering send-mouse",
+    );
     for pane in &mut ctx.state.scratch.panes {
         pane.terminal.status = ManagedTerminalStatus::Error("scratch runtime disconnected".into());
     }

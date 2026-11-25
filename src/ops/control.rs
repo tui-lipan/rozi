@@ -259,6 +259,14 @@ pub(crate) fn handle_control_request(
             literal,
             ..
         } => send_keys(ctx, target.or(envelope.request.source_pane), keys, literal),
+        ControlCommand::SendMouse { target, action, .. } => {
+            return send_mouse(
+                ctx,
+                target.or(envelope.request.source_pane),
+                action,
+                envelope.reply,
+            );
+        }
         ControlCommand::NewPane {
             command,
             argv,
@@ -1836,6 +1844,122 @@ fn send_keys_to(
 
     deliver_control_input(ctx, &target, bytes, mark);
     Ok(target)
+}
+
+pub(super) struct MarkedMouseSend {
+    pub(super) id: PaneId,
+    pub(super) local: bool,
+    pub(super) generation: u64,
+    pub(super) request_id: u64,
+    pub(super) origin_epoch: Option<u64>,
+}
+
+struct MouseTarget {
+    id: PaneId,
+    generation: u64,
+    local: bool,
+    origin_epoch: Option<u64>,
+    client: crate::session::client::SessionClient,
+}
+
+fn control_mouse_target(
+    ctx: &mut Context<AppRoot>,
+    target: Option<PaneId>,
+) -> std::result::Result<MouseTarget, ControlResponse> {
+    let target = control_input_target(ctx, target)?;
+    if target.starting {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::PaneNotRunning,
+            format!("pane {} is still starting", target.id),
+        ));
+    }
+    let Some(client) = target.client else {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::SessionNotConnected,
+            format!("pane {} session is not connected", target.id),
+        ));
+    };
+    let capability = crate::session::protocol::Capability::SendMouse;
+    if !client.supports(capability) {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::Unsupported,
+            format!(
+                "send-mouse needs rozi >= {} (missing {capability})",
+                capability.introduced_in()
+            ),
+        ));
+    }
+    let origin_epoch =
+        (!crate::scratchpad::contains(&ctx.state, target.id)).then_some(ctx.state.runtime_epoch);
+    Ok(MouseTarget {
+        id: target.id,
+        generation: target.generation,
+        local: target.local,
+        origin_epoch,
+        client,
+    })
+}
+
+fn allocate_send_mouse_request_id(state: &mut crate::state::State) -> u64 {
+    let request_id = state.next_send_mouse_request_id;
+    state.next_send_mouse_request_id = state.next_send_mouse_request_id.wrapping_add(1).max(1);
+    request_id
+}
+
+fn send_mouse(
+    ctx: &mut Context<AppRoot>,
+    target: Option<PaneId>,
+    action: crate::control::MouseAction,
+    reply: std::sync::mpsc::Sender<ControlResponse>,
+) -> Update {
+    let destination = match control_mouse_target(ctx, target) {
+        Ok(destination) => destination,
+        Err(response) => {
+            let _ = reply.send(response);
+            return Update::none();
+        }
+    };
+    let request_id = allocate_send_mouse_request_id(&mut ctx.state);
+    ctx.state.pending_send_mouse_replies.insert(
+        request_id,
+        crate::state::PendingAgentReportReply {
+            origin_epoch: destination.origin_epoch,
+            reply,
+        },
+    );
+    destination.client.send_mouse(
+        request_id,
+        destination.id,
+        destination.generation,
+        destination.local,
+        action,
+        false,
+    );
+    Update::none()
+}
+
+pub(super) fn send_mouse_marked(
+    ctx: &mut Context<AppRoot>,
+    target: Option<PaneId>,
+    action: crate::control::MouseAction,
+) -> std::result::Result<MarkedMouseSend, ControlResponse> {
+    let destination = control_mouse_target(ctx, target)?;
+    let request_id = allocate_send_mouse_request_id(&mut ctx.state);
+    destination.client.send_mouse(
+        request_id,
+        destination.id,
+        destination.generation,
+        destination.local,
+        action,
+        true,
+    );
+    Ok(MarkedMouseSend {
+        id: destination.id,
+        local: destination.local,
+        generation: destination.generation,
+        request_id,
+        origin_epoch: destination.origin_epoch,
+    })
 }
 
 /// Write a `send-text` or `send-keys` request's input as it would be without a wait, marked with
@@ -4927,6 +5051,122 @@ mod tests {
             assert!(answer.ok, "{answer:?}");
             assert!(captured_text(&answer).contains("built"));
             assert!(backend.state().capture_waits_are_empty());
+        });
+    }
+
+    #[test]
+    fn a_ui_send_mouse_round_trips_with_post_input_wait_and_refuses_old_servers() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            let outbound = attach_test_session(&mut backend);
+            feed(&mut backend, b"READY\r\n");
+
+            let action = crate::control::MouseAction::Click {
+                position: crate::control::MousePoint { x: 4, y: 2 },
+                button: crate::control::MouseButton::Left,
+                count: 1,
+                modifiers: crate::control::MouseModifiers::default(),
+            };
+            let response = ask(
+                &mut backend,
+                ControlCommand::SendMouse {
+                    target: Some(1),
+                    action,
+                    wait: pane_wait(Some("CLICKED"), 5_000),
+                    capture: Some(CaptureRender::Text),
+                    scale: None,
+                },
+            );
+            let sent: Vec<_> = outbound
+                .try_iter()
+                .filter(|message| {
+                    !matches!(
+                        message,
+                        ClientOutbound::PresentationInterest(_)
+                            | ClientOutbound::PresentationAcks(_)
+                    )
+                })
+                .collect();
+            let [
+                ClientOutbound::Control(ClientMessage::SendMouse {
+                    request_id,
+                    pane_id: 1,
+                    local: false,
+                    action: sent_action,
+                    mark: true,
+                    ..
+                }),
+            ] = sent.as_slice()
+            else {
+                panic!("UI must forward SendMouse without encoding, got {sent:?}");
+            };
+            assert_eq!(*sent_action, action);
+            let request_id = *request_id;
+
+            // Output arriving before SendMouseResult is pre-input and must not satisfy the wait.
+            feed(&mut backend, b"CLICKED\r\n");
+            assert!(response.try_recv().is_err());
+
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .dispatch(crate::Msg::SessionSendMouseResult {
+                    epoch,
+                    request_id,
+                    response: ControlResponse::empty(),
+                })
+                .expect("dispatch SendMouseResult");
+            assert!(
+                response.try_recv().is_err(),
+                "pre-barrier CLICKED must not satisfy post-input wait"
+            );
+
+            feed(&mut backend, b"after-click\r\nCLICKED\r\n");
+            let answer = response
+                .try_recv()
+                .expect("post-input CLICKED answers the wait");
+            assert!(answer.ok, "{answer:?}");
+            assert!(captured_text(&answer).contains("after-click"));
+            assert!(backend.state().capture_waits_are_empty());
+
+            // An older server without Capability::SendMouse is refused cleanly with no fallback.
+            let (old_client, old_outbound) = SessionClient::test_channel();
+            let old_client = old_client.with_capabilities(
+                crate::session::protocol::Capabilities::current()
+                    .without(crate::session::protocol::Capability::SendMouse),
+            );
+            backend.state_mut().current_mut().session_client = Some(old_client);
+            let refused = ask(
+                &mut backend,
+                ControlCommand::SendMouse {
+                    target: Some(1),
+                    action,
+                    wait: None,
+                    capture: None,
+                    scale: None,
+                },
+            )
+            .try_recv()
+            .expect("old-server refusal is immediate");
+            assert_eq!(refused.code, Some(ControlErrorCode::Unsupported));
+            assert!(
+                refused
+                    .error
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("needs rozi >="),
+                "{refused:?}"
+            );
+            let old_sent: Vec<_> = old_outbound
+                .try_iter()
+                .filter(|message| {
+                    !matches!(
+                        message,
+                        ClientOutbound::PresentationInterest(_)
+                            | ClientOutbound::PresentationAcks(_)
+                    )
+                })
+                .collect();
+            assert!(old_sent.is_empty(), "{old_sent:?}");
         });
     }
 

@@ -425,6 +425,9 @@
 #allow_takeover = true
 # Autosave file location. Defaults under $XDG_STATE_HOME/rozi.
 #path = "~/.local/state/rozi/session.toml"
+# The terminal emulator behind every pane: "ghostty" or "alacritty". A build without Ghostty uses
+# "alacritty". Read when rozi or a session starts; a running session keeps its engine.
+#terminal_engine = "ghostty"
 
 [remote]
 # SSH attach to a session server on another host. The client and this config stay local;
@@ -743,12 +746,6 @@
 #cwd = "~"
 #restart = "on-failure"
 #env = { RUST_LOG = "info" }
-
-[experimental]
-# Unstable switches; they may change or go away in any release.
-# The terminal emulator behind every pane: "alacritty" or "ghostty". Read when rozi or a session
-# starts; a running session keeps its engine until it restarts.
-#terminal_engine = "alacritty"
 
 # Rebind built-in actions, or define new commands. Binding forms:
 #   "b"              bare key - replaces the default and follows the [input] scheme

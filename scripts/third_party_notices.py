@@ -99,7 +99,7 @@ def render() -> str:
     out = [
         "# Third-party notices",
         "",
-        "rozi is MPL-2.0 (see `LICENSE`). Builds with the experimental Ghostty terminal engine,",
+        "rozi is MPL-2.0 (see `LICENSE`). Builds with the Ghostty terminal engine,",
         "which include the release archives, also contain the native code below, compiled from",
         f"`{SOURCE_CRATE}` {version}.",
         "",

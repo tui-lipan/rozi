@@ -1,6 +1,6 @@
 //! The emulator engine behind this process's terminal screens.
 //!
-//! `[experimental] terminal_engine` picks it. The session server and each UI client resolve it
+//! `[session] terminal_engine` picks it. The session server and each UI client resolve it
 //! from their own config once, before they build a screen, and keep it for the life of the
 //! process, so one process never mixes engines and a config reload does not switch it. The two
 //! processes need not agree: what crosses between them - live output, attach replays, resurrection
@@ -12,13 +12,22 @@ use std::sync::OnceLock;
 
 use tui_lipan::TerminalScreen;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TerminalEngine {
-    /// `alacritty_terminal`, the default.
-    #[default]
+    /// `alacritty_terminal`, the default in a build without the Ghostty engine.
     Alacritty,
-    /// libghostty-vt, with the `ghostty-engine` feature. Experimental.
+    /// libghostty-vt, with the `ghostty-engine` feature. The default in a build that has it.
     Ghostty,
+}
+
+impl Default for TerminalEngine {
+    fn default() -> Self {
+        if cfg!(feature = "ghostty-engine") {
+            Self::Ghostty
+        } else {
+            Self::Alacritty
+        }
+    }
 }
 
 impl TerminalEngine {
@@ -54,14 +63,14 @@ pub(crate) fn active() -> TerminalEngine {
     *ACTIVE.get_or_init(default_engine)
 }
 
-/// Alacritty, except that the crate's own tests run on Ghostty with
-/// `ROZI_TEST_TERMINAL_ENGINE=ghostty` (see `dev/terminal-engines.md`).
+/// The build's default engine, except that the crate's own tests run on Alacritty with
+/// `ROZI_TEST_TERMINAL_ENGINE=alacritty` (see `dev/terminal-engines.md`).
 fn default_engine() -> TerminalEngine {
-    #[cfg(all(test, feature = "ghostty-engine"))]
-    if std::env::var_os("ROZI_TEST_TERMINAL_ENGINE").is_some_and(|engine| engine == "ghostty") {
-        return TerminalEngine::Ghostty;
+    #[cfg(test)]
+    if std::env::var_os("ROZI_TEST_TERMINAL_ENGINE").is_some_and(|engine| engine == "alacritty") {
+        return TerminalEngine::Alacritty;
     }
-    TerminalEngine::Alacritty
+    TerminalEngine::default()
 }
 
 /// A bare screen on this process's engine. Panes use [`super::new_terminal_screen`]; this is for

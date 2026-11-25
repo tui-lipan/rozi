@@ -283,6 +283,10 @@ The limit is fixed when a pane is created. After a config reload, the session ho
 reconnect or resurrection. Two panes in one session can have different limits.
 Open replacement panes to use the new limit.
 
+Clearing the screen at a shell prompt (`Ctrl-L`) moves it into scrollback. On the Ghostty engine,
+this needs [shell integration](#working-directories-and-shell-metadata) to mark the prompt; a
+screen cleared anywhere else is erased in place.
+
 **Edit scrollback** saves the focused pane's history to a private file in the state directory and
 opens it in `$EDITOR`, then `$VISUAL`, then `vi`. rozi keeps about the 20 most recent files. These
 files may contain passwords, tokens, and other private output.

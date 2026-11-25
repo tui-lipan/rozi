@@ -1,6 +1,6 @@
 # Third-party notices
 
-rozi is MPL-2.0 (see `LICENSE`). Builds with the experimental Ghostty terminal engine,
+rozi is MPL-2.0 (see `LICENSE`). Builds with the Ghostty terminal engine,
 which include the release archives, also contain the native code below, compiled from
 `tui-lipan-ghostty-vt-src` 0.3.0+libghostty-vt.1.0.2.
 

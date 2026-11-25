@@ -186,7 +186,7 @@ jobs:
           toolchain: "1.96"
           targets: ${{ matrix.target }}
 
-      # The experimental Ghostty terminal engine (`ghostty-engine`) builds libghostty-vt with Zig.
+      # The Ghostty terminal engine (`ghostty-engine`) builds libghostty-vt with Zig.
       # The Linux containers install their own pinned Zig (scripts/install-zig.sh) and build for
       # the same glibc ceiling as the rest of the payload. Like the rest of this build, the library
       # is not cached.

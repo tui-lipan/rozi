@@ -40,7 +40,7 @@ pub(crate) fn run() {
         ("config_warnings".into(), loaded.warnings.len().to_string()),
         (
             "terminal_engine".into(),
-            loaded.config.experimental.terminal_engine.name().into(),
+            loaded.config.session.terminal_engine.name().into(),
         ),
         (
             "ssh_on_path".into(),

@@ -133,7 +133,6 @@ struct FileConfig {
     logging: LoggingFileConfig,
     capture: CaptureFileConfig,
     recording: RecordingFileConfig,
-    experimental: ExperimentalFileConfig,
     keys: HashMap<String, KeyBindingSpec>,
 }
 
@@ -228,12 +227,6 @@ struct RecordingFileConfig {
     duration: Option<String>,
     max_bytes: Option<String>,
     ui_indicator: Option<bool>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-#[serde(default)]
-struct ExperimentalFileConfig {
-    terminal_engine: Option<String>,
 }
 
 /// A `[keys]` value: replacement bindings, an additive binding table, or a user command table.
@@ -446,6 +439,7 @@ struct SessionFileConfig {
     resurrect_agents: Option<String>,
     allow_takeover: Option<bool>,
     on_attach: Option<String>,
+    terminal_engine: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -817,26 +811,19 @@ fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
     )
 }
 
-/// `experimental.terminal_engine`. An unknown name, or Ghostty in a build without it, warns and
-/// keeps Alacritty.
+/// `session.terminal_engine`. Ghostty in a build without it quietly uses Alacritty, so one config
+/// serves release and source builds alike; an unknown name warns and keeps the default.
 fn terminal_engine(name: &str, warnings: &mut Vec<String>) -> crate::pane::engine::TerminalEngine {
     use crate::pane::engine::TerminalEngine;
     match name {
         "alacritty" => TerminalEngine::Alacritty,
         "ghostty" if cfg!(feature = "ghostty-engine") => TerminalEngine::Ghostty,
-        "ghostty" => {
-            warnings.push(
-                "Ignored experimental.terminal_engine \"ghostty\": this rozi was built without \
-                 the Ghostty engine, so panes use Alacritty"
-                    .to_string(),
-            );
-            TerminalEngine::Alacritty
-        }
+        "ghostty" => TerminalEngine::Alacritty,
         other => {
             warnings.push(format!(
-                "Ignored experimental.terminal_engine {other:?} (expected \"alacritty\" or \"ghostty\")"
+                "Ignored session.terminal_engine {other:?} (expected \"ghostty\" or \"alacritty\")"
             ));
-            TerminalEngine::Alacritty
+            TerminalEngine::default()
         }
     }
 }
@@ -999,8 +986,8 @@ fn load_config_from_text_with_extensions(
         }
     }
     apply_recording_config(parsed.recording, &mut config.recording, &mut warnings);
-    if let Some(engine) = parsed.experimental.terminal_engine {
-        config.experimental.terminal_engine = terminal_engine(&engine, &mut warnings);
+    if let Some(engine) = parsed.session.terminal_engine.as_deref() {
+        config.session.terminal_engine = terminal_engine(engine, &mut warnings);
     }
 
     let mut input = config.input.clone();
@@ -3246,29 +3233,26 @@ on_open = { send = "danger\n" }
     }
 
     #[test]
-    fn a_terminal_engine_this_build_lacks_warns_and_keeps_alacritty() {
+    fn a_terminal_engine_this_build_lacks_falls_back_to_alacritty_and_unknown_ones_warn() {
         use crate::pane::engine::TerminalEngine;
         let path = Path::new("test.toml");
-        let ghostty = cfg!(feature = "ghostty-engine");
-        let loaded = load_config_from_text("[experimental]\nterminal_engine = \"ghostty\"\n", path);
-        let expected = if ghostty {
+        let expected = if cfg!(feature = "ghostty-engine") {
             TerminalEngine::Ghostty
         } else {
             TerminalEngine::Alacritty
         };
-        assert_eq!(loaded.config.experimental.terminal_engine, expected);
-        assert_eq!(
-            loaded.warnings.len(),
-            usize::from(!ghostty),
-            "{:?}",
-            loaded.warnings
-        );
+        let loaded = load_config_from_text("[session]\nterminal_engine = \"ghostty\"\n", path);
+        assert_eq!(loaded.config.session.terminal_engine, expected);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
 
-        let loaded = load_config_from_text("[experimental]\nterminal_engine = \"wezterm\"\n", path);
+        let loaded = load_config_from_text("[session]\nterminal_engine = \"alacritty\"\n", path);
         assert_eq!(
-            loaded.config.experimental.terminal_engine,
+            loaded.config.session.terminal_engine,
             TerminalEngine::Alacritty
         );
+
+        let loaded = load_config_from_text("[session]\nterminal_engine = \"wezterm\"\n", path);
+        assert_eq!(loaded.config.session.terminal_engine, expected);
         assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
     }
 

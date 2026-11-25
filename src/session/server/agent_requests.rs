@@ -1642,7 +1642,14 @@ impl SessionServer {
                 return;
             }
         };
-        let native_session = self.answering_session(target);
+        let native_session = match self.answering(target) {
+            Answering::Known(session) => Some(session),
+            // The launch that took the request is switching conversations: its row and its own
+            // report disagree until both have moved, and the switch may yet come back. Only an
+            // exit or a later launch lets the turn go.
+            Answering::Contradicted if !self.relaunched_since_delivery(target) => return,
+            Answering::Unknown | Answering::Contradicted => None,
+        };
         let slot = self.agent_requests.slots.get(target).expect("listed slot");
         if slot.tracker.native_session_changed(&native_session) {
             if native_session.is_none() && self.suspend_request_slot(target) {
@@ -1710,6 +1717,19 @@ impl SessionServer {
         if (turn_ended || undetected) && rested {
             self.answer_request_from_screen(target);
         }
+    }
+
+    /// Whether `target`'s pane has launched its agent again since the request its turn settles was
+    /// delivered.
+    fn relaunched_since_delivery(&self, target: &protocol::AgentRef) -> bool {
+        let slot = &self.agent_requests.slots[target];
+        let launch = self
+            .agent_requests
+            .get(&slot.request)
+            .map(|stored| stored.launch);
+        self.panes
+            .get(&target.pane.pane_id)
+            .is_none_or(|pane| Some(pane.runtime.agent_launch) != launch)
     }
 
     /// Keep what `target`'s integration published since the last look, so a run that takes several

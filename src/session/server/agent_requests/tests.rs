@@ -1449,6 +1449,45 @@ fn a_promised_answer_survives_a_switch_back_in_either_update_order() {
     }
 }
 
+/// While a publisher and the agent's own report disagree about the conversation on screen, a
+/// request owed in the current turn stays tied to that turn instead of becoming a promised answer.
+#[test]
+fn a_brief_disagreement_about_the_conversation_leaves_a_turns_request_in_its_turn() {
+    for rows_first in [false, true] {
+        let case = format!("rows_first={rows_first}");
+        let mut rig = Rig::new(&[3]);
+        let (client, _stream) = super::super::tests::attach_client(&mut rig.server);
+        rig.move_to(3, "a");
+        let rows_on =
+            |active: &str, other: &str| vec![agent_row(active, true), agent_row(other, false)];
+        publish_rows(&mut rig, client, rows_on("a", "b"));
+        let request = rig.ask(None, 3, "Check this.");
+        assert_eq!(request.state, AgentRequestState::Active, "{case}");
+
+        // Only one side has moved to `b` before the switch is undone.
+        if rows_first {
+            publish_rows(&mut rig, client, rows_on("b", "a"));
+        } else {
+            rig.move_to(3, "b");
+        }
+        rig.server.pump_agent_requests();
+        if rows_first {
+            publish_rows(&mut rig, client, rows_on("a", "b"));
+        } else {
+            rig.move_to(3, "a");
+        }
+        rig.server.pump_agent_requests();
+
+        let stored = rig.server.agent_requests.get(&request.id).unwrap();
+        assert!(!stored.later, "{case}: {:?}", stored.info);
+        assert_eq!(stored.info.state, AgentRequestState::Active, "{case}");
+        assert!(
+            rig.server.agent_requests.slots.contains_key(&request.to),
+            "{case}: the turn still owns the request"
+        );
+    }
+}
+
 /// The request lists queued for `client` and not yet sent, in order.
 fn request_lists(server: &SessionServer, client: ClientId) -> Vec<Vec<String>> {
     use super::super::tests::{DecodedOutboxFrame, decode_outbox_frames};

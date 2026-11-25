@@ -152,12 +152,17 @@ rozi send-text --target <PANE_ID> 'literal text'
 rozi send-keys --target <PANE_ID> Enter
 rozi send-keys --target <PANE_ID> C-c
 rozi send-keys --target <PANE_ID> 'echo hi' Enter
+rozi send-mouse --target <PANE_ID> click 10 5 --button left
+rozi send-mouse --target <PANE_ID> scroll-down 10 5 --count 3
 rozi --session dev send-keys --target <PANE_ID> 'cargo test' Enter
 ```
 
 `send-text` sends its argument exactly and does not press Enter. `send-keys` accepts text and
 tmux-style names such as `Enter`, `Escape`, `C-c`, arrows, `Tab`, and `F1` through `F12`. Add
-`--literal` when a key-like argument such as `C-c` must be typed literally.
+`--literal` when a key-like argument such as `C-c` must be typed literally. `send-mouse` sends
+`click`, `scroll-up`, `scroll-down`, `move`, or `drag` in zero-based pane cells (with `--button`,
+`--count`, `--modifiers`, and the same wait/capture flags) to an application that enabled mouse
+reporting.
 
 Never sleep and then capture to read a command's answer. Make the send wait for it:
 

@@ -190,7 +190,7 @@ rozi-<version>-x86_64-pc-windows-msvc.zip
 
 Each archive has a root directory with the same name. Unix archives contain `rozi`; the Windows
 archive contains `rozi.exe` and `rozi-launcher.exe`. Every archive also contains `README.md`,
-`LICENSE`, `THIRD_PARTY_NOTICES.md`, and `examples/`. Payloads are built with the experimental
+`LICENSE`, `THIRD_PARTY_NOTICES.md`, and `examples/`. Payloads are built with the
 `ghostty-engine` feature; see [Terminal engines](terminal-engines.md).
 
 The publication bundle also contains:

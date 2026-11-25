@@ -107,7 +107,7 @@ on another rozi version, or a pane that has exited is stale. A stale pane has no
 `ui.displays_session` and `ui.holds_session` distinguish the session on screen from an attachment
 held in the background. Those fields are `null` when unknown. A missing or dead `ROZI_SOCKET`
 does not prevent verification of a live caller session. `session.terminal_engine` and
-`ui.terminal_engine` name the [terminal engine](configuration.md#experimental) each one runs.
+`ui.terminal_engine` name the [terminal engine](configuration.md#session) each one runs.
 
 Put `--here` before a control command to target your own verified session, including a detached
 session or one the UI holds in the background:

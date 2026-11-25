@@ -2738,7 +2738,7 @@ pub fn run_named_session_mode_with_nonce(
         .map_err(|err| resurrect::not_started(name, "its socket could not be bound", &err))?;
     let loaded = crate::config::load_config();
     crate::config::log_config_warnings(&loaded.warnings);
-    crate::pane::engine::install(loaded.config.experimental.terminal_engine);
+    crate::pane::engine::install(loaded.config.session.terminal_engine);
     let (shell, command_shell) = crate::platform::command::resolve_launch_argv(
         loaded.config.shell.as_deref(),
         loaded.config.command_shell.as_deref(),

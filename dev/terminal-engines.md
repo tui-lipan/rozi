@@ -1,10 +1,10 @@
 # Terminal engines
 
-rozi's panes run on tui-lipan's `TerminalScreen`, which has two emulator engines:
-`alacritty_terminal` (the default) and the experimental libghostty-vt engine. The Ghostty engine is
-compiled in only with the non-default `ghostty-engine` feature; release and nightly builds enable
-it. Users select it with `[experimental] terminal_engine = "ghostty"` (see
-[configuration](../docs/configuration.md#experimental)).
+rozi's panes run on tui-lipan's `TerminalScreen`, which has two emulator engines: libghostty-vt
+and `alacritty_terminal`. The Ghostty engine is compiled in only with the non-default
+`ghostty-engine` feature; release and nightly builds enable it. A build that has it runs on Ghostty
+unless `[session] terminal_engine = "alacritty"` (see
+[configuration](../docs/configuration.md#session)); a build without it runs on Alacritty.
 
 ## Building
 
@@ -32,14 +32,17 @@ compressed in small steps, in the server and in each client (`src/pane/idle_comp
 
 ## Tests
 
-Unit tests build their screens through the same switch. Run the lib suite on Ghostty with:
+Tests run on the build's default engine: Ghostty with `--features ghostty-engine`, Alacritty
+without. CI's OS matrix runs the whole suite with the feature. Its `alacritty engine` job runs the
+whole suite without it on Linux, as a plain source build. Unit tests can also run on Alacritty in a
+Ghostty build:
 
 ```bash
-ROZI_TEST_TERMINAL_ENGINE=ghostty cargo test --features ghostty-engine --lib
+ROZI_TEST_TERMINAL_ENGINE=alacritty cargo test --features ghostty-engine --lib
 ```
 
-CI's `ghostty engine` job does this on Linux. Integration tests under `tests/` start real
-processes, which read the scratch config and so run on Alacritty.
+Integration tests under `tests/` start real processes, which read the scratch config and so run on
+the build's default engine.
 
 ## Third-party notices
 

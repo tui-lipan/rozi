@@ -161,9 +161,9 @@ ui-snapshot = ["tui-lipan/ui-snapshot-png"]
 # CI's check and lint steps, which keep type-checking it on all three hosts.
 windows-launcher = []
 
-# Experimental: build tui-lipan's libghostty-vt terminal engine, selectable with
-# `[experimental] terminal_engine = "ghostty"`. Building it needs Zig 0.17; release and nightly
-# builds enable it, a plain source build does not.
+# Build tui-lipan's libghostty-vt terminal engine, the default `[session] terminal_engine` in a build
+# that has it. Building it needs Zig 0.17; release and nightly builds enable it, a plain source
+# build does not and runs on Alacritty.
 ghostty-engine = ["tui-lipan/terminal-ghostty"]
 
 # Regenerates the checked-in control API JSON Schema from the types that actually serialize the

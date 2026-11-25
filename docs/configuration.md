@@ -673,6 +673,7 @@ Each switch controls whether rozi asks before a destructive action. They apply t
 | `path` | path string | `session.toml` in the state directory | Autosave file. `~` expands. The default file is private (mode `0600`); a path you choose gets ordinary permissions. |
 | `allow_takeover` | bool | `true` | Lets a writable follower take layout control immediately. |
 | `on_attach` | string | `"ask"` | When another client controls the session: `"ask"` offers Follow, control, or Cancel; `"follow"` and `"take"` choose without prompting. `sessions attach --follow` or `--take-control` overrides it for one attach. |
+| `terminal_engine` | string | `"ghostty"` | The terminal emulator behind every pane: `"ghostty"` or `"alacritty"`. Read when rozi or a session starts, so a running session keeps its engine; `rozi context` and `rozi sessions` show the engine in use. A build without Ghostty ([Build from source](installation.md#build-from-source)) uses `"alacritty"`. |
 
 See [Sessions](sessions.md).
 
@@ -1156,14 +1157,6 @@ failures within 60 seconds, the service stays stopped until you change its defin
 each service's process group when the client exits.
 
 For packaged automation, use extension services instead. See [Services](writing-extensions.md#services).
-
-## `[experimental]`
-
-Unstable settings. They may change or disappear in any release.
-
-| Key | Type | Default | Constraints and behavior |
-| --- | --- | --- | --- |
-| `terminal_engine` | string | `"alacritty"` | The terminal emulator behind every pane: `"alacritty"` or `"ghostty"`. Read when rozi or a session starts, so a running session keeps its engine; `rozi context` and `rozi sessions` show the engine in use. A build without Ghostty ([Build from source](installation.md#build-from-source)) warns and uses `"alacritty"`. |
 
 ## `[keys]`
 

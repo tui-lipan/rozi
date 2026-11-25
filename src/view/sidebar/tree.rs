@@ -49,7 +49,7 @@ pub(super) fn tree_tab(
         .explorer_focus_key(explorer_focus_key)
         .show_icons(nerd_icons)
         .icon_style(FileIconStyle::NerdFontColored)
-        .icon_palette(theme.file_icons.clone())
+        .icon_palette(theme.file_icons)
         .show_arrows(!nerd_icons)
         .expanded_arrow("▼")
         .collapsed_arrow("▶")

@@ -37,6 +37,12 @@ const UNDETECTED_TURN: Duration = Duration::from_secs(60);
 /// checked for having taken it at all. A program still starting, or busy redrawing, can drop
 /// what is typed into it without a trace.
 const DELIVERY_CHECK: Duration = Duration::from_secs(10);
+/// How long the launch that took a request may switch conversations with its published row and
+/// its own report naming different ones, before the turn gives up on the request.
+const SWITCH_WINDOW: Duration = Duration::from_secs(10);
+/// Why a turn's request fails when its agent's row and its own report never agree.
+const UNSETTLED_SWITCH: &str =
+    "the agent's published row and its own report kept naming different conversations";
 /// How many times a request is typed into an agent that shows no trace of it.
 const MAX_DELIVERY_ATTEMPTS: u8 = 2;
 /// The trailing lines of a pane, visible screen and scrollback, searched for a delivered request.
@@ -85,6 +91,7 @@ pub(super) struct AgentRequestStore {
     pub(super) quiet: Duration,
     undetected_turn: Duration,
     delivery_check: Duration,
+    switch_window: Duration,
     /// Bumped on every change to `requests`, so attached clients are told only when it moves.
     revision: u64,
     /// The revision attached clients were last sent, and what they were sent.
@@ -104,6 +111,7 @@ impl Default for AgentRequestStore {
             quiet: QUIET_WINDOW,
             undetected_turn: UNDETECTED_TURN,
             delivery_check: DELIVERY_CHECK,
+            switch_window: SWITCH_WINDOW,
             revision: 0,
             sent_revision: 0,
             sent: Vec::new(),
@@ -118,7 +126,7 @@ struct StoredRequest {
     /// The native conversation the request was bound to before a handoff to a reference that
     /// names none stopped it insisting on one. Its agent can still exit and resume it.
     resumable_session: Option<String>,
-    /// The pane's agent launch the request was delivered to, or later resumed in. Only a later
+    /// The pane's agent launch the request was asked of, delivered to, or later resumed in. Only a later
     /// launch can have resumed it in a conversation other than the row it was sent to.
     launch: u64,
     /// 1 for a request asked outside any other.
@@ -207,6 +215,9 @@ struct DeliverySlot {
     shown: bool,
     /// How many times the request has been typed.
     attempts: u8,
+    /// Since when the agent's published row and its own report have named different
+    /// conversations.
+    contradicted_since: Option<Instant>,
     /// The pane's recent text just before the request was last typed, to tell a delivery that
     /// left no trace at all from a screen that moved on to something else.
     before: u64,
@@ -882,11 +893,12 @@ impl SessionServer {
             delivered_at_unix_ms: None,
         };
         self.agent_requests.revision += 1;
+        let launch = self.panes[&to.pane.pane_id].runtime.agent_launch;
         self.agent_requests.requests.push(StoredRequest {
             info,
             target_agent: target_agent.identity.id,
             resumable_session: None,
-            launch: 0,
+            launch,
             depth,
             later: false,
         });
@@ -1642,12 +1654,27 @@ impl SessionServer {
                 return;
             }
         };
-        let native_session = match self.answering(target) {
-            Answering::Known(session) => Some(session),
+        let answering = self.answering(target);
+        let switching =
+            matches!(answering, Answering::Contradicted) && !self.relaunched_since_delivery(target);
+        let window = self.agent_requests.switch_window;
+        let slot = slot_mut(&mut self.agent_requests, target);
+        if !switching {
+            slot.contradicted_since = None;
+        } else if slot
+            .contradicted_since
+            .get_or_insert_with(Instant::now)
+            .elapsed()
+            < window
+        {
             // The launch that took the request is switching conversations: its row and its own
-            // report disagree until both have moved, and the switch may yet come back. Only an
-            // exit or a later launch lets the turn go.
-            Answering::Contradicted if !self.relaunched_since_delivery(target) => return,
+            // report disagree until both have moved, and the switch may yet come back.
+            return;
+        } else {
+            return self.finish_request_turn(target, TurnOutcome::Failed(UNSETTLED_SWITCH.into()));
+        }
+        let native_session = match answering {
+            Answering::Known(session) => Some(session),
             Answering::Unknown | Answering::Contradicted => None,
         };
         let slot = self.agent_requests.slots.get(target).expect("listed slot");
@@ -2052,7 +2079,19 @@ impl SessionServer {
             Ok(runtime) => runtime,
             Err(reason) => return Readiness::Fail(reason),
         };
-        let native_session = self.answering_session(&to);
+        let answering = self.answering(&to);
+        let launch = self.agent_requests.get(id).map(|stored| stored.launch);
+        // The launch it was asked of may be switching back to the conversation it is bound to.
+        if matches!(answering, Answering::Contradicted)
+            && recorded_session.is_some()
+            && Some(self.panes[&to.pane.pane_id].runtime.agent_launch) == launch
+        {
+            return Readiness::Wait("the agent is switching conversations".into());
+        }
+        let native_session = match answering {
+            Answering::Known(session) => Some(session),
+            Answering::Unknown | Answering::Contradicted => None,
+        };
         if recorded_session.is_some() && native_session != recorded_session {
             return Readiness::Fail("the agent moved to another conversation".into());
         }
@@ -2167,6 +2206,7 @@ impl SessionServer {
                     waiting_after_screen_block: false,
                     shown: no_reply,
                     attempts: 1,
+                    contradicted_since: None,
                     before,
                 },
             );

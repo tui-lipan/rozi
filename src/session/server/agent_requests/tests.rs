@@ -1488,6 +1488,42 @@ fn a_brief_disagreement_about_the_conversation_leaves_a_turns_request_in_its_tur
     }
 }
 
+/// A disagreement that never settles gives up on the turn's request and frees the agent for the
+/// requests queued behind it.
+#[test]
+fn a_disagreement_that_never_settles_releases_the_turn() {
+    let mut rig = Rig::new(&[3]);
+    let (client, _stream) = super::super::tests::attach_client(&mut rig.server);
+    rig.move_to(3, "a");
+    publish_rows(&mut rig, client, vec![agent_row("a", true)]);
+    let request = rig.ask(None, 3, "Check this.");
+    assert_eq!(request.state, AgentRequestState::Active);
+    let next = rig.ask(None, 3, "Then this.");
+    assert_eq!(next.state, AgentRequestState::Queued);
+
+    rig.move_to(3, "b");
+    rig.server.pump_agent_requests();
+    assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
+    assert_eq!(rig.request(&next.id).state, AgentRequestState::Queued);
+
+    rig.server.agent_requests.switch_window = Duration::ZERO;
+    rig.server.pump_agent_requests();
+    let failed = rig.request(&request.id);
+    assert_eq!(failed.state, AgentRequestState::Failed);
+    assert_eq!(failed.reason.as_deref(), Some(UNSETTLED_SWITCH));
+    assert!(!rig.server.agent_requests.slots.contains_key(&request.to));
+    // Bound to `a`, the next request waits for the switch to settle, not for the old turn.
+    let queued = rig.request(&next.id);
+    assert_eq!(queued.state, AgentRequestState::Queued);
+    assert_eq!(
+        queued.reason.as_deref(),
+        Some("the agent is switching conversations")
+    );
+    rig.move_to(3, "a");
+    rig.server.pump_agent_requests();
+    assert_eq!(rig.request(&next.id).state, AgentRequestState::Active);
+}
+
 /// The request lists queued for `client` and not yet sent, in order.
 fn request_lists(server: &SessionServer, client: ClientId) -> Vec<Vec<String>> {
     use super::super::tests::{DecodedOutboxFrame, decode_outbox_frames};
@@ -2177,6 +2213,7 @@ fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
                 waiting_after_screen_block: false,
                 shown: true,
                 attempts: 1,
+                contradicted_since: None,
                 before: 0,
             },
         );

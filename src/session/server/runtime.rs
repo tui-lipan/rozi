@@ -3945,23 +3945,23 @@ fn read_agent_state(pane: &mut ServerPane, agents: &AgentCatalog) -> Option<Dete
         return pane.runtime.detected_agent.clone();
     }
     let title = pane.effective_title();
-    let screen = pane.screen_without_change().snapshot();
+    let snapshot = pane.screen_without_change().render_snapshot();
     let now = Instant::now();
     // Unchanged text is not new evidence, so reusing the resolved answer also keeps the hold's age
     // measuring from the last real observation. The settle still runs on it: the grace has to be
     // able to expire on a pane that has stopped redrawing, or the last frame before it went quiet
     // decides the state forever.
     let cached = pane.agent.read.as_ref().and_then(|last| {
-        (std::sync::Arc::ptr_eq(&last.screen, &screen) && last.title == title)
+        (std::sync::Arc::ptr_eq(&last.screen, &snapshot.text) && last.title == title)
             .then(|| last.resolved.clone())
     });
     let resolved = match cached {
         Some(resolved) => resolved,
         None => {
-            let mut observed = crate::agent_detection::observe(
+            let mut observed = crate::agent_detection::observe_snapshot(
                 agents,
                 definition,
-                screen.as_ref(),
+                &snapshot,
                 title.as_deref().unwrap_or_default(),
             );
             let shows_pending_prompt =
@@ -3984,7 +3984,7 @@ fn read_agent_state(pane: &mut ServerPane, agents: &AgentCatalog) -> Option<Dete
             }
             let resolved = resolve_detected_agent(Some(observed), &mut pane.agent.hold, now);
             pane.agent.read = Some(super::AgentRead {
-                screen,
+                screen: snapshot.text,
                 title,
                 resolved: resolved.clone(),
             });
@@ -4023,22 +4023,22 @@ fn read_screen_blocker(
         return None;
     };
     let title = pane.effective_title();
-    let screen = pane.screen_without_change().snapshot();
+    let snapshot = pane.screen_without_change().render_snapshot();
     if let Some(last) = pane.agent.blocker_read.as_ref()
-        && std::sync::Arc::ptr_eq(&last.screen, &screen)
+        && std::sync::Arc::ptr_eq(&last.screen, &snapshot.text)
         && last.title == title
     {
         return last.blocker.clone();
     }
-    let blocker = crate::agent_detection::observe(
+    let blocker = crate::agent_detection::observe_snapshot(
         agents,
         definition,
-        screen.as_ref(),
+        &snapshot,
         title.as_deref().unwrap_or_default(),
     )
     .blocker;
     pane.agent.blocker_read = Some(super::AgentBlockerRead {
-        screen,
+        screen: snapshot.text,
         title,
         blocker: blocker.clone(),
     });
@@ -4144,11 +4144,11 @@ fn startup_blocker_on_screen(
         .as_deref()
         .and_then(|id| agents.by_id(id))?;
     let title = pane.effective_title();
-    let screen = pane.screen_without_change().snapshot();
-    let blocker = crate::agent_detection::observe(
+    let snapshot = pane.screen_without_change().render_snapshot();
+    let blocker = crate::agent_detection::observe_snapshot(
         agents,
         definition,
-        screen.as_ref(),
+        &snapshot,
         title.as_deref().unwrap_or_default(),
     )
     .blocker?;
@@ -4170,7 +4170,7 @@ pub(super) fn note_pane_input(pane: &mut ServerPane, agents: &AgentCatalog, byte
     {
         return;
     }
-    let screen = pane.screen_without_change().snapshot();
+    let snapshot = pane.screen_without_change().render_snapshot();
     let reported = pane
         .runtime
         .integration
@@ -4183,16 +4183,16 @@ pub(super) fn note_pane_input(pane: &mut ServerPane, agents: &AgentCatalog, byte
         .and_then(|id| agents.by_id(id))
         .is_some_and(|definition| {
             let title = pane.effective_title().unwrap_or_default();
-            crate::agent_detection::observe(agents, definition, &screen, &title).state
+            crate::agent_detection::observe_snapshot(agents, definition, &snapshot, &title).state
                 == Some(protocol::DetectedAgentState::Blocked)
         });
     let answered = pane
         .agent
         .answered
         .as_ref()
-        .is_some_and(|answered| std::sync::Arc::ptr_eq(answered, &screen));
+        .is_some_and(|answered| std::sync::Arc::ptr_eq(answered, &snapshot.text));
     if (reported || shown) && !answered {
-        pane.agent.answered = Some(screen);
+        pane.agent.answered = Some(snapshot.text);
     } else {
         pane.agent.start_run();
     }

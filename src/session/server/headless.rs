@@ -1667,11 +1667,9 @@ impl SessionServer {
             return Ok(());
         };
         let title = pane.effective_title().unwrap_or_default();
-        let screen = pane.screen_without_change().snapshot();
-        if crate::agent_detection::blocked_screen_outranks_reports(
-            definition,
-            screen.as_ref(),
-            &title,
+        let snapshot = pane.screen_without_change().render_snapshot();
+        if crate::agent_detection::blocked_screen_outranks_reports_snapshot(
+            definition, &snapshot, &title,
         ) {
             return Err(ControlResponse::error_with(
                 ControlErrorCode::AgentBlocked,

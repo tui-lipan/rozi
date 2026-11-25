@@ -2,7 +2,7 @@
 # replaced by `~`. Rules match substrings, so neither edit changes what they read.
 source = "capture"
 captured_at = "2026-08-20"
-notes = "codex CLI, first launch in an unseen directory"
+notes = "codex CLI, first launch in an unseen directory; Codex 0.172.0 usage limit added 2026-11-24"
 
 # A pane waiting for permission looks perfectly quiet, which is the worst way for detection to be
 # wrong: nothing on this screen said "blocked" before the shared vocabulary learned the phrasing.
@@ -265,4 +265,28 @@ screen = '''
 
   GPT-6.1-Sol medium · ~/Projects/rozi
   ← for agents · ? for shortcuts
+'''
+
+# Captured from Codex 0.172.0 on 2026-11-24 at its usage limit; transcript trimmed above the last
+# tool call. Codex reported an error with no reason, so nobody could tell a quota stop from a crash
+# or when it would lift, and the screen has to outrank that report.
+[[case]]
+name = "usage-limit"
+state = "blocked"
+blocker = "usage-limit"
+reset = "Nov 25th, 2026 8:11 PM"
+screen = '''
+• Ran rg -n 'answer_request|accept.*reply|settled_reply|native_session|handoff' src/session/server/agent_requests.rs …
+  └ +    publish_rows(&mut rig, client, vec![agent_row("other", true)]);
+    +    assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
+    +}
+    + 458 lines (^t to expand)
+
+■ You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 25th, 2026 8:11 PM.
+
+
+› Ask Codex to do anything
+
+  GPT-6.2-Sol medium · ~/Projects/rozi · Review the fix
+  ← for agents · ? for shortcuts                                                                                                                                                                                ⚠ 2 warnings · f2 to view
 '''

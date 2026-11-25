@@ -155,6 +155,13 @@ impl Pattern {
             Self::Regex(regex) => regex.as_str(),
         }
     }
+
+    fn last_match_start(&self, haystack: &str) -> Option<usize> {
+        match self {
+            Self::Literal(needle) => haystack.rfind(needle),
+            Self::Regex(regex) => regex.find_iter(haystack).last().map(|found| found.start()),
+        }
+    }
 }
 
 /// One state rule: a set of needles over one observation, and what a match concludes.
@@ -185,6 +192,39 @@ impl AgentStateRule {
             && (self.any_of.is_empty()
                 || self.any_of.iter().any(|pattern| pattern.matches(haystack)))
             && !self.none_of.iter().any(|pattern| pattern.matches(haystack))
+    }
+
+    /// The original-case screen text from the start of this rule's live match to the end of its
+    /// scope, so metadata such as a usage-limit reset time comes from the matching warning rather
+    /// than an earlier one still visible in the same window.
+    pub(super) fn matched_screen_tail(
+        &self,
+        screen: &str,
+        footer: &str,
+        lower_screen: &str,
+        lower_footer: &str,
+    ) -> Option<String> {
+        if self.source != MatchSource::Screen {
+            return None;
+        }
+        let (original, lower) = match self.scope {
+            MatchScope::All => (screen, lower_screen),
+            MatchScope::Footer => (footer, lower_footer),
+        };
+        let start = if !self.any_of.is_empty() {
+            self.any_of
+                .iter()
+                .filter_map(|pattern| pattern.last_match_start(lower))
+                .max()?
+        } else {
+            self.all_of
+                .iter()
+                .filter_map(|pattern| pattern.last_match_start(lower))
+                .min()?
+        };
+        let start_line = lower[..start].bytes().filter(|&byte| byte == b'\n').count();
+        let lines: Vec<&str> = original.lines().skip(start_line).collect();
+        Some(lines.join("\n"))
     }
 }
 
@@ -378,25 +418,27 @@ pub fn evaluate(
     base: &[AgentStateRule],
     input: AgentDetectionInput<'_>,
 ) -> Option<DetectedAgentState> {
-    evaluate_with_blocker(definition, base, input).0
+    let footer = footer_text(input.screen);
+    evaluate_with_blocker(definition, base, input, &footer).0
 }
 
 pub(super) fn evaluate_with_blocker<'a>(
     definition: &'a AgentDefinition,
     base: &'a [AgentStateRule],
     input: AgentDetectionInput<'_>,
-) -> (Option<DetectedAgentState>, Option<&'a str>) {
-    let footer = footer_text(input.screen);
+    footer: &str,
+) -> (Option<DetectedAgentState>, Option<&'a AgentStateRule>) {
     let base = if definition.base { base } else { &[] };
     for outcome in AgentStateOutcome::PRECEDENCE {
         let mut matching = definition.states.iter().chain(base).filter(|rule| {
-            rule.state == outcome && rule.matches(input.screen, &footer, input.title)
+            rule.state == outcome && rule.matches(input.screen, footer, input.title)
         });
         if let Some(first) = matching.next() {
             let blocker = first
                 .blocker
-                .as_deref()
-                .or_else(|| matching.find_map(|rule| rule.blocker.as_deref()));
+                .is_some()
+                .then_some(first)
+                .or_else(|| matching.find(|rule| rule.blocker.is_some()));
             return (outcome.resolve(), blocker);
         }
     }
@@ -407,19 +449,29 @@ pub(super) fn evaluate_with_blocker<'a>(
 }
 
 /// Whether the live screen shows a blocker that takes precedence over a report.
+#[cfg(test)]
 pub fn blocked_screen_outranks_reports(
     definition: &AgentDefinition,
     input: AgentDetectionInput<'_>,
 ) -> bool {
     let footer = footer_text(input.screen);
+    blocked_screen_outranks_reports_in(definition, input, &footer)
+}
+
+pub(super) fn blocked_screen_outranks_reports_in(
+    definition: &AgentDefinition,
+    input: AgentDetectionInput<'_>,
+    footer: &str,
+) -> bool {
     definition
         .states
         .iter()
         .filter(|rule| rule.outranks_reports)
-        .any(|rule| rule.matches(input.screen, &footer, input.title))
+        .any(|rule| rule.matches(input.screen, footer, input.title))
 }
 
 /// The last [`FOOTER_ROWS`] non-empty lines, in original order.
+#[cfg(test)]
 pub(super) fn footer_text(screen: &str) -> String {
     let mut lines: Vec<&str> = screen
         .lines()

@@ -497,7 +497,8 @@ once the turn has ended and the screen has settled, read the same way, including
 alternate-screen transcript. An agent that will
 answer after its turn, such as when a background command finishes, runs `rozi agents reply <ID>
 --format text --later` first: the request then stays `active` past the turn, and the agent can take
-the next request meanwhile. What the agent asks while it owes a request belongs to that request; an
+the next request meanwhile. The agent can switch to another conversation and back meanwhile; the
+request fails only if the agent is launched again in another conversation. What the agent asks while it owes a request belongs to that request; an
 agent that owes several names the one with `agents ask --for <ID>`, or the ask is refused. An agent
 that asks before running commands asks before each reply too; for Claude Code, allow `Bash(rozi
 agents:*)` in its permissions. Codex's `workspace-write` sandbox blocks the connection to rozi that

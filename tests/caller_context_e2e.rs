@@ -745,6 +745,81 @@ fn command_with_stub_systemctl(dir: &std::path::Path, script: &str) -> Command {
     command
 }
 
+/// A shell pane a script opens with no UI gets the same shell integration a UI's pane does, so its
+/// prompts are marked and `agents` and capture waits can see them.
+#[cfg(unix)]
+#[test]
+fn a_headless_shell_pane_runs_with_shell_integration() {
+    use std::time::{Duration, Instant};
+
+    rozi::test_support::isolate_user_dirs();
+    let server = spawn_listener(ServerSettings {
+        shell: vec!["/bin/bash".to_string()],
+        shell_integration: rozi::config::ShellIntegrationMode::Auto,
+        ..ServerSettings::default()
+    });
+    let spawned = run_session_control(
+        server.session(),
+        request(ControlCommand::NewPane {
+            command: None,
+            argv: None,
+            local_cwd: None,
+            cwd: None,
+            title: None,
+            keep_open: false,
+            focus: false,
+            workspace: None,
+            size: None,
+            target: None,
+            split_ratio: None,
+        }),
+    )
+    .unwrap();
+    assert!(spawned.ok, "{spawned:?}");
+    let id = spawned.data.unwrap()["id"].as_u64().unwrap() as u32;
+
+    let typed = run_session_control(
+        server.session(),
+        request(ControlCommand::SendText {
+            target: Some(id),
+            text: "echo loaded=${ROZI_SHELL_INTEGRATION_LOADED:-no}\n".to_string(),
+            wait: None,
+            capture: None,
+            scale: None,
+        }),
+    )
+    .unwrap();
+    assert!(typed.ok, "{typed:?}");
+
+    let deadline = Instant::now() + common::io_timeout();
+    loop {
+        let capture = run_session_control(
+            server.session(),
+            request(ControlCommand::CapturePane {
+                target: Some(id),
+                scrollback: None,
+                render: rozi::control::CaptureRender::Text,
+                scale: None,
+                wait: None,
+                image_pixels: false,
+            }),
+        )
+        .unwrap()
+        .data
+        .unwrap();
+        let text = capture["text"].as_str().unwrap_or_default().to_string();
+        if text.contains("loaded=1") {
+            break;
+        }
+        assert!(!text.contains("loaded=no"), "no shell integration:\n{text}");
+        assert!(
+            Instant::now() < deadline,
+            "the pane never answered:\n{text}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// Start a real server from `command` and report the environment of a pane it opens with no UI.
 #[cfg(unix)]
 fn headless_pane_environment(

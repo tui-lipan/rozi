@@ -322,17 +322,17 @@ pub struct ServerSettings {
     pub allow_takeover: bool,
     /// Scrollback retained by each server-side terminal parser.
     pub scrollback: usize,
-    /// Resolved interactive-shell/command-runner argv used only for snapshot restore ([`resurrect::restore`]),
-    /// which respawns panes with no controlling client yet connected to resolve them - the
-    /// server's own config load is the only launch-policy source available at that point. Empty
-    /// (the default) falls through to `pty_config`'s own `/bin/sh` fallback.
+    /// Resolved interactive-shell/command-runner argv for panes no client prepares: snapshot
+    /// restore ([`resurrect::restore`]), a guest's pane, and a headless split. The server's own
+    /// config load is the only launch-policy source available then. Empty (the default) falls
+    /// through to `pty_config`'s own `/bin/sh` fallback.
     ///
     /// Not yet persisted in the snapshot itself; the cross-platform plan calls for bumping the
     /// snapshot format only if resolved launch policy must be persisted, which restoring against
     /// the server's current config (rather than whatever was resolved when the pane was
     /// originally spawned) does not yet require.
     pub shell: Vec<String>,
-    /// Shell integration for panes restored before a client can prepare their launch policy.
+    /// Shell integration for panes no client prepares, as for [`Self::shell`].
     pub shell_integration: crate::config::ShellIntegrationMode,
     /// `login_shell`, for a pane whose spawn request names no shell, as a remote client's does.
     pub login_shell: crate::platform::command::LoginShell,

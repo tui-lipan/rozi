@@ -278,10 +278,11 @@ or error), or `gone`.
 - Right after `split`, `wait` waits for the new pane's agent to be detected. `get` and `prompt`
   refuse a pane with no agent yet.
 - **Startup prompts.** A CLI opened in a directory it has not seen, such as a new worktree, may ask
-  you to trust it or to sign in. `wait`, `ask --wait`, and `await` then fail at once with
-  `agent-blocked` and the reason; a request already asked stays queued. Capture the screen: `Trust
-  required` covers more than folders. Answer only a prompt that asks to trust the directory itself,
-  and only for one the user asked you to work in, such as a worktree of their project. Leave reviews
+  you to trust it or to sign in. `wait`, `ask --wait`, and `await` fail with `agent-blocked` and
+  the reason. They briefly allow the state to update after input. An open request stays queued.
+  Capture the screen because `Trust required` covers more than folders. Answer only a prompt that
+  asks to trust the directory itself, and only for one the user asked you to work in, such as a
+  worktree of their project. Leave reviews
   of hooks, plugins, MCP servers, or scripts and every sign-in to the user, even in that directory:
   Codex's `Trust all and continue` lets hooks run outside its sandbox. Answer with `send-keys`,
   reading which option is selected first: Claude Code starts on `No, exit`, so a bare `Enter` quits

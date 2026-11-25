@@ -558,6 +558,10 @@ pub struct AgentScratch {
     /// Set from a launch until the agent is ready: until then, working is not a run. See
     /// [`AgentLaunch`].
     pub launch: Option<AgentLaunch>,
+    /// Set from any launch - including one given a command-line prompt, where [`Self::launch`] is
+    /// `None` - until startup settles or a run starts on its own evidence. While set, input checks
+    /// the live screen for a startup prompt detection has not polled yet.
+    startup_prompt: Option<AgentLaunch>,
     /// The screen a line already answered a dialog on, so the next line, typed before the agent
     /// redraws, goes to whatever came after the dialog.
     pub answered: Option<std::sync::Arc<str>>,
@@ -586,6 +590,15 @@ pub struct AgentScratch {
     pub read: Option<AgentRead>,
     /// Cached screen blocker observation while published rows own the pane's state.
     pub blocker_read: Option<AgentBlockerRead>,
+    /// The startup blocker on screen and when it counts as having appeared.
+    /// Detection's poll is late: input that already answered this prompt on the
+    /// screen supplies an earlier instant. See [`runtime::note_startup_prompt_input`].
+    startup_blocker: Option<(std::sync::Arc<protocol::AgentBlocker>, Instant)>,
+    /// A startup prompt read from the screen at the moment input arrived, with an
+    /// instant just before that input. Applied when detection next notices the
+    /// same prompt, then dropped. A poll that sees the prompt gone drops it too,
+    /// so a later prompt is not answered by the keystroke before it.
+    pending_startup_answer: Option<(std::sync::Arc<protocol::AgentBlocker>, Instant)>,
     /// The last state a sweep positively observed, retained while later sweeps see no evidence.
     pub hold: Option<AgentHold>,
     /// The foreground process group last checked against a shell prompt mark, the phase marked,

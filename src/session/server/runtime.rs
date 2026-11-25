@@ -78,6 +78,12 @@ impl AgentScratch {
         // Only the row change that made a carry hands it on; see `replace_pane_rows`.
         self.carried.clear();
         let relaunched = self.reference_launch != runtime.agent_launch;
+        let blocker = runtime
+            .detected_agent
+            .as_ref()
+            .and_then(|detected| detected.blocker.as_ref())
+            .filter(|blocker| blocker.stops_startup());
+        self.sync_startup_blocker(blocker, relaunched);
         if relaunched {
             // A confirmed screen launch renews only the pane-level detected occupant. Claims and
             // published rows have independent identities that survive screen process changes.
@@ -131,6 +137,48 @@ impl AgentScratch {
         if let Some(integration) = &runtime.integration {
             self.bind_claim(integration);
         }
+    }
+
+    /// Stamp the startup prompt detection just noticed.
+    ///
+    /// The poll says the prompt is on screen now, not when it appeared. Input
+    /// that already answered this same prompt, read from the screen at the
+    /// keystroke, keeps an instant from before that keystroke. A relaunch is a
+    /// new prompt even when the question looks the same. Seeing the prompt gone
+    /// after it was noticed drops a pending answer. A sync that has not noticed
+    /// the prompt yet leaves that answer for the poll which will.
+    fn sync_startup_blocker(
+        &mut self,
+        blocker: Option<&std::sync::Arc<protocol::AgentBlocker>>,
+        relaunched: bool,
+    ) {
+        let Some(blocker) = blocker else {
+            // A sync that is not a screen read still carries the last detected
+            // blocker. Dropping the pending answer there would forget a keystroke
+            // that landed before the poll which notices the prompt. Once a prompt
+            // has been noticed and then leaves, the keystroke does not answer the
+            // next one.
+            if self.startup_blocker.is_some() {
+                self.pending_startup_answer = None;
+                self.startup_blocker = None;
+            }
+            return;
+        };
+        let current = self.startup_blocker.as_ref().map(|(blocker, _)| blocker);
+        if !relaunched && current == Some(blocker) {
+            return;
+        }
+        let since = if relaunched {
+            self.pending_startup_answer = None;
+            Instant::now()
+        } else {
+            self.pending_startup_answer
+                .take()
+                .filter(|(answered, _)| answered.as_ref() == blocker.as_ref())
+                .map(|(_, since)| since)
+                .unwrap_or_else(Instant::now)
+        };
+        self.startup_blocker = Some((blocker.clone(), since));
     }
 
     /// Keep the incarnation of an agent a published row took over from screen detection while that
@@ -458,6 +506,7 @@ impl AgentScratch {
     /// work that was already on screen as the launch's loading.
     pub(super) fn start_run(&mut self) {
         self.launch = None;
+        self.startup_prompt = None;
     }
 
     fn ensure_reference(
@@ -2061,6 +2110,26 @@ impl SessionServer {
         }
     }
 
+    /// Note input a person wrote into a session pane. The screen is read only
+    /// when this agent can still be at a startup prompt. People type into a
+    /// running agent at keystroke rate, and that read is the whole detection
+    /// pass.
+    pub(super) fn note_human_pane_input(&mut self, pane_id: PaneId) {
+        let input_at = Instant::now();
+        self.agent_requests.note_pane_input(pane_id);
+        if self
+            .panes
+            .get(&pane_id)
+            .is_none_or(|pane| !may_show_startup_prompt(pane))
+        {
+            return;
+        }
+        let agents = self.settings.agents.clone();
+        if let Some(pane) = self.panes.get_mut(&pane_id) {
+            note_startup_prompt_input(pane, &agents, input_at);
+        }
+    }
+
     /// Recompute `pane_id`'s runtime state and broadcast a
     /// [`ServerMessage::PaneRuntimeChanged`] if it changed. `generation` must match the pane's
     /// current generation - a stale caller (e.g. a queued event racing a respawn) is a silent
@@ -2345,8 +2414,14 @@ fn refresh_agent_identity(
         let launch = identity.is_some() && !adopting;
         // A prompt on the command line is a run from the start, loading screen and all.
         pane.agent.launch = (launch && !prompted).then(super::AgentLaunch::default);
+        // Any launch, prompted or not, can still open on a trust or sign-in dialog before it
+        // settles.
+        pane.agent.startup_prompt = launch.then(super::AgentLaunch::default);
         if launch {
             pane.agent.launches = pane.agent.launches.wrapping_add(1);
+        }
+        if !adopting {
+            pane.agent.pending_startup_answer = None;
         }
         // What the screen said about the previous program does not describe this one. Held
         // over, its `working` would outlast the new loading screen and then end as a run.
@@ -2561,14 +2636,13 @@ fn compute_pane_runtime(
         .iter()
         .any(protocol::PublishedRow::is_agent)
     {
-        advance_launch(
-            &mut pane.agent.launch,
-            crate::session::protocol::effective_semantic_agent_state(
-                integration.as_deref(),
-                pane.runtime.status.as_ref(),
-                detected_agent.as_ref(),
-            ),
+        let semantic_state = crate::session::protocol::effective_semantic_agent_state(
+            integration.as_deref(),
+            pane.runtime.status.as_ref(),
+            detected_agent.as_ref(),
         );
+        advance_launch(&mut pane.agent.launch, semantic_state);
+        advance_startup_prompt(&mut pane.agent.startup_prompt, semantic_state);
     }
     let work_started_at = next_work_started_at(
         &pane.runtime,
@@ -3890,6 +3964,18 @@ fn read_agent_state(pane: &mut ServerPane, agents: &AgentCatalog) -> Option<Dete
                 &snapshot,
                 title.as_deref().unwrap_or_default(),
             );
+            let shows_pending_prompt =
+                pane.agent
+                    .pending_startup_answer
+                    .as_ref()
+                    .is_some_and(|(answered, _)| {
+                        observed.blocker.as_ref().is_some_and(|blocker| {
+                            blocker.stops_startup() && blocker.as_ref() == answered.as_ref()
+                        })
+                    });
+            if pane.agent.pending_startup_answer.is_some() && !shows_pending_prompt {
+                pane.agent.pending_startup_answer = None;
+            }
             // A launching agent that shows nothing readable yet, such as a blank first frame, is
             // loading. Read as idle, it took a prompt before it read input and dropped the Enter.
             if observed.state.is_none() && pane.agent.launch.is_some() && pane.agent.hold.is_none()
@@ -3976,6 +4062,99 @@ fn advance_launch(
     }
 }
 
+/// Follow startup-prompt eligibility through the same launch arc, closing it on an error as well
+/// so a failed command-line prompt does not keep scanning ordinary typing.
+fn advance_startup_prompt(
+    startup_prompt: &mut Option<super::AgentLaunch>,
+    state: Option<crate::session::protocol::AgentState>,
+) {
+    let Some(phase) = startup_prompt.as_mut() else {
+        return;
+    };
+    match state {
+        Some(crate::session::protocol::AgentState::Working) => phase.loading_seen = true,
+        Some(crate::session::protocol::AgentState::Error) => *startup_prompt = None,
+        Some(state) if state.is_quiescent() && phase.loading_seen => *startup_prompt = None,
+        _ => {}
+    }
+}
+
+/// Whether a keystroke might be answering a startup prompt, so the screen is
+/// worth reading.
+///
+/// Startup eligibility lasts through a trust or sign-in dialog - including on a
+/// launch given a command-line prompt, where `launch` is `None` because its work
+/// counts as a run from the start - until the launch settles or a run starts on
+/// its own evidence. Detection's stamp of the same prompt lasts until the prompt
+/// leaves. A running agent has none of these, and its keystrokes only mark the
+/// input.
+fn may_show_startup_prompt(pane: &ServerPane) -> bool {
+    pane.agent.launch.is_some()
+        || pane.agent.startup_prompt.is_some()
+        || pane.agent.startup_blocker.is_some()
+        || pane
+            .runtime
+            .detected_agent
+            .as_ref()
+            .and_then(|detected| detected.blocker.as_ref())
+            .is_some_and(|blocker| blocker.stops_startup())
+}
+
+/// If `pane`'s screen shows a startup prompt, remember that input at `input_at`
+/// answers it. The last poll can be a frame behind the screen the person is
+/// answering, the same way a launch dialog is read here rather than from that
+/// poll. A prompt detection has already stamped, before this input, needs
+/// nothing: the input is simply later than that stamp.
+pub(super) fn note_startup_prompt_input(
+    pane: &mut ServerPane,
+    agents: &AgentCatalog,
+    input_at: Instant,
+) {
+    if pane.agent.history_frozen {
+        return;
+    }
+    let Some(blocker) = startup_blocker_on_screen(pane, agents) else {
+        // This keystroke is not into a startup prompt. An answer recorded for
+        // one that has since left the screen must not cover a later prompt.
+        pane.agent.pending_startup_answer = None;
+        return;
+    };
+    if pane
+        .agent
+        .startup_blocker
+        .as_ref()
+        .is_some_and(|(existing, since)| existing.as_ref() == blocker.as_ref() && *since < input_at)
+    {
+        pane.agent.pending_startup_answer = None;
+        return;
+    }
+    let since = input_at
+        .checked_sub(Duration::from_nanos(1))
+        .unwrap_or(input_at);
+    pane.agent.pending_startup_answer = Some((blocker, since));
+}
+
+fn startup_blocker_on_screen(
+    pane: &mut ServerPane,
+    agents: &AgentCatalog,
+) -> Option<std::sync::Arc<protocol::AgentBlocker>> {
+    let definition = pane
+        .agent
+        .identity
+        .as_deref()
+        .and_then(|id| agents.by_id(id))?;
+    let title = pane.effective_title();
+    let snapshot = pane.screen_without_change().render_snapshot();
+    let blocker = crate::agent_detection::observe_snapshot(
+        agents,
+        definition,
+        &snapshot,
+        title.as_deref().unwrap_or_default(),
+    )
+    .blocker?;
+    blocker.stops_startup().then_some(blocker)
+}
+
 /// Note input written to a pane: a submitted line gives a launching agent work, so its run starts.
 /// A line typed into a dialog answers it instead - the loading after a trust prompt is still
 /// loading.
@@ -3986,7 +4165,9 @@ fn advance_launch(
 /// taking a prompt for an answer only misses a run. A screen's dialog is answered once - a second
 /// line typed before the agent redraws goes to whatever came after it.
 pub(super) fn note_pane_input(pane: &mut ServerPane, agents: &AgentCatalog, bytes: &[u8]) {
-    if pane.agent.launch.is_none() || !input_submits_line(bytes) {
+    if (pane.agent.launch.is_none() && pane.agent.startup_prompt.is_none())
+        || !input_submits_line(bytes)
+    {
         return;
     }
     let snapshot = pane.screen_without_change().render_snapshot();
@@ -6605,7 +6786,8 @@ mod tests {
         assert_eq!(finished, 1);
     }
 
-    /// `codex "fix the tests"` goes from loading straight into the turn it was given.
+    /// `codex "fix the tests"` goes from loading straight into the turn it was given, yet still
+    /// watches for a startup prompt until that turn settles so ordinary typing later skips scans.
     #[test]
     fn a_launch_with_a_prompt_is_a_run_from_the_start() {
         let launch = |argv: &[&str]| {
@@ -6629,11 +6811,28 @@ mod tests {
                 true,
             );
             assert!(pane.agent.identity.is_some());
-            pane.agent.launch.is_none()
+            assert!(may_show_startup_prompt(&pane));
+            pane
         };
-        assert!(launch(&["codex", "--model", "o3", "fix the tests"]));
-        assert!(!launch(&["codex"]));
-        assert!(!launch(&["codex", "resume", "019a"]), "a subcommand");
+        let mut prompted = launch(&["codex", "--model", "o3", "fix the tests"]);
+        assert!(prompted.agent.launch.is_none());
+        assert!(launch(&["codex"]).agent.launch.is_some());
+        assert!(
+            launch(&["codex", "resume", "019a"]).agent.launch.is_some(),
+            "a subcommand"
+        );
+
+        // Once the prompted turn runs and settles, ordinary typing no longer scans the screen.
+        advance_startup_prompt(
+            &mut prompted.agent.startup_prompt,
+            Some(crate::session::protocol::AgentState::Working),
+        );
+        assert!(may_show_startup_prompt(&prompted));
+        advance_startup_prompt(
+            &mut prompted.agent.startup_prompt,
+            Some(crate::session::protocol::AgentState::Idle),
+        );
+        assert!(!may_show_startup_prompt(&prompted));
     }
 
     #[test]

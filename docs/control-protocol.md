@@ -577,8 +577,8 @@ tracking mode does not report the gesture.
 
 ### Pane waits
 
-`capture-pane`, `send-text`, `send-keys`, and `send-mouse` accept a `wait` object. Without one, the reply is
-immediate.
+`capture-pane`, `send-text`, `send-keys`, and `send-mouse` accept a `wait` object. Without one,
+the reply is immediate.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -590,10 +590,11 @@ immediate.
 else fails with `invalid-argument` before anything is sent or waited for.
 
 - `capture-pane` matches the screen as it is, so text already showing answers at once.
-- `send-text`, `send-keys`, and `send-mouse` write their input first and match only output that arrives after it.
-  Text on screen when the input was written does not count, even once it has scrolled. `settle_ms`
-  counts from once the input has been confirmed and the screen right after it taken as the
-  baseline, which on a UI attached to a remote session can be measurably later than the write.
+- `send-text`, `send-keys`, and `send-mouse` write their input first and match only output that
+  arrives after it. Text on screen when the input was written does not count, even once it has
+  scrolled. `settle_ms` counts from once the input has been confirmed and the screen right after it
+  taken as the baseline, which on a UI attached to a remote session can be measurably later than
+  the write.
 - A changed screen means changed characters, colors, or styles. Cursor movement, title changes, and
   redraws of identical content are not changes.
 - `timeout` and `pane-not-running` (the program exited, or the pane closed) carry the capture in
@@ -739,11 +740,11 @@ gains no authority an attached client would not have.
 A session server answers `list-panes`, `layout-get`, `layout-set`, `pane-set`, `pane-move`,
 `pane-swap`, `pane-close`, `context`, `agents-list`, `agent-get`, `agent-read`, `agent-response`, `agent-wait`,
 `agent-prompt`, `agent-ask`, `agent-reply`, `agent-await`, `agent-request`, `agent-requests`,
-`agent-cancel`, `agent-report`, `agent-release`, `agent-session`, `metrics`, `capture-pane`, `send-text`,
-`send-keys`, `send-mouse`, `new-pane`, `set-status`, `pane-logging`, `record-start`, `record-stop`, `record-list`,
-`record-mark`, `share-grant`, `share-revoke`, `share-list`, `extensions-deploy`,
-`extensions-undeploy`, and `extensions-status`. It refuses
-every other `cmd` with `ok: false` and a reason naming what the request needs a UI for.
+`agent-cancel`, `agent-report`, `agent-release`, `agent-session`, `metrics`, `capture-pane`,
+`send-text`, `send-keys`, `send-mouse`, `new-pane`, `set-status`, `pane-logging`, `record-start`,
+`record-stop`, `record-list`, `record-mark`, `share-grant`, `share-revoke`, `share-list`,
+`extensions-deploy`, `extensions-undeploy`, and `extensions-status`. It refuses every other `cmd`
+with `ok: false` and a reason naming what the request needs a UI for.
 
 These requests behave differently than against a UI:
 

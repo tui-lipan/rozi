@@ -2121,6 +2121,72 @@ fn a_keystroke_into_a_running_agent_is_not_a_startup_answer() {
     assert!(rig.server.panes[&3].agent.pending_startup_answer.is_none());
 }
 
+/// An agent launched with an initial command-line prompt has `launch == None` because
+/// its work counts as a run from the start, yet it can still open on a trust prompt.
+/// Answering that prompt before detection polls it still grants the quiet window.
+#[test]
+fn input_into_a_prompted_launch_startup_prompt_counts_before_detection_notices_it() {
+    let mut rig = Rig::new(&[3]);
+    rig.server.agent_requests.quiet = QUIET_WINDOW;
+    let agents = rig.server.settings.agents.clone();
+    let job = crate::platform::process::ForegroundJob {
+        process_group_id: 100,
+        processes: vec![crate::platform::process::ForegroundProcess {
+            pid: 100,
+            started: None,
+            name: "claude".into(),
+            executable: None,
+            argv: vec!["claude".into(), "fix the tests".into()],
+            agent_hint: None,
+        }],
+    };
+    let pane = rig.server.panes.get_mut(&3).unwrap();
+    pane.screen_mut().resize(24, 80);
+    pane.runtime.detected_agent = super::super::runtime::derive_detected_agent(
+        pane,
+        Some(&agents),
+        None,
+        Some(&crate::platform::process::AgentProcessSet::from_foreground_job(&job)),
+        true,
+    );
+    pane.runtime.agent_launch = pane.agent.launches;
+    pane.agent.sync_references(&pane.runtime);
+    assert!(
+        pane.agent.launch.is_none(),
+        "a command-line prompt is a run from the start"
+    );
+
+    // The trust prompt renders and is answered before the next detection poll.
+    pane.screen_mut().process_bytes(
+        b"\x1b[2J\x1b[HYes, I trust this folder\r\nEnter to confirm \xc2\xb7 Esc to cancel\r\n",
+    );
+    rig.server
+        .session_write_input(3, b"\r".to_vec())
+        .expect("the answer is typed");
+
+    let detected = rig.server.panes.get_mut(&3).unwrap();
+    detected.runtime.detected_agent.as_mut().unwrap().blocker = Some(
+        protocol::AgentBlocker {
+            kind: "trust".into(),
+            reset: None,
+        }
+        .into(),
+    );
+    rig.set_state(3, DetectedAgentState::Blocked);
+    let request = rig.ask(None, 3, "plan the release");
+    assert_eq!(request.state, AgentRequestState::Queued);
+    let reply = ReplyTo::Headless {
+        capabilities: protocol::Capabilities::current(),
+        effective_protocol: PROTOCOL_VERSION,
+        permission: crate::session::protocol::Permission::View,
+    };
+    assert!(
+        rig.server
+            .register_request_await(7, None, &request.id, Some(60_000), reply)
+            .is_none()
+    );
+}
+
 fn answered_requests_with_slots(count: usize) -> AgentRequestStore {
     let mut store = AgentRequestStore::default();
     for pane in 0..count {

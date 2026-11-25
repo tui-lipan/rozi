@@ -506,6 +506,7 @@ impl AgentScratch {
     /// work that was already on screen as the launch's loading.
     pub(super) fn start_run(&mut self) {
         self.launch = None;
+        self.startup_prompt = None;
     }
 
     fn ensure_reference(
@@ -2413,8 +2414,14 @@ fn refresh_agent_identity(
         let launch = identity.is_some() && !adopting;
         // A prompt on the command line is a run from the start, loading screen and all.
         pane.agent.launch = (launch && !prompted).then(super::AgentLaunch::default);
+        // Any launch, prompted or not, can still open on a trust or sign-in dialog before it
+        // settles.
+        pane.agent.startup_prompt = launch.then(super::AgentLaunch::default);
         if launch {
             pane.agent.launches = pane.agent.launches.wrapping_add(1);
+        }
+        if !adopting {
+            pane.agent.pending_startup_answer = None;
         }
         // What the screen said about the previous program does not describe this one. Held
         // over, its `working` would outlast the new loading screen and then end as a run.
@@ -2629,14 +2636,13 @@ fn compute_pane_runtime(
         .iter()
         .any(protocol::PublishedRow::is_agent)
     {
-        advance_launch(
-            &mut pane.agent.launch,
-            crate::session::protocol::effective_semantic_agent_state(
-                integration.as_deref(),
-                pane.runtime.status.as_ref(),
-                detected_agent.as_ref(),
-            ),
+        let semantic_state = crate::session::protocol::effective_semantic_agent_state(
+            integration.as_deref(),
+            pane.runtime.status.as_ref(),
+            detected_agent.as_ref(),
         );
+        advance_launch(&mut pane.agent.launch, semantic_state);
+        advance_startup_prompt(&mut pane.agent.startup_prompt, semantic_state);
     }
     let work_started_at = next_work_started_at(
         &pane.runtime,
@@ -4056,16 +4062,35 @@ fn advance_launch(
     }
 }
 
+/// Follow startup-prompt eligibility through the same launch arc, closing it on an error as well
+/// so a failed command-line prompt does not keep scanning ordinary typing.
+fn advance_startup_prompt(
+    startup_prompt: &mut Option<super::AgentLaunch>,
+    state: Option<crate::session::protocol::AgentState>,
+) {
+    let Some(phase) = startup_prompt.as_mut() else {
+        return;
+    };
+    match state {
+        Some(crate::session::protocol::AgentState::Working) => phase.loading_seen = true,
+        Some(crate::session::protocol::AgentState::Error) => *startup_prompt = None,
+        Some(state) if state.is_quiescent() && phase.loading_seen => *startup_prompt = None,
+        _ => {}
+    }
+}
+
 /// Whether a keystroke might be answering a startup prompt, so the screen is
 /// worth reading.
 ///
-/// A launch lasts through a trust or sign-in dialog: that dialog is blocked, and
-/// a launch ends only at a settled idle after its loading screen, or when a run
-/// starts on its own evidence. Detection's stamp of the same prompt lasts until
-/// the prompt leaves. A running agent has neither, and its keystrokes only mark
-/// the input.
+/// Startup eligibility lasts through a trust or sign-in dialog - including on a
+/// launch given a command-line prompt, where `launch` is `None` because its work
+/// counts as a run from the start - until the launch settles or a run starts on
+/// its own evidence. Detection's stamp of the same prompt lasts until the prompt
+/// leaves. A running agent has none of these, and its keystrokes only mark the
+/// input.
 fn may_show_startup_prompt(pane: &ServerPane) -> bool {
     pane.agent.launch.is_some()
+        || pane.agent.startup_prompt.is_some()
         || pane.agent.startup_blocker.is_some()
         || pane
             .runtime
@@ -4140,7 +4165,9 @@ fn startup_blocker_on_screen(
 /// taking a prompt for an answer only misses a run. A screen's dialog is answered once - a second
 /// line typed before the agent redraws goes to whatever came after it.
 pub(super) fn note_pane_input(pane: &mut ServerPane, agents: &AgentCatalog, bytes: &[u8]) {
-    if pane.agent.launch.is_none() || !input_submits_line(bytes) {
+    if (pane.agent.launch.is_none() && pane.agent.startup_prompt.is_none())
+        || !input_submits_line(bytes)
+    {
         return;
     }
     let screen = pane.screen_without_change().snapshot();
@@ -6759,7 +6786,8 @@ mod tests {
         assert_eq!(finished, 1);
     }
 
-    /// `codex "fix the tests"` goes from loading straight into the turn it was given.
+    /// `codex "fix the tests"` goes from loading straight into the turn it was given, yet still
+    /// watches for a startup prompt until that turn settles so ordinary typing later skips scans.
     #[test]
     fn a_launch_with_a_prompt_is_a_run_from_the_start() {
         let launch = |argv: &[&str]| {
@@ -6783,11 +6811,28 @@ mod tests {
                 true,
             );
             assert!(pane.agent.identity.is_some());
-            pane.agent.launch.is_none()
+            assert!(may_show_startup_prompt(&pane));
+            pane
         };
-        assert!(launch(&["codex", "--model", "o3", "fix the tests"]));
-        assert!(!launch(&["codex"]));
-        assert!(!launch(&["codex", "resume", "019a"]), "a subcommand");
+        let mut prompted = launch(&["codex", "--model", "o3", "fix the tests"]);
+        assert!(prompted.agent.launch.is_none());
+        assert!(launch(&["codex"]).agent.launch.is_some());
+        assert!(
+            launch(&["codex", "resume", "019a"]).agent.launch.is_some(),
+            "a subcommand"
+        );
+
+        // Once the prompted turn runs and settles, ordinary typing no longer scans the screen.
+        advance_startup_prompt(
+            &mut prompted.agent.startup_prompt,
+            Some(crate::session::protocol::AgentState::Working),
+        );
+        assert!(may_show_startup_prompt(&prompted));
+        advance_startup_prompt(
+            &mut prompted.agent.startup_prompt,
+            Some(crate::session::protocol::AgentState::Idle),
+        );
+        assert!(!may_show_startup_prompt(&prompted));
     }
 
     #[test]

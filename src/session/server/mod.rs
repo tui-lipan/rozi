@@ -558,6 +558,10 @@ pub struct AgentScratch {
     /// Set from a launch until the agent is ready: until then, working is not a run. See
     /// [`AgentLaunch`].
     pub launch: Option<AgentLaunch>,
+    /// Set from any launch - including one given a command-line prompt, where [`Self::launch`] is
+    /// `None` - until startup settles or a run starts on its own evidence. While set, input checks
+    /// the live screen for a startup prompt detection has not polled yet.
+    startup_prompt: Option<AgentLaunch>,
     /// The screen a line already answered a dialog on, so the next line, typed before the agent
     /// redraws, goes to whatever came after the dialog.
     pub answered: Option<std::sync::Arc<str>>,

@@ -1438,6 +1438,7 @@ fn report_agent(
             return Update::none();
         }
     };
+    crate::ops::attached_control::forget_orphans(&mut ctx.state);
     let request_id = ctx.state.next_agent_report_request_id;
     ctx.state.next_agent_report_request_id = ctx
         .state
@@ -1504,6 +1505,7 @@ fn report_agent_session(
         ));
         return Update::none();
     }
+    crate::ops::attached_control::forget_orphans(&mut ctx.state);
     let request_id = ctx.state.next_agent_report_request_id;
     ctx.state.next_agent_report_request_id = ctx
         .state
@@ -1912,6 +1914,7 @@ fn send_mouse(
     action: crate::control::MouseAction,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) -> Update {
+    crate::ops::attached_control::forget_orphans(&mut ctx.state);
     let destination = match control_mouse_target(ctx, target) {
         Ok(destination) => destination,
         Err(response) => {
@@ -5126,6 +5129,37 @@ mod tests {
                 .expect("post-input CLICKED answers the wait");
             assert!(answer.ok, "{answer:?}");
             assert!(captured_text(&answer).contains("after-click"));
+            assert!(backend.state().capture_waits_are_empty());
+
+            // A send-mouse wait that times out before SendMouseResult says the session never
+            // confirmed the input and omits a misleading post-input capture.
+            let unconfirmed = ask(
+                &mut backend,
+                ControlCommand::SendMouse {
+                    target: Some(1),
+                    action,
+                    wait: pane_wait(Some("NEVER"), 1),
+                    capture: Some(CaptureRender::Text),
+                    scale: None,
+                },
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            backend
+                .dispatch(crate::Msg::CaptureWaitTick)
+                .expect("dispatch tick");
+            let timed_out = unconfirmed
+                .try_recv()
+                .expect("unconfirmed send-mouse times out");
+            assert_eq!(timed_out.code, Some(ControlErrorCode::Timeout));
+            assert!(timed_out.data.is_none(), "{timed_out:?}");
+            assert!(
+                timed_out
+                    .error
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("did not confirm send-mouse"),
+                "{timed_out:?}"
+            );
             assert!(backend.state().capture_waits_are_empty());
 
             // An older server without Capability::SendMouse is refused cleanly with no fallback.

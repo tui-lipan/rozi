@@ -342,7 +342,7 @@ fn evaluate(ctx: &mut Context<AppRoot>, only: Option<(PaneId, bool)>) {
                             .with_screen_mut(|terminal| screen.observe(terminal, now));
                         screen.status(now)
                     }
-                    Stage::Queued | Stage::Marking { .. } | Stage::SendingMouse { .. } => {
+                    Stage::Queued | Stage::Marking { .. } => {
                         let deadline =
                             wait.started + Duration::from_millis(wait.plan.wait.timeout_ms);
                         if now >= deadline {
@@ -350,6 +350,21 @@ fn evaluate(ctx: &mut Context<AppRoot>, only: Option<(PaneId, bool)>) {
                         } else {
                             WaitStatus::Pending
                         }
+                    }
+                    Stage::SendingMouse { .. } => {
+                        let deadline =
+                            wait.started + Duration::from_millis(wait.plan.wait.timeout_ms);
+                        if now >= deadline {
+                            let _ = wait.reply.send(ControlResponse::error_with(
+                                ControlErrorCode::Timeout,
+                                format!(
+                                    "pane {}: the session did not confirm send-mouse within {}ms; nothing may have been written",
+                                    wait.pane_id, wait.plan.wait.timeout_ms
+                                ),
+                            ));
+                            return false;
+                        }
+                        WaitStatus::Pending
                     }
                 };
                 match status {

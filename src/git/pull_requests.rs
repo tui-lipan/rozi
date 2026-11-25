@@ -95,6 +95,9 @@ impl StatusCache {
             .first()
             .map(|tree| PathBuf::from(&tree.path))
             .unwrap_or_else(|| cwd.to_path_buf());
+        if !has_hosted_remote(cwd)? {
+            return Ok(WorktreeStatuses::default());
+        }
         let refs = command::checked(
             cwd,
             &[
@@ -382,6 +385,20 @@ pub(crate) struct Head<'a> {
     oid: &'a str,
     pr_branch: &'a str,
     owner: Option<&'a str>,
+}
+
+/// Whether any remote is hosted somewhere a pull request could live. Without one, `gh` has no
+/// repository to ask, and the checkouts have no pull requests rather than unknown ones.
+fn has_hosted_remote(cwd: &Path) -> Result<bool, String> {
+    let remotes = command::checked(
+        cwd,
+        &["remote".into(), "-v".into()],
+        command::WORKTREE_LIST_TIMEOUT,
+    )?;
+    Ok(String::from_utf8_lossy(&remotes)
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(1))
+        .any(|url| url_owner(url).is_some()))
 }
 
 /// The URL `git push` uses for each push remote named in `for-each-ref` output, honoring
@@ -674,6 +691,41 @@ fn parse_status(
 mod tests {
     use super::*;
 
+    fn git(repo: &Path, args: &[&str]) {
+        let args: Vec<std::ffi::OsString> = args.iter().map(Into::into).collect();
+        command::checked(repo, &args, command::WORKTREE_LIST_TIMEOUT).unwrap();
+    }
+
+    /// A repository whose remote is on GitHub, so its pull requests are looked up.
+    fn github_repository() -> tempfile::TempDir {
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-q"]);
+        git(
+            repo.path(),
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/owner/repo.git",
+            ],
+        );
+        repo
+    }
+
+    /// A repository with no hosted remote has no pull requests to find, which is not a failed lookup.
+    #[test]
+    fn a_repository_without_a_hosted_remote_has_no_pull_requests() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-q"]);
+        let statuses = StatusCache::default().get_with(repo.path(), false, |_, _, _| {
+            Err("no git remotes found".into())
+        });
+        assert_eq!(statuses, WorktreeStatuses::default());
+    }
+
     /// Watching more repositories than one shared cache holds must not evict each before its next
     /// read: a second pass over nine unchanged repositories asks GitHub about none of them.
     #[test]
@@ -681,15 +733,7 @@ mod tests {
         if !crate::platform::command::program_exists("git") {
             return;
         }
-        let repositories: Vec<_> = (0..9).map(|_| tempfile::tempdir().unwrap()).collect();
-        for repository in &repositories {
-            command::checked(
-                repository.path(),
-                &["init".into(), "-q".into()],
-                command::WORKTREE_LIST_TIMEOUT,
-            )
-            .unwrap();
-        }
+        let repositories: Vec<_> = (0..9).map(|_| github_repository()).collect();
         let mut caches = RepositoryCaches::default();
         let fetches = std::cell::Cell::new(0);
         for _ in 0..2 {
@@ -889,10 +933,7 @@ mod tests {
             return;
         }
         let repo = tempfile::tempdir().unwrap();
-        let git = |args: &[&str]| {
-            let args: Vec<_> = args.iter().map(Into::into).collect();
-            command::checked(repo.path(), &args, command::WORKTREE_LIST_TIMEOUT).unwrap();
-        };
+        let git = |args: &[&str]| git(repo.path(), args);
         git(&["init", "-q"]);
         git(&[
             "remote",
@@ -994,13 +1035,7 @@ mod tests {
         if !crate::platform::command::program_exists("git") {
             return;
         }
-        let repo = tempfile::tempdir().unwrap();
-        command::checked(
-            repo.path(),
-            &["init".into(), "-q".into()],
-            command::WORKTREE_LIST_TIMEOUT,
-        )
-        .unwrap();
+        let repo = github_repository();
         for failed in [false, true] {
             let mut cache = StatusCache::default();
             let calls = std::cell::Cell::new(0);
@@ -1053,13 +1088,7 @@ mod tests {
         if !crate::platform::command::program_exists("git") {
             return;
         }
-        let repo = tempfile::tempdir().unwrap();
-        command::checked(
-            repo.path(),
-            &["init".into(), "-q".into()],
-            command::WORKTREE_LIST_TIMEOUT,
-        )
-        .unwrap();
+        let repo = github_repository();
         let mut cache = StatusCache::default();
         let good = WorktreeStatuses {
             checkouts: [(

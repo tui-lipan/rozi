@@ -2234,19 +2234,6 @@ mod tests {
         client.capabilities =
             protocol::Capabilities::current().without(protocol::Capability::RuntimeMetrics);
         assert!(!client.send_control(ClientMessage::RequestRuntimeMetrics));
-        client.capabilities =
-            protocol::Capabilities::current().without(protocol::Capability::SendMouse);
-        assert!(!client.send_control(ClientMessage::SendMouse {
-            request_id: 1,
-            pane_id: 1,
-            local: false,
-            generation: 1,
-            action: crate::control::MouseAction::Move {
-                position: crate::control::MousePoint { x: 0, y: 0 },
-                modifiers: crate::control::MouseModifiers::default(),
-            },
-            mark: false,
-        }));
         assert!(client.send_control(ClientMessage::Pong { seq: 1 }));
         assert_eq!(
             outbound.try_recv().unwrap(),

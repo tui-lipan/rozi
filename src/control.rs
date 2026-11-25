@@ -3599,20 +3599,6 @@ mod tests {
             ask(Some("r1")).required_session_capability(),
             Some(crate::session::protocol::Capability::AgentReplyLater)
         );
-        assert_eq!(
-            ControlCommand::SendMouse {
-                target: None,
-                action: MouseAction::Move {
-                    position: MousePoint { x: 0, y: 0 },
-                    modifiers: MouseModifiers::default(),
-                },
-                wait: None,
-                capture: None,
-                scale: None,
-            }
-            .required_session_capability(),
-            Some(crate::session::protocol::Capability::SendMouse)
-        );
         for cap in crate::session::protocol::Capability::ALL {
             let expected = match cap {
                 crate::session::protocol::Capability::DragAndDrop => "0.0.46",

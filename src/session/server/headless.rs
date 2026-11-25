@@ -2313,7 +2313,14 @@ impl SessionServer {
             .next()
             .map(|pane| pane.palette)
             .unwrap_or_else(|| WirePalette::from(TerminalColorPalette::default()));
-        let shell = self.settings.shell.clone();
+        // No client prepared this pane, so the shell gets the owner's integration here, as a
+        // restored or guest pane does; without it the shell never reports its prompt.
+        let (shell, integration_env) = self.owner_interactive_shell();
+        // Integration first, so a value the caller passed still wins.
+        let per_spawn: Vec<_> = integration_env
+            .into_iter()
+            .chain(spawn.caller_env.iter().cloned())
+            .collect();
         let command_shell = self.settings.command_shell.clone();
         let result = self.spawn_shared_pane(
             SpawnRequest {
@@ -2330,7 +2337,7 @@ impl SessionServer {
                 env: crate::pane::spawn_policy::spawn_environment(
                     crate::pane::spawn_policy::SpawnOrigin::Headless,
                     pane_id,
-                    &spawn.caller_env,
+                    &per_spawn,
                 ),
                 palette,
                 shell,

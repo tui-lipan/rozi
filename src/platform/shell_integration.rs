@@ -119,6 +119,7 @@ impl InjectionEnv {
     pub fn from_process() -> Self {
         Self {
             zdotdir: non_empty_env("ZDOTDIR"),
+            orig_zdotdir: non_empty_env("ROZI_ORIG_ZDOTDIR"),
             xdg_data_dirs: non_empty_env("XDG_DATA_DIRS"),
             already_loaded: false,
         }
@@ -147,6 +148,9 @@ pub fn resolve_interactive_shell(
 pub struct InjectionEnv {
     /// The child's inherited `ZDOTDIR`, if any (used as the zsh shim's fallback-through target).
     pub zdotdir: Option<String>,
+    /// The inherited `ROZI_ORIG_ZDOTDIR`: the real `ZDOTDIR` behind an inherited shim, when rozi
+    /// was started from a pane that already runs zsh integration.
+    pub orig_zdotdir: Option<String>,
     /// The child's inherited `XDG_DATA_DIRS`, if any (fish vendor `conf.d` discovery searches
     /// every directory listed here plus its own compiled-in defaults).
     pub xdg_data_dirs: Option<String>,
@@ -206,7 +210,15 @@ fn inject_zsh(
         "ZDOTDIR".to_string(),
         shim_dir.to_string_lossy().into_owned(),
     )];
-    if let Some(orig) = &env.zdotdir {
+    // Started from an integrated zsh pane, rozi inherits a shim as `ZDOTDIR`: its own, or an outer
+    // rozi's under another cache directory. Passed on as the original, the shim's `.zshrc` would
+    // source itself forever, so the real directory behind it is the one it stood in for.
+    let inherited_shim = Path::new("shell-integration").join("zsh-zdotdir");
+    let orig = match &env.zdotdir {
+        Some(dir) if Path::new(dir).ends_with(&inherited_shim) => env.orig_zdotdir.as_ref(),
+        other => other.as_ref(),
+    };
+    if let Some(orig) = orig {
         extra_env.push(("ROZI_ORIG_ZDOTDIR".to_string(), orig.clone()));
     }
     (shell, extra_env)
@@ -592,6 +604,27 @@ mod tests {
                 .map(|(_, value)| value.clone()),
             Some("/home/user/.config/zsh".to_string())
         );
+
+        // Started from a pane that already runs integration, rozi inherits a shim, possibly an
+        // outer rozi's. It must not become the original, or the shim's `.zshrc` sources itself.
+        let orig = |env: &InjectionEnv| {
+            inject(ShellCommand::new("zsh"), ShellIntegrationMode::Auto, env)
+                .1
+                .into_iter()
+                .find(|(key, _)| key == "ROZI_ORIG_ZDOTDIR")
+                .map(|(_, value)| value)
+        };
+        let nested = InjectionEnv {
+            zdotdir: Some("/home/user/.cache/rozi/shell-integration/zsh-zdotdir".to_string()),
+            orig_zdotdir: Some("/home/user/.config/zsh".to_string()),
+            ..InjectionEnv::default()
+        };
+        assert_eq!(orig(&nested), Some("/home/user/.config/zsh".to_string()));
+        let nested_without_one = InjectionEnv {
+            orig_zdotdir: None,
+            ..nested
+        };
+        assert_eq!(orig(&nested_without_one), None);
     }
 
     #[test]

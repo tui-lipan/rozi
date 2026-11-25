@@ -1951,7 +1951,7 @@ impl SessionServer {
 
     /// The owner's interactive shell with shell integration applied, and the environment that
     /// integration needs, for a pane no client of the owner prepared: one restored from a
-    /// snapshot, or one a guest opened. Without integration, prompt readiness never arrives and
+    /// snapshot, one a guest opened, or one a headless split started. Without integration, prompt readiness never arrives and
     /// every command waits for the fallback.
     pub(super) fn owner_interactive_shell(&self) -> (Vec<String>, Vec<(String, String)>) {
         let (shell, integration_env) =

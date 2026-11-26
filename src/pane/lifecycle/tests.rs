@@ -914,6 +914,7 @@ fn interactive_command_spawn_applies_configured_rule() {
             }),
             fullscreen: true,
             focus: false,
+            split_axis: None,
         }
     );
 }

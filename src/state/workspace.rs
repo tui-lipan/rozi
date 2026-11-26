@@ -11,7 +11,20 @@ pub struct DirectionalFocusHint {
     pub target: PaneId,
 }
 
+/// A workspace's identity on this client, which travels with its content when workspaces reorder or
+/// swap slots. Local only: it is never persisted or sent, so it means nothing to another client.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct WorkspaceId(u64);
+
+impl WorkspaceId {
+    fn next() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
 pub struct Workspace {
+    pub id: WorkspaceId,
     pub panes: Vec<Pane>,
     pub tile_tree: Option<DwindleTree>,
     pub focused_pane: Option<PaneId>,
@@ -40,6 +53,7 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(index: usize) -> Self {
         Self {
+            id: WorkspaceId::next(),
             panes: Vec::new(),
             tile_tree: None,
             focused_pane: None,

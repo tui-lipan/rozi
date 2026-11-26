@@ -63,6 +63,7 @@ terminal apps keep working normally.
 | --- | --- |
 | Drag over terminal text | Select text and copy it on release |
 | Middle click (Linux) | Paste the primary selection into the pane under the pointer |
+| Right click | Open a [context menu](#context-menus) |
 | Wheel over a pane | Scroll history |
 | `Ctrl` plus click a visible link | Open it |
 | Modifier plus left-drag | Move a pane |
@@ -94,6 +95,15 @@ Other terminals keep their usual pointer.
 rozi limits pointer-motion events sent to a mouse-tracking program to the configured frame rate, so
 the program does not fall behind. Presses, releases, and wheel events are always sent.
 
+### Context menus
+
+Right-click a pane, its title, or its border for its menu: copy, paste, search, split, rename,
+zoom, float, move to another workspace, open its directory, copy its pane ID, or close it. The menu
+acts on that pane and leaves focus where it is. A program that tracks the mouse gets plain right
+clicks itself; hold `Ctrl` to open the menu over it, or press `c` after the prefix for the focused
+pane's menu. Workspace tabs and rows in Sessions and Agents have menus too. Turn menus off or
+change the modifier under [`[mouse]`](configuration.md#mouse).
+
 ## Select, copy, and paste
 
 Drag to select text. When you release the mouse, rozi copies the selection to the regular clipboard,
@@ -114,14 +124,15 @@ On Linux, middle click pastes the primary selection into the pane under the poin
 focused pane. Clicking another pane focuses it first; a click on a pane border or titlebar pastes
 nothing.
 
-Right click does nothing clipboard-related by default, so it stays available to the pane program and
-to rozi. If you set `right_click`, it follows the same pointer rule as middle click, and
-`"copy-or-paste"` copies only a selection in the pane you click.
+Right click opens the [pane menu](#context-menus) by default. Set `right_click` to paste or copy
+instead; it then follows the same pointer rule as middle click, and `"copy-or-paste"` copies only a
+selection in the pane you click.
 
 A program that tracks the mouse, such as Codex or Claude Code, receives middle and right clicks
 itself and pastes from the clipboard of the machine it runs on. In a remote session that is the
-remote host, so the click usually pastes nothing. Hold `Shift` while you middle-click or right-click
-to paste your local clipboard with rozi instead; `Ctrl+V` works too.
+remote host, so the click usually pastes nothing. Hold `Shift` while you middle-click, or
+right-click when `right_click` pastes, to paste your local clipboard with rozi instead; `Ctrl+V`
+works too.
 
 You can change all of these under [`[clipboard]`](configuration.md#clipboard); changes apply when
 the config reloads. If the system has no primary selection, regular clipboard copying still works,

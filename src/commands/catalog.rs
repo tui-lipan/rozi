@@ -420,6 +420,14 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::OpenContextMenu,
+        label: "Pane menu",
+        category: "Panes",
+        // A host terminal can keep modified right clicks for itself, so the menu needs a key too.
+        default_keys: &["c"],
+        palette: false,
+    },
+    BuiltinCommand {
         action: Action::ScreenshotPane,
         label: "Screenshot pane",
         category: "Capture",

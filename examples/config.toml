@@ -319,8 +319,8 @@
 #copy_on_select = "both"
 # Paste PRIMARY with middle click on Linux. Other choices are "off" and "clipboard".
 #middle_click_paste = "primary"
-# Leave right click to panes and Rozi. Other choices are "paste" and "copy-or-paste".
-#right_click = "off"
+# Open the pane menu on a right click. Other choices are "off", "paste", and "copy-or-paste".
+#right_click = "context-menu"
 # Let programs in a pane set the system clipboard via the OSC52 escape sequence.
 #enable_osc52 = true
 # Drop files and text into panes, and drag out of programs that offer it, in a terminal that
@@ -332,6 +332,13 @@
 #copy_feedback_on_select = false
 # Clear a copied selection once its highlight ends.
 #clear_selection_after_copy = false
+
+[mouse]
+# Right-click menus on panes, workspace tabs, and picker rows.
+#context_menus = true
+# Held with a right click, opens the pane menu over a program that tracks the mouse. "off" or
+# modifiers joined with "-", such as "ctrl-shift".
+#context_menu_modifier = "ctrl"
 
 [updates]
 # Look for a newer release shortly after a client starts, then every interval_hours while it

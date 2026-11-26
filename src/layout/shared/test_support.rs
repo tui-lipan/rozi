@@ -31,7 +31,7 @@ pub(super) fn state_with_split() -> State {
         bounds,
         0.0,
         crate::layout::model::TileGap::DEFAULT,
-        split_width_multiplier,
+        crate::layout::SplitRule::LongerSide(split_width_multiplier),
     );
     state.current_mut().next_pane_id = 3;
     state.current_mut().next_pty_generation = 8;

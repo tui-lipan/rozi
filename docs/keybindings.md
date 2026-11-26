@@ -52,6 +52,7 @@ field, are reminders only.
 | Pin or unpin | `T` |
 | Toggle fullscreen | `f` |
 | Rename pane | `N` |
+| Pane menu | `c` |
 | Paste text | `v` |
 | Paste text directly | `Ctrl+V` |
 | Promote to master | `.` |

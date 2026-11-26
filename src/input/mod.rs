@@ -56,6 +56,8 @@ pub enum Action {
     EnterHintMode,
     ToggleScratchpad,
     OpenSearch,
+    /// Open the focused pane's context menu.
+    OpenContextMenu,
     SaveProfile,
     OpenProfilePicker,
     OpenWorktrees,
@@ -212,6 +214,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::EnterHintMode,
     Action::ToggleScratchpad,
     Action::OpenSearch,
+    Action::OpenContextMenu,
     Action::SaveProfile,
     Action::OpenProfilePicker,
     Action::OpenWorktrees,
@@ -350,6 +353,7 @@ impl Action {
             Action::EnterHintMode => "hint-mode",
             Action::ToggleScratchpad => "scratchpad",
             Action::OpenSearch => "search",
+            Action::OpenContextMenu => "context-menu",
             Action::SaveProfile => "save-profile",
             Action::OpenProfilePicker => "open-profile",
             Action::OpenWorktrees => "worktrees",
@@ -497,6 +501,7 @@ impl Action {
             | Action::EnterHintMode
             | Action::ToggleScratchpad
             | Action::OpenSearch
+            | Action::OpenContextMenu
             | Action::SaveProfile
             | Action::OpenProfilePicker
             | Action::OpenWorktrees

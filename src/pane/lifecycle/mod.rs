@@ -15,7 +15,7 @@ pub(crate) use spawn::{
     PaneSpawnRequest, SpawnFloat, SpawnPlacement, focused_local_cwd, focused_server_cwd_ref,
     focused_spawn_cwd, interactive_spawn_target, pump_shared_spawns, request_pane_spawn,
     respawn_focused_pane, send_pane_spawn, spawn_floating_pane_at_cursor, spawn_interactive_pane,
-    spawn_interactive_pane_with_focus, spawn_pane, spawn_pane_in_scratch,
+    spawn_interactive_pane_with_focus, spawn_pane, spawn_pane_in_scratch, split_pane,
 };
 pub use timers::{LOCAL_PANE_EPOCH, lifecycle_epoch};
 pub(crate) use timers::{open_timers_batch_command, open_timers_command, rearm_pane_transitions};

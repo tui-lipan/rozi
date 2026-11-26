@@ -14,6 +14,9 @@ pub struct Pane {
     pub pty_generation: u64,
     pub title: String,
     pub identity: PaneIdentity,
+    /// Text of the mouse selection the pane's terminal last reported, for the context menu's Copy.
+    /// Client-local and only tracked while context menus are on.
+    pub mouse_selection: Option<String>,
     pub floating: bool,
     /// Floating and carried along whenever this pane's controller switches workspace. Shared
     /// placement, so it is only ever set on a floating pane.
@@ -199,6 +202,7 @@ impl Pane {
             pty_generation: 0,
             title: "shell".to_string(),
             identity: PaneIdentity::default(),
+            mouse_selection: None,
             floating: false,
             pinned: false,
             fullscreen: false,

@@ -2551,11 +2551,14 @@ mod tests {
         state.current_mut().workspaces[1].split_ratios[0] = 0.42;
         state.current_mut().active_workspace = 0;
         state.current_mut().focused_pane = Some(2);
+        let code_id = state.current().workspaces[0].id;
 
         relocate_active_workspace(&mut state, 1);
 
         assert_eq!(state.current().active_workspace, 1);
         assert_eq!(state.current().focused_pane, Some(2));
+        // An open menu on the "code" tab keeps acting on it in its new slot.
+        assert_eq!(state.current().workspaces[1].id, code_id);
         assert_eq!(state.current().workspaces[0].panes.len(), 1);
         assert!(
             state.current().workspaces[0]

@@ -319,6 +319,7 @@ pub(crate) struct OverlayPalette<'a, T> {
     on_query_change: Option<Callback<Arc<str>>>,
     on_select: Option<Callback<SearchEvent<T>>>,
     on_activate: Option<Callback<SearchEvent<T>>>,
+    on_context_menu: Option<Callback<(SearchEvent<T>, MouseEvent)>>,
     render_item: Option<OverlayItemRenderer<T>>,
     item_gutter: Option<OverlayGutterRenderer<T>>,
     fallback_interceptor: Option<KeyHandler>,
@@ -355,6 +356,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             on_query_change: None,
             on_select: None,
             on_activate: None,
+            on_context_menu: None,
             render_item: None,
             item_gutter: None,
             fallback_interceptor: None,
@@ -474,6 +476,19 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
         self
     }
 
+    /// A right click on a row, which leaves the highlight where it is. Only set while
+    /// `[mouse] context_menus` is on.
+    pub(crate) fn on_context_menu(
+        mut self,
+        ctx: &Context<AppRoot>,
+        callback: Callback<(SearchEvent<T>, MouseEvent)>,
+    ) -> Self {
+        if ctx.state.config.mouse.context_menus {
+            self.on_context_menu = Some(callback);
+        }
+        self
+    }
+
     pub(crate) fn on_activate(mut self, callback: Callback<SearchEvent<T>>) -> Self {
         self.on_activate = Some(callback);
         self
@@ -513,6 +528,7 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             on_query_change,
             on_select,
             on_activate,
+            on_context_menu,
             render_item,
             item_gutter,
             fallback_interceptor,
@@ -541,6 +557,9 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
             .sync_selection(true);
         if let Some(key) = item_key {
             palette = palette.item_key(key);
+        }
+        if let Some(callback) = on_context_menu {
+            palette = palette.on_context_menu(callback);
         }
         if let Some(min_label) = description_wins {
             palette = palette

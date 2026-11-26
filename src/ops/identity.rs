@@ -20,6 +20,10 @@ pub(crate) fn open_rename_pane(ctx: &mut Context<AppRoot>) -> Update {
     let Some(target) = ctx.state.focused_pane() else {
         return Update::full();
     };
+    open_rename_pane_for(ctx, target)
+}
+
+pub(crate) fn open_rename_pane_for(ctx: &mut Context<AppRoot>, target: PaneId) -> Update {
     let initial = find_pane_mut(&mut ctx.state, target)
         .and_then(|pane| pane.identity.custom_title.clone())
         .unwrap_or_default();
@@ -61,6 +65,11 @@ pub(crate) fn close_rename_pane(ctx: &mut Context<AppRoot>) -> Update {
 
 pub(crate) fn open_rename_workspace(ctx: &mut Context<AppRoot>) -> Update {
     let target = ctx.state.current().active_workspace;
+    open_rename_workspace_for(ctx, target)
+}
+
+/// Open the rename prompt for the workspace in slot `target`.
+pub(crate) fn open_rename_workspace_for(ctx: &mut Context<AppRoot>, target: usize) -> Update {
     let initial = ctx.state.current().workspaces[target]
         .name
         .clone()

@@ -15,6 +15,7 @@ mod agent_attention;
 mod appearance;
 mod attachment;
 mod capture;
+mod context_menu;
 mod drag;
 mod drag_and_drop;
 mod extension_runtime;
@@ -46,6 +47,7 @@ pub use agent_attention::*;
 pub use appearance::*;
 pub use attachment::*;
 pub use capture::*;
+pub use context_menu::*;
 pub use drag::*;
 pub use drag_and_drop::*;
 pub use extension_runtime::*;
@@ -367,6 +369,7 @@ pub struct State {
     pub search_scan_scheduled_epoch: Option<u64>,
     pub search: Option<ScrollbackSearchState>,
     pub rename: Option<PaneRenameState>,
+    pub context_menu: Option<ContextMenuState>,
     pub rename_session: Option<SessionRenameState>,
     pub save_profile_prompt: Option<SaveProfileState>,
     pub show_profile_picker: bool,
@@ -807,6 +810,7 @@ impl State {
             search_scan_scheduled_epoch: None,
             search: None,
             rename: None,
+            context_menu: None,
             rename_session: None,
             save_profile_prompt: None,
             show_profile_picker: false,

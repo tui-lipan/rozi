@@ -1167,7 +1167,7 @@ fn workspace_tabs(ctx: &Context<AppRoot>) -> DraggableTabBar {
         .chars();
     let fill = workbar_fill(ctx);
 
-    super::scrolling_tab_bar(theme, fill)
+    let bar = super::scrolling_tab_bar(theme, fill)
         .tabs(tabs)
         .selected(
             state
@@ -1216,7 +1216,19 @@ fn workspace_tabs(ctx: &Context<AppRoot>) -> DraggableTabBar {
         )
         .on_reorder(ctx.link().callback(|event: DraggableTabReorderEvent| {
             Msg::RunAction(Action::MoveWorkspace(event.from, event.to))
-        }))
+        }));
+    if !ctx.state.config.mouse.context_menus {
+        return bar;
+    }
+    bar.on_context_menu(
+        ctx.link()
+            .callback(|(slot, event): (Option<usize>, MouseEvent)| {
+                Msg::ContextMenu(crate::ops::context_menu::ContextMenuMsg::WorkspaceTab {
+                    slot,
+                    anchor: (event.x, event.y),
+                })
+            }),
+    )
 }
 
 /// Whether a workspace tab carries the recording dot: its workspace holds a recorded pane that the

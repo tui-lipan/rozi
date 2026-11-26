@@ -117,6 +117,17 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         WIDTH,
     )
     .entries(entries)
+    .on_context_menu(
+        ctx,
+        ctx.link().callback(
+            |(event, mouse): (SearchEvent<crate::state::AgentLocation>, MouseEvent)| {
+                Msg::ContextMenu(crate::ops::context_menu::ContextMenuMsg::AgentRow {
+                    location: event.item.value,
+                    anchor: (mouse.x, mouse.y),
+                })
+            },
+        ),
+    )
     // Rows stay under their state while searching, in the same order as without a query.
     .preserve_groups(true)
     // Two agents can share a name and session (`Codex · dev` twice), which the shared label key

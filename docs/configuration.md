@@ -513,7 +513,7 @@ See [Worktrees](worktrees.md#configuration).
 | --- | --- | --- | --- |
 | `copy_on_select` | string | `"both"` on Linux, `"clipboard"` elsewhere | Where a finished mouse selection is copied: `"off"`, `"primary"`, `"clipboard"`, or `"both"`. |
 | `middle_click_paste` | string | `"primary"` on Linux, `"off"` elsewhere | What a middle click pastes: `"off"`, `"primary"`, or `"clipboard"`. |
-| `right_click` | string | `"off"` | What an otherwise unhandled right click does: `"off"`, `"paste"` from the clipboard, or `"copy-or-paste"`. |
+| `right_click` | string | `"context-menu"` | What a right click over a pane does when its program does not track the mouse: `"context-menu"` opens the [pane menu](terminal.md#context-menus), or `"off"`, `"paste"` from the clipboard, or `"copy-or-paste"`. |
 | `enable_osc52` | bool | `true` | Lets programs in panes set the system clipboard with OSC 52. |
 | `drag_and_drop` | bool | `true` | Takes drops from other applications onto panes, and lets programs in panes start drags, in a terminal that supports drag and drop (kitty 0.47 or later). See [Drag and drop](terminal.md#drag-and-drop). |
 | `copy_feedback` | string | `"flash"` | How copied text lights up: `"off"`, `"flash"`, `"fade"`, `"scan"`, or `"pulse"`. With the animation master switch off, all but `"off"` flash. |
@@ -531,6 +531,13 @@ none. Handlers in rozi's widgets and in the program running in the pane take pri
 
 These settings apply on reload and are also in the General category of Settings. See
 [Select, copy, and paste](terminal.md#select-copy-and-paste).
+
+## `[mouse]`
+
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `context_menus` | bool | `true` | Right-click [menus](terminal.md#context-menus) on panes, workspace tabs, and Sessions and Agents rows. |
+| `context_menu_modifier` | string | `"ctrl"` | Held with a right click, opens the pane menu even over a program that tracks the mouse. `"off"`, or `ctrl`, `alt`, `shift`, and `super` joined with `-`. |
 
 ## `[updates]`
 

@@ -29,10 +29,16 @@ use super::float::{
 };
 
 pub(crate) fn toggle_tiling(ctx: &mut Context<AppRoot>) {
-    finish_pointer_layout_interaction(ctx);
     let Some(id) = ctx.state.focused_pane() else {
+        finish_pointer_layout_interaction(ctx);
         return;
     };
+    toggle_tiling_for(ctx, id);
+}
+
+/// Float or tile pane `id` of the active workspace, then focus it.
+pub(crate) fn toggle_tiling_for(ctx: &mut Context<AppRoot>, id: PaneId) {
+    finish_pointer_layout_interaction(ctx);
     let bounds = ctx.state.layout_bounds(ctx.viewport());
     let floating_bounds = ctx.state.floating_bounds(ctx.viewport());
     let scratch = ctx.state.scratch_visible;
@@ -212,10 +218,16 @@ pub(crate) fn set_workspace_layout(workspace: &mut Workspace, kind: LayoutKind) 
 }
 
 pub(crate) fn toggle_fullscreen(ctx: &mut Context<AppRoot>) -> Update {
-    finish_pointer_layout_interaction(ctx);
     let Some(id) = ctx.state.focused_pane() else {
+        finish_pointer_layout_interaction(ctx);
         return Update::full();
     };
+    toggle_fullscreen_for(ctx, id)
+}
+
+/// Toggle fullscreen on pane `id` of the active workspace, then focus it.
+pub(crate) fn toggle_fullscreen_for(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
+    finish_pointer_layout_interaction(ctx);
     let bounds = ctx.state.layout_bounds(ctx.viewport());
     let floating_bounds = ctx.state.floating_bounds(ctx.viewport());
     let top_gap = ctx.state.layout_top_gap();

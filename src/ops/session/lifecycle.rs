@@ -842,7 +842,6 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<AppRoot>) -> Update {
     if ctx.state.remote.session_is_killing(&entry) {
         return Update::none();
     }
-    let last_seen = session_row_is_last_seen(&entry);
     let armed = picker.pending_kill == Some(index);
     if !armed {
         // First press arms the kill or forget: drop any stale arming, then mark this row.
@@ -852,6 +851,24 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<AppRoot>) -> Update {
         }
         return crate::ops::confirm::arm(ctx);
     }
+    kill_session_row(ctx, index)
+}
+
+/// Kill the session in picker row `index`, or forget it when it is only remembered. The caller has
+/// already confirmed.
+pub(crate) fn kill_session_row(ctx: &mut Context<AppRoot>, index: usize) -> Update {
+    let Some(entry) = ctx
+        .state
+        .session_picker
+        .as_ref()
+        .and_then(|picker| picker.entries.get(index).cloned())
+    else {
+        return Update::full();
+    };
+    if ctx.state.remote.session_is_killing(&entry) {
+        return Update::none();
+    }
+    let last_seen = session_row_is_last_seen(&entry);
     clear_pending_session_arms(ctx);
     let remote_shutdown =
         !last_seen && entry.remote_target.is_some() && !session_row_is_current(&ctx.state, &entry);

@@ -38,8 +38,9 @@ pub enum UpdateChannel {
 pub struct SelfUpdateRun {
     pub generation: u64,
     pub running: Version,
-    /// The release the check announced, which the update set out to install. What it actually
-    /// installed is [`Self::installed`]: a newer release can be published in between.
+    /// The release the update sets out to install: the one the check announced, until a managed
+    /// install finds the newest one published and names it instead. What it actually installed is
+    /// [`Self::installed`].
     pub latest: Version,
     /// The release-wide step [`Self::latest`]'s metadata raised, such as a new extension API.
     /// Carried by the run rather than looked up later, so a newer release announced meanwhile
@@ -130,6 +131,9 @@ impl UpdatePhase {
 /// What an update's worker reports while it runs.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SelfUpdateEvent {
+    /// The installer found the release it is about to install, which is the newest one published
+    /// now and may be newer than the one announced earlier. The card names it from here on.
+    Resolved(crate::ops::update_check::AvailableUpdate),
     Downloaded {
         downloaded: u64,
         total: Option<u64>,
@@ -150,6 +154,10 @@ impl SelfUpdateRun {
             return;
         }
         match event {
+            SelfUpdateEvent::Resolved(update) => {
+                self.note = update.extension_note();
+                self.latest = update.latest;
+            }
             SelfUpdateEvent::Downloaded { downloaded, total } => {
                 self.phase = UpdatePhase::Downloading { downloaded, total };
             }

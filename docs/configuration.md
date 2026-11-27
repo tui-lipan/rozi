@@ -561,7 +561,8 @@ Every client that finds the release also lists **Update rozi to vX.Y.Z** (`updat
 command palette for as long as it runs:
 
 1. Choosing it opens the `Updating rozi` dialog. For a rozi you installed with its installer, it
-   shows the download and then the install. For one a package manager installed, it runs that
+   installs the newest release, named before the download starts, and shows the download and
+   then the install. For one a package manager installed, it runs that
    manager's upgrade command and shows the last lines it prints. The command runs without a
    terminal, so one that stops to ask a question fails.
 2. **Run in background** puts the dialog away while the update keeps going; choose **Update rozi**

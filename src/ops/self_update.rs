@@ -127,6 +127,21 @@ pub(crate) fn progress(
     generation: u64,
     event: SelfUpdateEvent,
 ) -> Update {
+    if let SelfUpdateEvent::Resolved(update) = &event
+        && current_run(ctx, generation).is_some_and(|run| run.phase.in_progress())
+    {
+        // The release being installed is the one on offer now: Commands names it, and a later
+        // check of the same release is not a fresh offer.
+        let newer = ctx
+            .state
+            .available_update
+            .as_ref()
+            .is_none_or(|offered| offered.latest <= update.latest);
+        if newer {
+            ctx.state.available_update = Some(update.clone());
+            ctx.state.commands_dirty = true;
+        }
+    }
     let Some(run) = current_run(ctx, generation) else {
         return Update::none();
     };
@@ -330,25 +345,45 @@ fn current_run(ctx: &mut Context<AppRoot>, generation: u64) -> Option<&mut SelfU
         .filter(|run| run.generation == generation)
 }
 
-/// rozi's own installer, in this process: download with progress, then verify and switch. Returns
-/// the release it activated, which is the newest one published when it ran - not necessarily the
-/// one the check announced earlier.
+/// rozi's own installer, in this process: find the newest release published now, name it on the
+/// card, then download it with progress, verify it, and switch. That release may be newer than the
+/// one the check announced earlier; the card says so before the download starts, not after.
 fn install_managed(
     generation: u64,
     running: &semver::Version,
     link: &CommandLink<Msg>,
 ) -> std::result::Result<semver::Version, String> {
     use crate::platform::install::InstallError;
+    const UNMANAGED: &str = "this rozi is not managed by its installer";
+    let describe = |error: InstallError| match error {
+        InstallError::Unmanaged => UNMANAGED.to_string(),
+        error => crate::platform::install::describe_error(&error),
+    };
     let reporter = Arc::new(DownloadReporter {
         generation,
         link: Mutex::new(link.clone()),
         last: Mutex::new(None),
     });
     let installation = crate::platform::install::from_process_with_progress(reporter.clone());
-    let result = installation.update().map_err(|error| match error {
-        InstallError::Unmanaged => "this rozi is not managed by its installer".to_string(),
-        error => crate::platform::install::describe_error(&error),
-    })?;
+    let checked = installation.check_latest().map_err(describe)?;
+    if !checked.managed {
+        return Err(UNMANAGED.to_string());
+    }
+    let latest = checked.latest;
+    if latest <= *running {
+        return Err(format!(
+            "the newest release is v{latest}, not newer than this one"
+        ));
+    }
+    reporter.send(SelfUpdateEvent::Resolved(
+        crate::ops::update_check::offer_for(latest.clone(), running.clone()),
+    ));
+    // Another client may have installed it already; then there is only the restart left.
+    if checked.current.as_ref() == Some(&latest) {
+        return Ok(latest);
+    }
+    // Exactly the release the card names, even if a newer one is published while this runs.
+    let result = installation.install_version(latest).map_err(describe)?;
     // The installed binary carries the new skill document; registered copies follow it. A copy
     // that cannot be refreshed keeps working and is reported by `rozi skill status`.
     let _ = crate::skill::refresh_after_update(
@@ -785,6 +820,36 @@ mod tests {
                 .content()
                 .to_string();
             assert!(notice.contains("v9.9.10"), "{notice}");
+        });
+    }
+
+    /// A release published after the check is what the installer finds. The card names it from
+    /// the start of the download, with its own note, and so does Commands.
+    #[test]
+    fn the_card_names_the_release_the_installer_found() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = updating_to("9.9.9", false);
+            let Msg::UpdateAvailable { update, .. } = raising_extension_api("9.9.10") else {
+                unreachable!()
+            };
+            report(&mut backend, SelfUpdateEvent::Resolved(update));
+            let downloading = screen(&mut backend);
+            assert!(downloading.contains("→ v9.9.10"), "{downloading}");
+            assert!(!downloading.contains("v9.9.9"), "{downloading}");
+            assert_eq!(
+                backend
+                    .state()
+                    .available_update
+                    .as_ref()
+                    .map(|offer| &offer.latest),
+                Some(&semver::Version::new(9, 9, 10))
+            );
+
+            finish(&mut backend, Ok(semver::Version::new(9, 9, 10)));
+            assert!(
+                restart_note(&backend).is_some(),
+                "9.9.10's note travels with it"
+            );
         });
     }
 

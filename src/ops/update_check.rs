@@ -285,17 +285,37 @@ pub(crate) fn check() -> Option<AvailableUpdate> {
     let latest = relswap::fetch_latest_metadata(&ROZI, &downloader, &repository)
         .ok()?
         .version;
-    if latest <= running {
-        return None;
-    }
+    (latest > running).then(|| offer(latest, running, &downloader, &repository))
+}
 
-    let compatibility = fetch_compatibility(&downloader, &repository, &latest);
-    Some(AvailableUpdate {
+/// The offer for `latest`, a signed release newer than `running`, with its compatibility
+/// document when one can be read. Blocks for one HTTPS request, like [`check`].
+pub(crate) fn offer_for(latest: Version, running: Version) -> AvailableUpdate {
+    let downloader = UreqDownloader::new();
+    match Url::parse(ROZI.repository_url) {
+        Ok(repository) => offer(latest, running, &downloader, &repository),
+        Err(_) => AvailableUpdate {
+            latest,
+            running,
+            source: crate::platform::install_source::detect_current(),
+            compatibility: None,
+        },
+    }
+}
+
+fn offer(
+    latest: Version,
+    running: Version,
+    downloader: &impl Downloader,
+    repository: &Url,
+) -> AvailableUpdate {
+    let compatibility = fetch_compatibility(downloader, repository, &latest);
+    AvailableUpdate {
         latest,
         running,
         source: crate::platform::install_source::detect_current(),
         compatibility,
-    })
+    }
 }
 
 /// Atomically let one client announce each release. If state storage is unavailable, prefer a

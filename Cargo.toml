@@ -101,7 +101,7 @@ exclude = [
 # 0.46.4: `Update::has_command` and `Component::on_viewport_changed`.
 # 0.46.5: `Context::skip_cursor_trail` from `view`.
 # 0.47.0: libghostty-vt 1.0.2, and the Ghostty engine API is stable.
-tui-lipan = { version = "0.47.1", features = [
+tui-lipan = { version = "0.48.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

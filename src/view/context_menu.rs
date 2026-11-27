@@ -1,6 +1,8 @@
 //! The right-click menu, drawn over everything at the point it opened. What it lists depends on
 //! its target; [`crate::ops::context_menu`] carries out the chosen entry.
 
+mod sidebar;
+
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
@@ -15,18 +17,23 @@ use crate::state::{ContextMenuState, ContextMenuTarget};
 
 pub(crate) fn context_menu_overlay(ctx: &Context<AppRoot>, menu: &ContextMenuState) -> Element {
     let entries = match &menu.target {
-        ContextMenuTarget::Pane { id, .. } => pane_menu(ctx, *id),
+        ContextMenuTarget::Pane { id, sidebar, .. } => {
+            pane_menu(ctx, *id, *sidebar, menu.pane_selection.is_some())
+        }
         ContextMenuTarget::Workspace(id) => {
             crate::ops::context_menu::workspace_slot(&ctx.state, *id)
                 .map(|slot| workspace_menu(ctx, slot))
                 .unwrap_or_default()
         }
-        ContextMenuTarget::Session(identity) => {
-            crate::ops::context_menu::session_index(&ctx.state, identity)
-                .map(|index| session_menu(ctx, index))
+        ContextMenuTarget::Session { identity, sidebar } => {
+            crate::ops::context_menu::session_row(&ctx.state, identity, *sidebar)
+                .map(|entry| session_menu(ctx, &entry))
                 .unwrap_or_default()
         }
-        ContextMenuTarget::Agent(location) => agent_menu(ctx, location),
+        ContextMenuTarget::Agent { location, .. } => agent_menu(ctx, location),
+        ContextMenuTarget::EmptyWorkspace(_) => empty_workspace_menu(ctx),
+        ContextMenuTarget::SidebarTab(id) => sidebar::tab_menu(&ctx.state, id),
+        ContextMenuTarget::SidebarPanel(_, _) => sidebar::panel_menu(&ctx.state),
     };
     let theme = &ctx.state.theme;
     let fg = |style: &Style| crate::view::fg_only(style);
@@ -93,23 +100,35 @@ fn with_shortcut(
     }
 }
 
-fn pane_menu(ctx: &Context<AppRoot>, id: PaneId) -> Vec<ContextMenuEntry> {
+fn pane_menu(
+    ctx: &Context<AppRoot>,
+    id: PaneId,
+    sidebar: bool,
+    has_selection: bool,
+) -> Vec<ContextMenuEntry> {
     use pane_entries::*;
-    let Some(pane) = crate::pane::lifecycle::find_pane(&ctx.state, id) else {
-        return Vec::new();
+    let mut entries = Vec::new();
+    if sidebar {
+        entries.push(ContextMenuEntry::action(GO, "Go to pane"));
+    }
+    let Some(pane) = crate::ops::context_menu::visible_pane(&ctx.state, id) else {
+        return entries;
     };
+    if sidebar {
+        entries.push(ContextMenuEntry::separator());
+    }
     let action = |entry_id: &'static str, label: &'static str, action: Action| {
         with_shortcut(ctx, ContextMenuEntry::action(entry_id, label), action)
     };
     let scratch = ctx.state.scratch_visible;
-    let mut entries = vec![
-        ContextMenuEntry::action(COPY, "Copy").disabled(pane.mouse_selection.is_none()),
+    entries.extend([
+        ContextMenuEntry::action(COPY, "Copy").disabled(!has_selection),
         action(PASTE, "Paste", Action::Paste),
         action(SEARCH, "Search", Action::OpenSearch),
         ContextMenuEntry::separator(),
-    ];
+    ]);
     // Only Dwindle splits a pane; the other layouts place a new pane by their own order.
-    if !scratch && ctx.state.active_workspace_ref().layout_kind == LayoutKind::Dwindle {
+    if crate::ops::context_menu::pane_can_split(&ctx.state, id) {
         entries.push(ContextMenuEntry::action(SPLIT_RIGHT, "Split right"));
         entries.push(ContextMenuEntry::action(SPLIT_DOWN, "Split down"));
     } else {
@@ -183,6 +202,11 @@ fn workspace_menu(ctx: &Context<AppRoot>, slot: usize) -> Vec<ContextMenuEntry> 
         .disabled(slot == attachment.active_workspace),
         ContextMenuEntry::action(RENAME, "Rename"),
         ContextMenuEntry::separator(),
+        ContextMenuEntry::action(NEW, "New pane"),
+        layout_menu(attachment.workspaces[slot].layout_kind),
+        ContextMenuEntry::action(SYNC, "Synchronize panes")
+            .checked(attachment.workspaces[slot].synchronized),
+        ContextMenuEntry::separator(),
         ContextMenuEntry::action(MOVE_LEFT, "Move left").disabled(slot == 0),
         ContextMenuEntry::action(MOVE_RIGHT, "Move right").disabled(slot >= last),
         ContextMenuEntry::separator(),
@@ -192,21 +216,46 @@ fn workspace_menu(ctx: &Context<AppRoot>, slot: usize) -> Vec<ContextMenuEntry> 
     ]
 }
 
-fn session_menu(ctx: &Context<AppRoot>, index: usize) -> Vec<ContextMenuEntry> {
+fn layout_menu(current: LayoutKind) -> ContextMenuEntry {
+    ContextMenuEntry::submenu(
+        "layout",
+        "Layout",
+        LayoutKind::all().iter().map(|kind| {
+            ContextMenuEntry::action(
+                format!(
+                    "{}{kind}",
+                    workspace_entries::LAYOUT_PREFIX,
+                    kind = kind.label()
+                ),
+                kind.title(),
+            )
+            .checked(*kind == current)
+            .disabled(*kind == current)
+        }),
+    )
+}
+
+fn empty_workspace_menu(ctx: &Context<AppRoot>) -> Vec<ContextMenuEntry> {
+    vec![
+        ContextMenuEntry::action(workspace_entries::NEW, "New pane"),
+        ContextMenuEntry::action(workspace_entries::NEW_FLOAT, "New floating pane"),
+        layout_menu(
+            ctx.state.current().workspaces[ctx.state.current().active_workspace].layout_kind,
+        ),
+    ]
+}
+
+fn session_menu(
+    ctx: &Context<AppRoot>,
+    entry: &crate::session::discovery::DiscoveredSession,
+) -> Vec<ContextMenuEntry> {
     use session_entries::*;
-    let Some(entry) = ctx
-        .state
-        .session_picker
-        .as_ref()
-        .and_then(|picker| picker.entries.get(index))
-    else {
-        return Vec::new();
-    };
+    let killing = ctx.state.remote.session_is_killing(entry);
     let mut entries = Vec::new();
     let restorable = crate::ops::session::session_row_is_restorable(entry);
     let last_seen = crate::ops::session::session_row_is_last_seen(entry);
     if restorable {
-        entries.push(ContextMenuEntry::action(OPEN, "Restore"));
+        entries.push(ContextMenuEntry::action(OPEN, "Restore").disabled(killing));
     } else if !crate::ops::session::session_row_is_current(&ctx.state, entry) {
         let verb = crate::view::vocabulary::session_presence_for(
             &ctx.state,
@@ -216,20 +265,22 @@ fn session_menu(ctx: &Context<AppRoot>, index: usize) -> Vec<ContextMenuEntry> {
         .discovered(&entry.status)
         .verb()
         .unwrap_or("attach");
-        entries.push(ContextMenuEntry::action(OPEN, capitalized(verb)));
+        entries.push(ContextMenuEntry::action(OPEN, capitalized(verb)).disabled(killing));
+    }
+    if crate::ops::session::session_row_can_disconnect(&ctx.state, entry) {
+        entries.push(ContextMenuEntry::action(DISCONNECT, "Disconnect").disabled(killing));
     }
     if restorable || last_seen {
         entries.push(ContextMenuEntry::action(KILL, "Forget").destructive(true));
         return entries;
     }
-    entries.push(
-        ContextMenuEntry::action(RESTART, "Restart")
-            .disabled(!crate::ops::session::session_row_can_restart(entry)),
-    );
+    entries.push(ContextMenuEntry::action(RESTART, "Restart").disabled(
+        !crate::ops::session::can_restart_discovered_session(&ctx.state, entry),
+    ));
     entries.push(
         ContextMenuEntry::action(KILL, "Kill")
             .destructive(true)
-            .disabled(!crate::ops::session::session_row_can_kill(entry)),
+            .disabled(killing || !crate::ops::session::session_row_can_kill(entry)),
     );
     entries
 }

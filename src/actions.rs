@@ -643,7 +643,10 @@ fn closes_settings(action: Action) -> bool {
     )
 }
 
-fn open_settings(ctx: &mut Context<AppRoot>, selected: crate::state::SettingsAction) -> Update {
+pub(crate) fn open_settings(
+    ctx: &mut Context<AppRoot>,
+    selected: crate::state::SettingsAction,
+) -> Update {
     clear_non_settings_overlays(ctx);
     ctx.state.show_settings = true;
     ctx.state.settings_navigation =

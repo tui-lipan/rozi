@@ -281,6 +281,10 @@ pub(super) fn pane_mouse(
 }
 
 pub(super) fn pane_resize(ctx: &mut Context<AppRoot>, id: PaneId, cols: u16, rows: u16) -> Update {
+    // The terminal also reports its viewport when mounted, after losing its widget selection.
+    if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
+        pane.mouse_selection = None;
+    }
     handle_pane_resize(ctx, id, cols, rows)
 }
 

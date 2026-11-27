@@ -26,6 +26,41 @@ fn session_row(name: &str, host: Option<&str>) -> DiscoveredSession {
 }
 
 #[test]
+fn a_pending_remote_shutdown_blocks_direct_restart() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+        let entry = session_row("dev", Some("workbox"));
+        let state = backend.state_mut();
+        // Mark the row as the foreground session so an accidental restart takes the local
+        // current-session path rather than opening an SSH connection.
+        state.current_mut().session_attached = true;
+        state.current_mut().pending_session_attach = None;
+        state.current_mut().session_name = Some(entry.name.clone());
+        state.current_mut().remote_target = entry.remote_target.clone();
+        state
+            .remote
+            .killing_sessions
+            .push((entry.name.clone(), entry.remote_target.clone().unwrap()));
+        state.session_picker = Some(SessionPickerState::new(vec![entry]));
+        use crate::ops::context_menu::ContextMenuMsg;
+        backend
+            .update_level(crate::Msg::ContextMenu(ContextMenuMsg::SessionRow {
+                index: 0,
+                anchor: (0, 0),
+            }))
+            .expect("open session menu");
+        assert!(backend.state().context_menu.is_some());
+        backend
+            .update_level(crate::Msg::ContextMenu(ContextMenuMsg::Activate(
+                "restart".into(),
+            )))
+            .expect("activate a stale restart action");
+        assert!(backend.state().current().session_attached);
+        assert!(backend.state().current().pending_session_attach.is_none());
+    });
+}
+
+#[test]
 fn session_host_tabs_require_a_current_destination_not_cached_rows() {
     use crate::session::remote::RemoteTarget;
     use crate::state::{Attachment, HostProbe, SessionPickerTab};

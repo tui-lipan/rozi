@@ -9,14 +9,19 @@ use super::PaneIdentity;
 use crate::layout::model::DEFAULT_SCROLLABLE_WIDTH;
 use crate::pane::id::PaneId;
 
+pub(crate) struct PaneMouseSelection {
+    pub terminal_id: u64,
+    pub range: tui_lipan::TerminalSelection,
+    pub lineage: tui_lipan::ScrollbackLineage,
+}
+
 pub struct Pane {
     pub id: PaneId,
     pub pty_generation: u64,
     pub title: String,
     pub identity: PaneIdentity,
-    /// Text of the mouse selection the pane's terminal last reported, for the context menu's Copy.
-    /// Client-local and only tracked while context menus are on.
-    pub mouse_selection: Option<String>,
+    /// The selection reported by the current terminal widget, and the history it referred to.
+    pub(crate) mouse_selection: Option<PaneMouseSelection>,
     pub floating: bool,
     /// Floating and carried along whenever this pane's controller switches workspace. Shared
     /// placement, so it is only ever set on a floating pane.
@@ -190,6 +195,22 @@ pub struct PaneActivity {
 }
 
 impl Pane {
+    pub(crate) fn mouse_selection_text(&self) -> Option<String> {
+        let selection = self.mouse_selection.as_ref()?;
+        if selection.terminal_id != self.terminal.stable_terminal_id()
+            || selection.lineage != self.terminal.scrollback_lineage()
+        {
+            return None;
+        }
+        let text = self.terminal.selection_display_text(
+            &selection.range,
+            tui_lipan::SelectionEnd::Exclusive,
+            false,
+        );
+        let text = tui_lipan::utils::trim_blank_edge_lines(&text);
+        (!text.is_empty()).then(|| text.to_owned())
+    }
+
     pub(crate) fn new_local(id: PaneId, scrollback: usize, floating_rect: FloatRect) -> Self {
         let mut pane = Self::new(id, scrollback, floating_rect);
         pane.keys.terminal = Key::from(format!("rozi-local-terminal-{id}"));

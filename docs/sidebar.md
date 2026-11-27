@@ -40,7 +40,8 @@ were open when you left; `b` brings them back either way.
 <img src="./assets/captures/sidebar-startup.webp" alt="Open at startup disabled in Settings while both docks stay visible" data-label="Startup" data-caption="Disable automatic opening while keeping your remembered sidebars for the next launch.">
 </CaptureGallery>
 
-Clicking a row runs its action and leaves keyboard focus in the pane.
+Clicking a row runs its action and leaves keyboard focus in the pane. Right-click a Panes, Sessions,
+or Agents row for actions on that row.
 
 ## Navigate a focused sidebar
 
@@ -421,7 +422,9 @@ stays listed with a dash and keeps its place.
 
 Arrange tabs by dragging them, or with the focused-sidebar keys above. Drop a tab on another
 panel's body to add it at the end, or on its tab bar to choose its position. A tab you turn off and
-on again returns to where it was.
+on again from Settings returns to where it was. Right-click a tab to reorder it, move it to a dock
+panel, open its settings when available, or hide it. Right-click blank space in a tab strip or an
+empty panel, then choose **Show tab** to place a hidden tab there.
 
 When extensions provide presets, **Settings… → Bars → Layout preset…** offers them alongside
 the default layout.

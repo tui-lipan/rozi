@@ -1368,6 +1368,18 @@ pub(crate) fn pane_element(
             .copy_mode
             .as_ref()
             .is_some_and(|copy| copy.target == id);
+        let generation = pane.pty_generation;
+        if !copying {
+            terminal_widget = terminal_widget.on_selection(ctx.link().callback(
+                move |event: TerminalSelectionEvent| {
+                    Msg::ContextMenu(ContextMenuMsg::PaneSelection(
+                        id,
+                        generation,
+                        event.selection,
+                    ))
+                },
+            ));
+        }
         if copying {
             // Copy mode owns the pointer: presses and drags move its cursor and selection, and
             // none reach a program that tracks the mouse.
@@ -1745,7 +1757,7 @@ fn border_menu_region(
 
 /// Right clicks over terminal content: a program tracking the mouse gets them, and otherwise the
 /// pane menu opens when `[clipboard] right_click` asks for it. The override modifier opens the menu
-/// either way. The pane also reports its selection, for the menu's Copy.
+/// either way.
 fn with_pane_context_menu(ctx: &Context<AppRoot>, terminal: Terminal, id: PaneId) -> Terminal {
     let mouse = ctx.state.config.mouse;
     terminal
@@ -1759,9 +1771,6 @@ fn with_pane_context_menu(ctx: &Context<AppRoot>, terminal: Terminal, id: PaneId
                 id,
                 anchor: (event.x, event.y),
             })
-        }))
-        .on_selection(ctx.link().callback(move |event: TerminalSelectionEvent| {
-            Msg::ContextMenu(ContextMenuMsg::PaneSelection(id, event.text))
         }))
 }
 

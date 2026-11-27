@@ -101,8 +101,10 @@ Right-click a pane, its title, or its border for its menu: copy, paste, search, 
 zoom, float, move to another workspace, open its directory, copy its pane ID, or close it. The menu
 acts on that pane and leaves focus where it is. A program that tracks the mouse gets plain right
 clicks itself; hold `Ctrl` to open the menu over it, or press `c` after the prefix for the focused
-pane's menu. Workspace tabs and rows in Sessions and Agents have menus too. Turn menus off or
-change the modifier under [`[mouse]`](configuration.md#mouse).
+pane's menu. Right-click a workspace tab to change its layout or synchronize its panes. Right-click
+an empty workspace to open a pane or choose a layout. [Sidebar tabs and rows](sidebar.md) and the
+Sessions and Agents pickers have menus too. Turn menus off or change the modifier under
+[`[mouse]`](configuration.md#mouse).
 
 ## Select, copy, and paste
 

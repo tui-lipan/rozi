@@ -6,11 +6,15 @@
 //! Choosing an entry is the confirmation, as it is from the command palette, so entries that the
 //! keyboard arms on a first press act at once.
 
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
+
+use tui_lipan::TerminalSelection;
 
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
+
+pub(crate) mod sidebar;
 use crate::input::Action;
 use crate::layout::model::SplitAxis;
 use crate::pane::id::PaneId;
@@ -38,23 +42,45 @@ pub enum ContextMenuMsg {
         location: crate::state::AgentLocation,
         anchor: (u16, u16),
     },
+    SidebarRow(crate::state::RowTarget, (u16, u16)),
+    SidebarTab(crate::config::SidebarTabId, (u16, u16)),
+    SidebarPanel(crate::config::SidebarPosition, usize, (u16, u16)),
+    EmptyWorkspace(crate::state::WorkspaceId, (u16, u16)),
     /// A pane's terminal reported its mouse selection.
-    PaneSelection(PaneId, Option<String>),
+    PaneSelection(PaneId, u64, Option<TerminalSelection>),
     Activate(Arc<str>),
     Close,
 }
 
 pub(crate) fn handle(ctx: &mut Context<AppRoot>, msg: ContextMenuMsg) -> Update {
     match msg {
-        ContextMenuMsg::Pane { id, anchor } => open_pane(ctx, id, anchor),
+        ContextMenuMsg::Pane { id, anchor } => open_pane(ctx, id, anchor, false),
         ContextMenuMsg::WorkspaceTab { slot, anchor } => open_workspace(ctx, slot, anchor),
         ContextMenuMsg::SessionRow { index, anchor } => open_session(ctx, index, anchor),
         ContextMenuMsg::AgentRow { location, anchor } => {
-            open(ctx, ContextMenuTarget::Agent(location), anchor)
+            open(ctx, agent_target(&ctx.state, location, false), anchor)
         }
-        ContextMenuMsg::PaneSelection(id, text) => {
-            if let Some(pane) = crate::pane::lifecycle::find_pane_mut(&mut ctx.state, id) {
-                pane.mouse_selection = text;
+        ContextMenuMsg::SidebarRow(row, anchor) => open_sidebar_row(ctx, row, anchor),
+        ContextMenuMsg::SidebarTab(id, anchor) => {
+            open(ctx, ContextMenuTarget::SidebarTab(id), anchor)
+        }
+        ContextMenuMsg::SidebarPanel(side, home, anchor) => {
+            open(ctx, ContextMenuTarget::SidebarPanel(side, home), anchor)
+        }
+        ContextMenuMsg::EmptyWorkspace(id, anchor) => {
+            open(ctx, ContextMenuTarget::EmptyWorkspace(id), anchor)
+        }
+        ContextMenuMsg::PaneSelection(id, generation, selection) => {
+            if let Some(pane) = crate::pane::lifecycle::find_pane_mut(&mut ctx.state, id)
+                && pane.pty_generation == generation
+            {
+                pane.mouse_selection = selection.filter(|range| !range.is_empty()).map(|range| {
+                    crate::state::PaneMouseSelection {
+                        terminal_id: pane.terminal.stable_terminal_id(),
+                        range,
+                        lineage: pane.terminal.scrollback_lineage(),
+                    }
+                });
             }
             // Nothing on screen reads it until a menu opens.
             Update::none()
@@ -68,19 +94,40 @@ fn open(ctx: &mut Context<AppRoot>, target: ContextMenuTarget, anchor: (u16, u16
     if !ctx.state.config.mouse.context_menus || !target_live(&ctx.state, &target) {
         return Update::none();
     }
-    ctx.state.context_menu = Some(ContextMenuState { target, anchor });
+    let pane_selection = match &target {
+        ContextMenuTarget::Pane { id, .. } => {
+            visible_pane(&ctx.state, *id).and_then(crate::state::Pane::mouse_selection_text)
+        }
+        _ => None,
+    };
+    ctx.state.context_menu = Some(ContextMenuState {
+        target,
+        anchor,
+        pane_selection,
+    });
     Update::full()
 }
 
-fn open_pane(ctx: &mut Context<AppRoot>, id: PaneId, anchor: (u16, u16)) -> Update {
+fn open_pane(ctx: &mut Context<AppRoot>, id: PaneId, anchor: (u16, u16), sidebar: bool) -> Update {
     // Copy and hint mode hold the keyboard for their own pane until they end.
     if ctx.state.copy_mode.is_some() || ctx.state.hint_mode.is_some() {
         return Update::none();
     }
-    let Some(generation) = visible_pane(&ctx.state, id).map(|pane| pane.pty_generation) else {
+    let Some(generation) = menu_pane(&ctx.state, id, sidebar).map(|pane| pane.pty_generation)
+    else {
         return Update::none();
     };
-    open(ctx, ContextMenuTarget::Pane { id, generation }, anchor)
+    let epoch = ctx.state.runtime_epoch;
+    open(
+        ctx,
+        ContextMenuTarget::Pane {
+            id,
+            generation,
+            epoch,
+            sidebar,
+        },
+        anchor,
+    )
 }
 
 fn open_workspace(ctx: &mut Context<AppRoot>, slot: Option<usize>, anchor: (u16, u16)) -> Update {
@@ -100,8 +147,45 @@ fn open_session(ctx: &mut Context<AppRoot>, index: usize, anchor: (u16, u16)) ->
     else {
         return Update::none();
     };
-    let identity = (entry.name.clone(), entry.remote_target.clone());
-    open(ctx, ContextMenuTarget::Session(identity), anchor)
+    let target = session_target(entry, false);
+    open(ctx, target, anchor)
+}
+
+fn session_target(
+    entry: &crate::session::discovery::DiscoveredSession,
+    sidebar: bool,
+) -> ContextMenuTarget {
+    ContextMenuTarget::Session {
+        identity: (entry.name.clone(), entry.remote_target.clone()),
+        sidebar,
+    }
+}
+
+fn agent_target(
+    state: &State,
+    location: crate::state::AgentLocation,
+    sidebar: bool,
+) -> ContextMenuTarget {
+    ContextMenuTarget::Agent {
+        location,
+        sidebar,
+        epoch: state.runtime_epoch,
+    }
+}
+
+fn open_sidebar_row(
+    ctx: &mut Context<AppRoot>,
+    row: crate::state::RowTarget,
+    anchor: (u16, u16),
+) -> Update {
+    use crate::state::RowTarget;
+    let target = match row {
+        RowTarget::Pane(id) => return open_pane(ctx, id, anchor, true),
+        RowTarget::Agent(location) => agent_target(&ctx.state, location, true),
+        RowTarget::Session(entry) => session_target(&entry, true),
+        _ => return Update::none(),
+    };
+    open(ctx, target, anchor)
 }
 
 /// The keyboard way in: the focused pane's menu, at the top-left of its content.
@@ -119,7 +203,7 @@ pub(crate) fn open_for_focused(ctx: &mut Context<AppRoot>) -> Update {
             },
             |(_, rect)| (rect.x.max(0.0) as u16 + 2, rect.y.max(0.0) as u16 + 1),
         );
-    open_pane(ctx, id, anchor)
+    open_pane(ctx, id, anchor, false)
 }
 
 fn close(ctx: &mut Context<AppRoot>) -> Update {
@@ -142,7 +226,7 @@ pub(crate) fn sync(state: &mut State) -> bool {
 }
 
 /// A pane the user can see and point at: in the workspace on screen, or in the open scratchpad.
-fn visible_pane(state: &State, id: PaneId) -> Option<&crate::state::Pane> {
+pub(crate) fn visible_pane(state: &State, id: PaneId) -> Option<&crate::state::Pane> {
     state
         .active_workspace_ref()
         .panes
@@ -150,17 +234,96 @@ fn visible_pane(state: &State, id: PaneId) -> Option<&crate::state::Pane> {
         .find(|pane| pane.id == id && !pane.closing)
 }
 
+fn menu_pane(state: &State, id: PaneId, sidebar: bool) -> Option<&crate::state::Pane> {
+    if sidebar {
+        crate::pane::lifecycle::find_pane_in_namespace(state, id, false)
+            .filter(|pane| !pane.closing)
+    } else {
+        visible_pane(state, id)
+    }
+}
+
+fn sidebar_tab_visible(state: &State, id: &str) -> bool {
+    state
+        .visible_sidebar_tabs()
+        .any(|active| active.as_str() == id)
+}
+
 pub(crate) fn target_live(state: &State, target: &ContextMenuTarget) -> bool {
     match target {
-        ContextMenuTarget::Pane { id, generation } => {
-            visible_pane(state, *id).is_some_and(|pane| pane.pty_generation == *generation)
+        ContextMenuTarget::Pane {
+            id,
+            generation,
+            epoch,
+            sidebar,
+        } => {
+            state.runtime_epoch == *epoch
+                && (!sidebar || sidebar_tab_visible(state, "panes"))
+                && menu_pane(state, *id, *sidebar)
+                    .is_some_and(|pane| pane.pty_generation == *generation)
         }
         ContextMenuTarget::Workspace(id) => workspace_slot(state, *id).is_some(),
-        ContextMenuTarget::Session(identity) => session_index(state, identity).is_some(),
-        ContextMenuTarget::Agent(location) => {
-            state.agent_picker.is_some() && agent_listed(state, location)
+        ContextMenuTarget::EmptyWorkspace(id) => {
+            empty_workspace(state).is_some_and(|workspace| workspace == *id)
+        }
+        ContextMenuTarget::Session { identity, sidebar } => {
+            session_row(state, identity, *sidebar).is_some()
+        }
+        ContextMenuTarget::Agent {
+            location,
+            sidebar,
+            epoch,
+        } => {
+            let source_open = if *sidebar {
+                sidebar_tab_visible(state, "agents")
+            } else {
+                state.agent_picker.is_some()
+            };
+            state.runtime_epoch == *epoch && source_open && agent_listed(state, location)
+        }
+        ContextMenuTarget::SidebarTab(id) => sidebar_tab_position(state, id)
+            .is_some_and(|(panel, _)| state.sidebar_panel_visible(panel)),
+        ContextMenuTarget::SidebarPanel(side, home) => {
+            state
+                .sidebar
+                .panels
+                .iter()
+                .enumerate()
+                .any(|(index, panel)| {
+                    panel.dock == *side && panel.home == *home && state.sidebar_panel_visible(index)
+                })
         }
     }
+}
+
+pub(crate) fn empty_workspace(state: &State) -> Option<crate::state::WorkspaceId> {
+    if state.is_launcher() || state.scratch_visible || crate::view::workspace_is_covered(state) {
+        return None;
+    }
+    let workspace = state.active_workspace_ref();
+    workspace
+        .panes
+        .iter()
+        .all(|pane| pane.closing || pane.pinned)
+        .then_some(workspace.id)
+}
+
+pub(crate) fn sidebar_tab_position(
+    state: &State,
+    id: &crate::config::SidebarTabId,
+) -> Option<(usize, usize)> {
+    state
+        .sidebar
+        .panels
+        .iter()
+        .enumerate()
+        .find_map(|(index, panel)| {
+            panel
+                .tabs
+                .iter()
+                .position(|tab| tab == id)
+                .map(|position| (index, position))
+        })
 }
 
 pub(crate) fn workspace_slot(state: &State, id: crate::state::WorkspaceId) -> Option<usize> {
@@ -171,16 +334,34 @@ pub(crate) fn workspace_slot(state: &State, id: crate::state::WorkspaceId) -> Op
         .position(|workspace| workspace.id == id)
 }
 
-pub(crate) fn session_index(
-    state: &State,
+pub(crate) fn session_row<'a>(
+    state: &'a State,
     identity: &crate::state::SessionIdentity,
-) -> Option<usize> {
+    sidebar: bool,
+) -> Option<Cow<'a, crate::session::discovery::DiscoveredSession>> {
+    let matches = |entry: &crate::session::discovery::DiscoveredSession| {
+        entry.name == identity.0 && entry.remote_target == identity.1
+    };
+    if !sidebar {
+        return state
+            .session_picker
+            .as_ref()?
+            .entries
+            .iter()
+            .find(|entry| matches(entry))
+            .map(Cow::Borrowed);
+    }
+    if !sidebar_tab_visible(state, "sessions") {
+        return None;
+    }
+    // Offline rows may come directly from the sidebar's host cache, without a discovered entry.
     state
-        .session_picker
-        .as_ref()?
-        .entries
-        .iter()
-        .position(|entry| entry.name == identity.0 && entry.remote_target == identity.1)
+        .sidebar_rows(&crate::config::SidebarTab::Sessions)
+        .into_iter()
+        .find_map(|row| match row.target {
+            crate::state::RowTarget::Session(entry) if matches(&entry) => Some(Cow::Owned(*entry)),
+            _ => None,
+        })
 }
 
 fn agent_listed(state: &State, location: &crate::state::AgentLocation) -> bool {
@@ -196,22 +377,40 @@ fn activate(ctx: &mut Context<AppRoot>, entry: &str) -> Update {
     if !target_live(&ctx.state, &menu.target) {
         return Update::full();
     }
-    match menu.target {
-        ContextMenuTarget::Pane { id, .. } => pane_entry(ctx, id, entry),
+    let update = match menu.target {
+        ContextMenuTarget::Pane { id, sidebar, .. } => {
+            if sidebar && entry == pane_entries::GO {
+                return crate::update::sidebar::focus_pane(ctx, id).merge(Update::full());
+            }
+            if visible_pane(&ctx.state, id).is_some() {
+                pane_entry(ctx, id, entry, menu.pane_selection.as_deref())
+            } else {
+                Update::full()
+            }
+        }
         ContextMenuTarget::Workspace(id) => match workspace_slot(&ctx.state, id) {
             Some(slot) => workspace_entry(ctx, slot, entry),
             None => Update::full(),
         },
-        ContextMenuTarget::Session(identity) => match session_index(&ctx.state, &identity) {
-            Some(index) => session_entry(ctx, index, entry),
-            None => Update::full(),
+        ContextMenuTarget::EmptyWorkspace(_) => match entry {
+            workspace_entries::NEW_FLOAT => crate::actions::execute_action(ctx, Action::SpawnFloat),
+            _ => workspace_entry(ctx, ctx.state.current().active_workspace, entry),
         },
-        ContextMenuTarget::Agent(location) => agent_entry(ctx, location, entry),
-    }
+        ContextMenuTarget::Session { identity, sidebar } => {
+            session_entry(ctx, &identity, sidebar, entry)
+        }
+        ContextMenuTarget::Agent {
+            location, sidebar, ..
+        } => agent_entry(ctx, location, sidebar, entry),
+        ContextMenuTarget::SidebarTab(id) => sidebar::tab_entry(ctx, id, entry),
+        ContextMenuTarget::SidebarPanel(side, home) => sidebar::panel_entry(ctx, side, home, entry),
+    };
+    update.merge(Update::full())
 }
 
 /// Pane menu entry ids, shared with the view that lists them.
 pub(crate) mod pane_entries {
+    pub(crate) const GO: &str = "go";
     pub(crate) const COPY: &str = "copy";
     pub(crate) const PASTE: &str = "paste";
     pub(crate) const SEARCH: &str = "search";
@@ -241,7 +440,12 @@ fn admitted(
     }
 }
 
-fn pane_entry(ctx: &mut Context<AppRoot>, id: PaneId, entry: &str) -> Update {
+fn pane_entry(
+    ctx: &mut Context<AppRoot>,
+    id: PaneId,
+    entry: &str,
+    selection: Option<&str>,
+) -> Update {
     use pane_entries::*;
     if let Some(slot) = entry
         .strip_prefix(MOVE_TO_PREFIX)
@@ -254,11 +458,7 @@ fn pane_entry(ctx: &mut Context<AppRoot>, id: PaneId, entry: &str) -> Update {
         });
     }
     match entry {
-        COPY => {
-            let text = crate::pane::lifecycle::find_pane(&ctx.state, id)
-                .and_then(|pane| pane.mouse_selection.clone());
-            copy_text(ctx, text.as_deref())
-        }
+        COPY => copy_text(ctx, selection),
         PASTE => crate::actions::paste_into_pane(ctx, id),
         SEARCH => admitted(ctx, Action::OpenSearch, |ctx| {
             crate::ops::search::open_search_in(ctx, id)
@@ -290,9 +490,18 @@ fn pane_entry(ctx: &mut Context<AppRoot>, id: PaneId, entry: &str) -> Update {
 }
 
 fn split(ctx: &mut Context<AppRoot>, id: PaneId, axis: Option<SplitAxis>) -> Update {
+    if axis.is_some() && !pane_can_split(&ctx.state, id) {
+        return Update::full();
+    }
     admitted(ctx, Action::Spawn, |ctx| {
         crate::pane::lifecycle::split_pane(ctx, id, axis)
     })
+}
+
+pub(crate) fn pane_can_split(state: &State, id: PaneId) -> bool {
+    !state.scratch_visible
+        && state.active_workspace_ref().layout_kind == crate::layout::model::LayoutKind::Dwindle
+        && visible_pane(state, id).is_some_and(|pane| !pane.floating)
 }
 
 /// The directory a pane's shell is in, as the server sees it.
@@ -317,6 +526,10 @@ fn copy_text(ctx: &mut Context<AppRoot>, text: Option<&str>) -> Update {
 
 /// Workspace menu entry ids.
 pub(crate) mod workspace_entries {
+    pub(crate) const NEW: &str = "new-pane";
+    pub(crate) const NEW_FLOAT: &str = "new-floating-pane";
+    pub(crate) const LAYOUT_PREFIX: &str = "layout:";
+    pub(crate) const SYNC: &str = "synchronize";
     pub(crate) const SWITCH: &str = "switch";
     pub(crate) const RENAME: &str = "rename";
     pub(crate) const MOVE_LEFT: &str = "move-left";
@@ -326,7 +539,34 @@ pub(crate) mod workspace_entries {
 
 fn workspace_entry(ctx: &mut Context<AppRoot>, slot: usize, entry: &str) -> Update {
     use workspace_entries::*;
+    if let Some(kind) = entry
+        .strip_prefix(LAYOUT_PREFIX)
+        .and_then(crate::layout::model::LayoutKind::from_label)
+    {
+        return admitted(ctx, Action::ToggleLayout, |ctx| {
+            if slot == ctx.state.current().active_workspace {
+                crate::ops::resize_move::set_layout(ctx, kind, false);
+            } else {
+                crate::ops::resize_move::set_workspace_layout(
+                    &mut ctx.state.current_mut().workspaces[slot],
+                    kind,
+                );
+            }
+            Update::full()
+        });
+    }
     match entry {
+        NEW if slot == ctx.state.current().active_workspace => {
+            crate::actions::execute_action(ctx, Action::Spawn)
+        }
+        NEW => admitted(ctx, Action::Spawn, |ctx| {
+            crate::update::sidebar::spawn_new_pane(ctx, slot)
+        }),
+        SYNC => admitted(ctx, Action::TogglePaneSynchronization, |ctx| {
+            let workspace = &mut ctx.state.current_mut().workspaces[slot];
+            workspace.synchronized = !workspace.synchronized;
+            Update::full()
+        }),
         SWITCH => crate::actions::execute_action(ctx, Action::SwitchWorkspace(slot)),
         RENAME => admitted(ctx, Action::RenameWorkspace, |ctx| {
             crate::ops::identity::open_rename_workspace_for(ctx, slot)
@@ -346,30 +586,31 @@ fn workspace_entry(ctx: &mut Context<AppRoot>, slot: usize, entry: &str) -> Upda
 pub(crate) mod session_entries {
     pub(crate) const OPEN: &str = "open";
     pub(crate) const RESTART: &str = "restart";
+    pub(crate) const DISCONNECT: &str = "disconnect";
     pub(crate) const KILL: &str = "kill";
 }
 
-fn session_entry(ctx: &mut Context<AppRoot>, index: usize, entry: &str) -> Update {
+fn session_entry(
+    ctx: &mut Context<AppRoot>,
+    identity: &crate::state::SessionIdentity,
+    sidebar: bool,
+    action: &str,
+) -> Update {
+    use crate::ops::session;
     use session_entries::*;
-    match entry {
-        OPEN => crate::ops::session::activate_selected_session(ctx, index),
-        RESTART => {
-            let Some(entry) = session_entry_at(&ctx.state, index) else {
-                return Update::full();
-            };
-            crate::ops::session::clear_pending_session_arms(ctx);
-            crate::ops::session::restart_discovered_session(ctx, entry)
+    let Some(entry) = session_row(&ctx.state, identity, sidebar).map(Cow::into_owned) else {
+        return Update::full();
+    };
+    match action {
+        OPEN => {
+            session::clear_pending_session_arms(ctx);
+            session::activate_discovered_session(ctx, entry)
         }
-        KILL => crate::ops::session::kill_session_row(ctx, index),
+        RESTART => session::restart_discovered_session(ctx, entry),
+        KILL => session::kill_or_forget_session(ctx, entry),
+        DISCONNECT => session::disconnect_discovered_attachment(ctx, entry),
         _ => Update::full(),
     }
-}
-
-fn session_entry_at(
-    state: &State,
-    index: usize,
-) -> Option<crate::session::discovery::DiscoveredSession> {
-    state.session_picker.as_ref()?.entries.get(index).cloned()
 }
 
 /// Agent menu entry ids: what Enter and Ctrl+Enter do on the row.
@@ -381,18 +622,25 @@ pub(crate) mod agent_entries {
 fn agent_entry(
     ctx: &mut Context<AppRoot>,
     location: crate::state::AgentLocation,
+    sidebar: bool,
     entry: &str,
 ) -> Update {
-    match entry {
-        agent_entries::OPEN => crate::ops::agents::activate(ctx, location, false),
-        agent_entries::OPEN_OTHER => crate::ops::agents::activate(ctx, location, true),
-        _ => Update::full(),
+    let alternate = match entry {
+        agent_entries::OPEN => false,
+        agent_entries::OPEN_OTHER => true,
+        _ => return Update::full(),
+    };
+    if sidebar {
+        crate::ops::agents::activate_from_sidebar(ctx, location, alternate)
+    } else {
+        crate::ops::agents::activate(ctx, location, alternate)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use tui_lipan::{FloatRect, Rect, TestBackend};
+    use tui_lipan::core::event::{MouseButton, MouseKind};
+    use tui_lipan::{FloatRect, KeyMods, MouseEvent, Rect, TestBackend};
 
     use super::ContextMenuMsg;
     use crate::layout::tiling::append_tiled_window;
@@ -406,6 +654,164 @@ mod tests {
             .iter()
             .find(|pane| pane.id == id)
             .expect("pane")
+    }
+
+    fn mouse(backend: &mut TestBackend<AppRoot>, kind: MouseKind, x: u16, y: u16) {
+        backend
+            .send_mouse(MouseEvent {
+                x,
+                y,
+                kind,
+                mods: KeyMods::NONE,
+            })
+            .expect("mouse input");
+    }
+
+    #[test]
+    fn pane_menu_copies_the_selection_it_opened_on_and_drops_it_after_remount() {
+        use std::{cell::RefCell, rc::Rc};
+        use tui_lipan::{ClipboardError, ClipboardProvider};
+
+        struct Clipboard(Rc<RefCell<String>>);
+        impl ClipboardProvider for Clipboard {
+            fn read_clipboard_text(&mut self) -> Result<String, ClipboardError> {
+                Ok(self.0.borrow().clone())
+            }
+
+            fn write_clipboard_text(&mut self, text: &str) -> Result<(), ClipboardError> {
+                self.0.replace(text.to_string());
+                Ok(())
+            }
+        }
+
+        crate::test_support::on_large_stack(|| {
+            let copied = Rc::new(RefCell::new(String::new()));
+            let app = tui_lipan::App::new().clipboard_provider(Clipboard(copied.clone()));
+            let mut backend = TestBackend::new_with_app(app, AppRoot::default(), ());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            let id = backend.state().focused_pane().expect("focused pane");
+            let state = backend.state_mut();
+            state.config.animations.enabled = false;
+            let terminal = crate::pane::lifecycle::find_pane_mut(state, id).expect("terminal");
+            terminal.opening = false;
+            terminal.terminal_active = true;
+            terminal.terminal.process_server_output(b"alpha beta");
+            let generation = terminal.pty_generation;
+            backend.render();
+            backend.pump().expect("report the initial viewport");
+
+            // TestBackend handles terminal context menus but only the live runner produces
+            // terminal drag selection events. Deliver the event the terminal would emit here.
+            let selection = tui_lipan::TerminalSelection {
+                anchor: tui_lipan::TerminalPos { line: 0, col: 6 },
+                cursor: tui_lipan::TerminalPos { line: 0, col: 10 },
+            };
+            let select = |backend: &mut TestBackend<AppRoot>, selection| {
+                backend
+                    .dispatch(Msg::ContextMenu(ContextMenuMsg::PaneSelection(
+                        id, generation, selection,
+                    )))
+                    .expect("terminal selection event");
+            };
+            select(&mut backend, Some(selection));
+            backend
+                .dispatch(Msg::ContextMenu(ContextMenuMsg::Pane {
+                    id,
+                    anchor: (20, 3),
+                }))
+                .expect("open pane menu");
+            select(&mut backend, None);
+            backend
+                .dispatch(Msg::ContextMenu(ContextMenuMsg::Activate("copy".into())))
+                .expect("copy selection from the menu");
+            assert_eq!(*copied.borrow(), "beta");
+
+            select(&mut backend, Some(selection));
+            // Change only the widget key. The PTY and pane state survive its replacement.
+            let terminal =
+                crate::pane::lifecycle::find_pane_mut(backend.state_mut(), id).expect("pane");
+            terminal.keys.terminal = "replacement-terminal".into();
+            backend.render();
+            backend.pump().expect("report the replacement viewport");
+            assert_eq!(pane(&backend, id).mouse_selection_text(), None);
+        });
+    }
+
+    #[test]
+    fn a_floating_pane_in_dwindle_offers_new_pane_instead_of_splits() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            let id = backend.state().focused_pane().expect("focused pane");
+            let state = backend.state_mut();
+            state.config.animations.enabled = false;
+            state.active_workspace_mut().layout_kind = crate::layout::model::LayoutKind::Dwindle;
+            crate::pane::lifecycle::find_pane_mut(state, id)
+                .expect("pane")
+                .floating = true;
+            backend
+                .dispatch(Msg::ContextMenu(ContextMenuMsg::Pane {
+                    id,
+                    anchor: (12, 3),
+                }))
+                .expect("open menu");
+            backend.render();
+            let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
+            assert!(frame.contains("New pane"), "{frame}");
+            assert!(
+                !frame.contains("Split right") && !frame.contains("Split down"),
+                "{frame}"
+            );
+        });
+    }
+
+    #[test]
+    fn right_click_in_an_empty_workspace_applies_the_selected_layout() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            let state = backend.state_mut();
+            state.window_focused = true;
+            state.current_mut().session_attached = true;
+            state.current_mut().focused_pane = None;
+            state.active_workspace_mut().panes.clear();
+            let workspace = state.active_workspace_ref().id;
+            backend.render();
+            mouse(&mut backend, MouseKind::Down(MouseButton::Right), 90, 22);
+            mouse(&mut backend, MouseKind::Up(MouseButton::Right), 90, 22);
+            assert_eq!(
+                backend
+                    .state()
+                    .context_menu
+                    .as_ref()
+                    .map(|menu| &menu.target),
+                Some(&crate::state::ContextMenuTarget::EmptyWorkspace(workspace)),
+            );
+            backend
+                .dispatch(Msg::ContextMenu(ContextMenuMsg::Activate(
+                    "layout:grid".into(),
+                )))
+                .expect("choose Grid");
+            assert_eq!(
+                backend.state().active_workspace_ref().layout_kind,
+                crate::layout::model::LayoutKind::Grid
+            );
+        });
     }
 
     #[test]

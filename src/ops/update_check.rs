@@ -323,7 +323,7 @@ fn offer(
 ///
 /// This is also what keeps the periodic re-check quiet: every later check of the same release
 /// finds the marker and says nothing, so a client left open for a week toasts once.
-fn claim_notice(latest: &Version) -> bool {
+pub(crate) fn claim_notice(latest: &Version) -> bool {
     let env = crate::platform::paths::PlatformEnv::from_process();
     claim_notice_in(
         &crate::platform::paths::state_dir(&env).join("update-notices"),

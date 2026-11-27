@@ -136,7 +136,7 @@ pub(crate) fn progress(
             .state
             .available_update
             .as_ref()
-            .is_none_or(|offered| offered.latest <= update.latest);
+            .is_none_or(|offered| offered.latest < update.latest);
         if newer {
             ctx.state.available_update = Some(update.clone());
             ctx.state.commands_dirty = true;
@@ -375,6 +375,8 @@ fn install_managed(
             "the newest release is v{latest}, not newer than this one"
         ));
     }
+    // This client is installing it, so no client announces it as news any more.
+    crate::ops::update_check::claim_notice(&latest);
     reporter.send(SelfUpdateEvent::Resolved(
         crate::ops::update_check::offer_for(latest.clone(), running.clone()),
     ));
@@ -824,10 +826,27 @@ mod tests {
     }
 
     /// A release published after the check is what the installer finds. The card names it from
-    /// the start of the download, with its own note, and so does Commands.
+    /// the start of the download, with its own note, and so does Commands - also once a still
+    /// newer release is announced while it runs, which raises no toast for the one installing.
+    /// Finding the announced release again changes nothing, even without its metadata.
     #[test]
     fn the_card_names_the_release_the_installer_found() {
         crate::test_support::on_large_stack(|| {
+            let mut same = updating_to("9.9.9", true);
+            report(
+                &mut same,
+                SelfUpdateEvent::Resolved(crate::ops::update_check::AvailableUpdate::for_test(
+                    "9.9.9",
+                    InstallSource::Managed,
+                    None,
+                )),
+            );
+            finish(&mut same, Ok(semver::Version::new(9, 9, 9)));
+            assert!(
+                restart_note(&same).is_some(),
+                "a refetch that lost the metadata keeps the announced note"
+            );
+
             let mut backend = updating_to("9.9.9", false);
             let Msg::UpdateAvailable { update, .. } = raising_extension_api("9.9.10") else {
                 unreachable!()
@@ -844,6 +863,23 @@ mod tests {
                     .map(|offer| &offer.latest),
                 Some(&semver::Version::new(9, 9, 10))
             );
+            backend.dispatch(Msg::SelfUpdateHide).unwrap();
+            backend.dispatch(raising_extension_api("9.9.10")).unwrap();
+            assert!(!notice_raised(&backend), "9.9.10 is already installing");
+            backend.dispatch(raising_extension_api("9.9.11")).unwrap();
+            assert!(notice_raised(&backend), "9.9.11 is news");
+            assert_eq!(
+                crate::commands::resolved_label(
+                    crate::input::Action::UpdateRozi,
+                    "Update rozi",
+                    backend.state()
+                ),
+                "Update rozi to v9.9.10",
+                "the command brings back the running update"
+            );
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::UpdateRozi))
+                .unwrap();
 
             finish(&mut backend, Ok(semver::Version::new(9, 9, 10)));
             assert!(

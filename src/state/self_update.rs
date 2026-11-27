@@ -154,10 +154,13 @@ impl SelfUpdateRun {
             return;
         }
         match event {
-            SelfUpdateEvent::Resolved(update) => {
+            // The announced release keeps the metadata it was announced with; only a different
+            // release brings its own.
+            SelfUpdateEvent::Resolved(update) if update.latest != self.latest => {
                 self.note = update.extension_note();
                 self.latest = update.latest;
             }
+            SelfUpdateEvent::Resolved(_) => {}
             SelfUpdateEvent::Downloaded { downloaded, total } => {
                 self.phase = UpdatePhase::Downloading { downloaded, total };
             }

@@ -768,7 +768,14 @@ pub(super) fn update_available(
         ctx.state.available_update = Some(update.clone());
         ctx.state.commands_dirty = true;
     }
-    if !announce {
+    // A release this client is installing, or installed, is not news here.
+    let installing = ctx
+        .state
+        .self_update
+        .run
+        .as_ref()
+        .is_some_and(|run| update.latest <= *run.release());
+    if !announce || installing {
         return if known {
             Update::none()
         } else {

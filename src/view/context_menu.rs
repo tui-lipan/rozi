@@ -50,7 +50,7 @@ pub(crate) fn context_menu_overlay(ctx: &Context<AppRoot>, menu: &ContextMenuSta
         .anchor(Some(menu.anchor))
         // Below the pointer, so the tab or row it opened on stays in view.
         .offset((0, 1))
-        .animation(crate::view::animation::picker_animation(
+        .animation(crate::view::animation::context_menu_animation(
             ctx.state.config.animations,
         ))
         .border_style(crate::view::overlay_border_style(ctx))

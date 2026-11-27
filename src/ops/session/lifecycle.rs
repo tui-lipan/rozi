@@ -842,7 +842,6 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<AppRoot>) -> Update {
     if ctx.state.remote.session_is_killing(&entry) {
         return Update::none();
     }
-    let last_seen = session_row_is_last_seen(&entry);
     let armed = picker.pending_kill == Some(index);
     if !armed {
         // First press arms the kill or forget: drop any stale arming, then mark this row.
@@ -852,11 +851,24 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<AppRoot>) -> Update {
         }
         return crate::ops::confirm::arm(ctx);
     }
+    kill_or_forget_session(ctx, entry)
+}
+
+/// Kill a live session or forget its saved or last-seen entry. The caller has confirmed.
+pub(crate) fn kill_or_forget_session(
+    ctx: &mut Context<AppRoot>,
+    entry: DiscoveredSession,
+) -> Update {
+    if ctx.state.remote.session_is_killing(&entry) {
+        return Update::none();
+    }
+    let last_seen = session_row_is_last_seen(&entry);
     clear_pending_session_arms(ctx);
     let remote_shutdown =
         !last_seen && entry.remote_target.is_some() && !session_row_is_current(&ctx.state, &entry);
     let update = if last_seen {
         forget_last_seen_session(ctx, &entry);
+        crate::update::sidebar::request_sessions_refresh(ctx);
         Update::full()
     } else {
         kill_discovered_session(ctx, entry)
@@ -893,7 +905,7 @@ pub(crate) fn restart_selected_session(ctx: &mut Context<AppRoot>) -> Update {
     let Some(entry) = picker.entries.get(index).cloned() else {
         return Update::full();
     };
-    if ctx.state.remote.session_is_killing(&entry) || !session_row_can_restart(&entry) {
+    if !can_restart_discovered_session(&ctx.state, &entry) {
         return Update::none();
     }
     let armed = picker.pending_restart == Some(index);
@@ -904,7 +916,6 @@ pub(crate) fn restart_selected_session(ctx: &mut Context<AppRoot>) -> Update {
         }
         return crate::ops::confirm::arm(ctx);
     }
-    clear_pending_session_arms(ctx);
     restart_discovered_session(ctx, entry)
 }
 
@@ -934,15 +945,20 @@ fn restart_session_name(state: &mut crate::state::State, entry: &DiscoveredSessi
     }
 }
 
+pub(crate) fn can_restart_discovered_session(state: &State, entry: &DiscoveredSession) -> bool {
+    !state.remote.session_is_killing(entry) && session_row_can_restart(entry)
+}
+
 pub(crate) fn restart_discovered_session(
     ctx: &mut Context<AppRoot>,
     entry: DiscoveredSession,
 ) -> Update {
     // A snapshot has no live server to recreate (restore is Enter), and a last-seen row is a
     // memory of one on a host nothing has reached. Neither has anything to restart.
-    if !session_row_can_restart(&entry) {
+    if !can_restart_discovered_session(&ctx.state, &entry) {
         return Update::none();
     }
+    clear_pending_session_arms(ctx);
     let is_current = ctx.state.current().session_attached
         && ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
         && ctx.state.current().remote_target == entry.remote_target;
@@ -1122,11 +1138,13 @@ pub(crate) fn disconnect_selected_attachment(ctx: &mut Context<AppRoot>) -> Upda
     disconnect_discovered_attachment(ctx, entry)
 }
 
-fn disconnect_discovered_attachment(
+pub(crate) fn disconnect_discovered_attachment(
     ctx: &mut Context<AppRoot>,
     entry: DiscoveredSession,
 ) -> Update {
-    if !session_row_can_disconnect(&ctx.state, &entry) {
+    if ctx.state.remote.session_is_killing(&entry)
+        || !session_row_can_disconnect(&ctx.state, &entry)
+    {
         return Update::none();
     }
     let Some(id) = ctx

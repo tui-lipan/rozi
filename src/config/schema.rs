@@ -960,6 +960,8 @@ impl MiddleClickPaste {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RightClickClipboardAction {
+    /// Open the pane's context menu, when `[mouse] context_menus` is on.
+    ContextMenu,
     Disabled,
     PasteClipboard,
     CopyOrPaste,
@@ -967,11 +969,17 @@ pub enum RightClickClipboardAction {
 
 impl RightClickClipboardAction {
     pub const fn all() -> &'static [Self] {
-        &[Self::Disabled, Self::PasteClipboard, Self::CopyOrPaste]
+        &[
+            Self::ContextMenu,
+            Self::Disabled,
+            Self::PasteClipboard,
+            Self::CopyOrPaste,
+        ]
     }
 
     pub fn parse(value: &str) -> Option<Self> {
         match value {
+            "context-menu" => Some(Self::ContextMenu),
             "off" => Some(Self::Disabled),
             "paste" => Some(Self::PasteClipboard),
             "copy-or-paste" => Some(Self::CopyOrPaste),
@@ -981,6 +989,7 @@ impl RightClickClipboardAction {
 
     pub const fn id(self) -> &'static str {
         match self {
+            Self::ContextMenu => "context-menu",
             Self::Disabled => "off",
             Self::PasteClipboard => "paste",
             Self::CopyOrPaste => "copy-or-paste",
@@ -989,11 +998,50 @@ impl RightClickClipboardAction {
 
     pub const fn label(self) -> &'static str {
         match self {
+            Self::ContextMenu => "Context menu",
             Self::Disabled => "Off",
             Self::PasteClipboard => "Paste",
             Self::CopyOrPaste => "Copy or paste",
         }
     }
+}
+
+/// `[mouse]`: right-click menus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MouseConfig {
+    /// Right-click menus on panes, workspace tabs, and picker rows.
+    pub context_menus: bool,
+    /// Held with a right click, opens the pane menu even over a program that tracks the mouse.
+    /// `None` leaves such clicks to the program.
+    pub context_menu_modifier: Option<KeyMods>,
+}
+
+impl Default for MouseConfig {
+    fn default() -> Self {
+        Self {
+            context_menus: true,
+            context_menu_modifier: Some(KeyMods::CTRL),
+        }
+    }
+}
+
+/// Parse a `context_menu_modifier` value: `off`, or modifiers joined by `-` or `+`.
+pub fn parse_context_menu_modifier(value: &str) -> Option<Option<KeyMods>> {
+    let value = value.trim().to_ascii_lowercase();
+    if value == "off" {
+        return Some(None);
+    }
+    let mut mods = KeyMods::NONE;
+    for part in value.split(['-', '+']) {
+        match part {
+            "ctrl" | "control" => mods.ctrl = true,
+            "alt" => mods.alt = true,
+            "shift" => mods.shift = true,
+            "super" => mods.super_key = true,
+            _ => return None,
+        }
+    }
+    Some(Some(mods))
 }
 
 /// How a copied selection is highlighted.
@@ -1070,7 +1118,7 @@ impl Default for ClipboardConfig {
             } else {
                 MiddleClickPaste::Disabled
             },
-            right_click: RightClickClipboardAction::Disabled,
+            right_click: RightClickClipboardAction::ContextMenu,
             enable_osc52: true,
             drag_and_drop: true,
             copy_feedback: CopyFeedback::Flash,
@@ -1459,6 +1507,7 @@ pub struct Config {
     pub layout: LayoutConfig,
     pub pane: PaneConfig,
     pub clipboard: ClipboardConfig,
+    pub mouse: MouseConfig,
     pub updates: UpdatesConfig,
     pub notifications: NotificationsConfig,
     pub sounds: SoundsConfig,
@@ -2668,6 +2717,7 @@ impl Default for Config {
             layout: LayoutConfig::default(),
             pane: PaneConfig::default(),
             clipboard: ClipboardConfig::default(),
+            mouse: MouseConfig::default(),
             updates: UpdatesConfig::default(),
             notifications: NotificationsConfig::default(),
             sounds: SoundsConfig::default(),

@@ -1,6 +1,7 @@
 pub(crate) mod agent_requests;
 pub(crate) mod agents;
 pub(crate) mod animation;
+mod context_menu;
 pub(crate) mod exit;
 pub(crate) mod keys_display;
 mod overlays;
@@ -653,6 +654,9 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     }
     if show_reconnecting || show_offline {
         root = root.child(reconnecting_overlay(ctx));
+    }
+    if let Some(menu) = ctx.state.context_menu.as_ref() {
+        root = root.child(context_menu::context_menu_overlay(ctx, menu));
     }
     // Last, so its own backdrop fades every dialog already on screen: an ssh prompt arrives on
     // ssh's schedule, over whatever the user had open, and returns them to it.

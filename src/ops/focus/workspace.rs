@@ -165,13 +165,18 @@ fn emit_workspace_switched(state: &State, index: usize) {
 }
 
 pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) {
+    let Some(focused) = state.current().focused_pane else {
+        return;
+    };
+    move_pane_to_workspace(state, focused, target_index);
+}
+
+/// Move pane `focused` of the active workspace to workspace `target_index` and follow it there.
+pub(crate) fn move_pane_to_workspace(state: &mut State, focused: PaneId, target_index: usize) {
     if target_index >= state.current().workspaces.len() {
         return;
     }
     let source_index = state.current().active_workspace;
-    let Some(focused) = state.current().focused_pane else {
-        return;
-    };
     if source_index == target_index {
         return;
     }
@@ -373,6 +378,7 @@ fn transfer_workspace_content(state: &mut State, source_index: usize, target_ind
 }
 
 fn swap_workspace_fields(a: &mut Workspace, b: &mut Workspace) {
+    std::mem::swap(&mut a.id, &mut b.id);
     std::mem::swap(&mut a.panes, &mut b.panes);
     std::mem::swap(&mut a.tile_tree, &mut b.tile_tree);
     std::mem::swap(&mut a.focused_pane, &mut b.focused_pane);
@@ -389,6 +395,7 @@ fn swap_workspace_fields(a: &mut Workspace, b: &mut Workspace) {
 }
 
 fn transfer_workspace_fields(from: &mut Workspace, to: &mut Workspace) {
+    to.id = from.id;
     to.panes = std::mem::take(&mut from.panes);
     to.tile_tree = from.tile_tree.take();
     to.focused_pane = from.focused_pane.take();

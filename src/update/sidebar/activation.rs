@@ -301,7 +301,7 @@ pub(crate) fn substitute(
     }
 }
 
-fn spawn_new_pane(ctx: &mut Context<AppRoot>, workspace: usize) -> Update {
+pub(crate) fn spawn_new_pane(ctx: &mut Context<AppRoot>, workspace: usize) -> Update {
     if workspace >= ctx.state.current().workspaces.len() {
         return Update::none();
     }

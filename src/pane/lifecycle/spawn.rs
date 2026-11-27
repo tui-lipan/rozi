@@ -70,6 +70,55 @@ pub(crate) fn focused_spawn_cwd(state: &State) -> Option<String> {
     focused_local_cwd(state)
 }
 
+/// [`focused_spawn_cwd`] for pane `id`, focused or not.
+fn pane_spawn_cwd(state: &State, id: PaneId) -> Option<String> {
+    let pane = find_pane(state, id)?;
+    if state.current().remote_host.is_some() {
+        return pane
+            .terminal
+            .working_directory()
+            .or_else(|| pane.identity.cwd.clone());
+    }
+    pane.local_cwd_ref().map(str::to_string)
+}
+
+/// Split pane `target` with a new shell in its directory, focused or not. `axis` picks the
+/// direction in Dwindle; `None` splits along the tile's longer side, as [`spawn_pane`] does. The
+/// new pane takes focus, as a split by hand does.
+pub(crate) fn split_pane(
+    ctx: &mut Context<AppRoot>,
+    target: PaneId,
+    axis: Option<crate::layout::model::SplitAxis>,
+) -> Update {
+    let identity = PaneIdentity {
+        cwd: pane_spawn_cwd(&ctx.state, target),
+        ..PaneIdentity::default()
+    };
+    if crate::scratchpad::contains(&ctx.state, target) {
+        return spawn_pane_in_scratch(ctx, Some(target), identity).1;
+    }
+    crate::ops::resize_move::finish_shared_pointer_gesture(ctx);
+    let (workspace_index, previous_focused, mut placement) = interactive_spawn_target(
+        &ctx.state,
+        ctx.state.current().active_workspace,
+        Some(target),
+        None,
+        None,
+        None,
+    );
+    placement.split_axis = axis;
+    spawn_pane_in_workspace(
+        ctx,
+        workspace_index,
+        previous_focused,
+        identity,
+        placement,
+        None,
+        None,
+    )
+    .1
+}
+
 pub(crate) fn spawn_pane(ctx: &mut Context<AppRoot>) -> Update {
     if ctx.state.scratch_visible {
         let previous_focused = ctx.state.scratch.focused_pane;
@@ -143,8 +192,7 @@ pub(crate) fn spawn_floating_pane_at_cursor(ctx: &mut Context<AppRoot>) -> Updat
         identity,
         SpawnPlacement {
             float: Some(float),
-            fullscreen: false,
-            focus: true,
+            ..SpawnPlacement::default()
         },
         None,
         None,
@@ -216,7 +264,7 @@ pub(crate) fn spawn_pane_in_scratch(
         rect,
         0.0,
         tile_gap,
-        split_width_multiplier,
+        crate::layout::SplitRule::LongerSide(split_width_multiplier),
     );
     let slide_edge = tiled_placement.slide_edge(ctx.state.scratch.layout_kind);
     if let Some(pane) = ctx
@@ -304,6 +352,8 @@ pub(crate) struct SpawnPlacement {
     pub float: Option<SpawnFloat>,
     pub fullscreen: bool,
     pub focus: bool,
+    /// Split the source tile this way instead of along its longer side. Dwindle only.
+    pub split_axis: Option<crate::layout::model::SplitAxis>,
 }
 
 impl Default for SpawnPlacement {
@@ -312,6 +362,7 @@ impl Default for SpawnPlacement {
             float: None,
             fullscreen: false,
             focus: true,
+            split_axis: None,
         }
     }
 }
@@ -527,7 +578,10 @@ pub(crate) fn spawn_pane_in_workspace(
         bounds,
         top_gap,
         tile_gap,
-        split_width_multiplier,
+        placement.split_axis.map_or(
+            crate::layout::SplitRule::LongerSide(split_width_multiplier),
+            crate::layout::SplitRule::Axis,
+        ),
     );
     let slide_edge = tiled_placement.slide_edge(workspace.layout_kind);
     if let Some(pane) = workspace.panes.iter_mut().find(|pane| pane.id == id) {

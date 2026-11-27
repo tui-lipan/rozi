@@ -8,6 +8,7 @@ use tui_lipan::{
 use crate::config::{BadgeColor, PaneConfig};
 use crate::layout::model::{LayoutKind, TileGap};
 use crate::layout::tiling::PanePlacement;
+use crate::ops::context_menu::ContextMenuMsg;
 use crate::pane::chrome::{PaneBorderMode, PaneTitlebarMode};
 use crate::pane::id::PaneId;
 use crate::state::{AlertMode, ChromeSlot, Pane, Workspace};
@@ -859,7 +860,6 @@ pub(crate) fn divider_title_element(
         return None;
     }
 
-    let id = pane.id;
     let TitleParts {
         icon,
         badge,
@@ -904,14 +904,7 @@ pub(crate) fn divider_title_element(
                 title_text,
                 badge_text,
             );
-            Some(
-                MouseRegion::new()
-                    .disabled(pane.closing)
-                    .capture_click(true)
-                    .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
-                    .child(title_row)
-                    .into(),
-            )
+            Some(title_region(ctx, pane).child(title_row).into())
         }
         // Both keep their title inside the pane's own Frame, so a divider carries no label for them.
         PaneTitlebarMode::Bar | PaneTitlebarMode::Inset => None,
@@ -944,7 +937,6 @@ pub(crate) fn seam_title_element(
     if !pane_config.show_titles {
         return None;
     }
-    let id = pane.id;
     let title_style = title_cap_style(ctx);
     let parts = title_parts(ctx, pane, focused_pane);
     let label = title_spans(&icon_lead(parts.icon), &parts.title);
@@ -1040,12 +1032,7 @@ pub(crate) fn seam_title_element(
             };
             Some(SeamTitle {
                 inset,
-                element: MouseRegion::new()
-                    .disabled(pane.closing)
-                    .capture_click(true)
-                    .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
-                    .child(row)
-                    .into(),
+                element: title_region(ctx, pane).child(row).into(),
             })
         }
         PaneTitlebarMode::Bar | PaneTitlebarMode::Inset => None,
@@ -1277,12 +1264,7 @@ pub(crate) fn pane_element(
             }
         };
 
-        let mut title_bar: Element = MouseRegion::new()
-            .disabled(pane.closing)
-            .capture_click(true)
-            .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
-            .child(title_row)
-            .into();
+        let mut title_bar: Element = title_region(ctx, pane).child(title_row).into();
         if merge.left_seam && title_cap_style(ctx).chars().is_none() {
             // A `Padded` title has no cap to sit on the seam, so keep its row off the shared
             // border column: the spacer is an empty Text that leaves the seam cell untouched for
@@ -1386,6 +1368,18 @@ pub(crate) fn pane_element(
             .copy_mode
             .as_ref()
             .is_some_and(|copy| copy.target == id);
+        let generation = pane.pty_generation;
+        if !copying {
+            terminal_widget = terminal_widget.on_selection(ctx.link().callback(
+                move |event: TerminalSelectionEvent| {
+                    Msg::ContextMenu(ContextMenuMsg::PaneSelection(
+                        id,
+                        generation,
+                        event.selection,
+                    ))
+                },
+            ));
+        }
         if copying {
             // Copy mode owns the pointer: presses and drags move its cursor and selection, and
             // none reach a program that tracks the mouse.
@@ -1398,9 +1392,13 @@ pub(crate) fn pane_element(
                 .on_link_activate(ctx.link().callback(move |event: TerminalLinkEvent| {
                     Msg::PaneLinkActivate(id, event.kind, event.uri)
                 }))
-                .on_mouse_forward_event(
-                    ctx.link().callback(move |event| Msg::PaneMouse(id, event)),
-                );
+                .on_mouse_forward_event(ctx.link().callback(move |event| Msg::PaneMouse(id, event)))
+                // A respawned pane runs a different child, so a right gesture the old one began
+                // must not reach it.
+                .mouse_input_target(format!("pane-{id}-{}", pane.pty_generation));
+            if ctx.state.config.mouse.context_menus {
+                terminal_widget = with_pane_context_menu(ctx, terminal_widget, id);
+            }
             let links = crate::ops::links::PathLinks::for_pane(&ctx.state, id);
             let cache = ctx.state.path_links.clone();
             terminal_widget = terminal_widget.link_paths(TerminalPathFilter::new(move |path| {
@@ -1527,12 +1525,7 @@ pub(crate) fn pane_element(
                         badge_text,
                     ),
                 };
-                let header: Element = MouseRegion::new()
-                    .disabled(pane.closing)
-                    .capture_click(true)
-                    .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
-                    .child(title_row)
-                    .into();
+                let header: Element = title_region(ctx, pane).child(title_row).into();
                 body = body.title_content(header);
                 if show_border {
                     body = match title_style {
@@ -1577,14 +1570,7 @@ pub(crate) fn pane_element(
                 ) {
                     title_row = title_row.child(trailer);
                 }
-                inset_title_row = Some(
-                    MouseRegion::new()
-                        .disabled(pane.closing)
-                        .capture_click(true)
-                        .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
-                        .child(title_row)
-                        .into(),
-                );
+                inset_title_row = Some(title_region(ctx, pane).child(title_row).into());
             }
             PaneTitlebarMode::Bar => {}
             // Title rides the divider above this pane - see `view::divider_title_element`.
@@ -1699,6 +1685,9 @@ pub(crate) fn pane_element(
     // whole-pane fade follows the lifecycle; animation gates choose timed or instant transitions.
     let animations = ctx.state.config.animations;
     let opacity = crate::layout::anim::pane_opacity_target(animations, pane);
+    let bar_rows = u16::from(show_titles && titlebar == PaneTitlebarMode::Bar);
+    let window_stack =
+        border_menu_region(ctx, pane, animated_rect, show_border, bar_rows).child(window_stack);
     let window_region = window_region.child(window_stack);
     let window_region = match pane_gesture_pointer(&ctx.state, id, prefix_active) {
         Some(shape) => window_region.pointer_shape(shape),
@@ -1734,6 +1723,75 @@ pub(crate) fn pane_element(
     let element: Element = animated.into();
 
     element.key(pane_window_key(id, pane.pty_generation))
+}
+
+/// Opens the pane menu from a right click on the pane's border, never from inside it: a right
+/// click over terminal content is the terminal's to route, to its program or to
+/// `[clipboard] right_click`. Always present, so turning menus on or off keeps the tree's shape.
+fn border_menu_region(
+    ctx: &Context<AppRoot>,
+    pane: &Pane,
+    rect: tui_lipan::FloatRect,
+    show_border: bool,
+    bar_rows: u16,
+) -> MouseRegion {
+    let id = pane.id;
+    let region = MouseRegion::new();
+    if !show_border || pane.closing || !ctx.state.config.mouse.context_menus {
+        return region;
+    }
+    let rect = rect.to_rect();
+    let (w, h) = (rect.w, rect.h);
+    region
+        .hit_test(move |x, y| {
+            let frame_y = y.saturating_sub(bar_rows);
+            y >= bar_rows && (x == 0 || frame_y == 0 || x + 1 >= w || y + 1 >= h)
+        })
+        .on_context_menu(ctx.link().callback(move |event: MouseRegionEvent| {
+            Msg::ContextMenu(ContextMenuMsg::Pane {
+                id,
+                anchor: (event.x, event.y),
+            })
+        }))
+}
+
+/// Right clicks over terminal content: a program tracking the mouse gets them, and otherwise the
+/// pane menu opens when `[clipboard] right_click` asks for it. The override modifier opens the menu
+/// either way.
+fn with_pane_context_menu(ctx: &Context<AppRoot>, terminal: Terminal, id: PaneId) -> Terminal {
+    let mouse = ctx.state.config.mouse;
+    terminal
+        .context_menu_policy(TerminalContextMenuPolicy::ApplicationFirst {
+            override_mods: mouse.context_menu_modifier,
+            open_when_untracked: ctx.state.config.clipboard.right_click
+                == crate::config::RightClickClipboardAction::ContextMenu,
+        })
+        .on_context_menu(ctx.link().callback(move |event: MouseEvent| {
+            Msg::ContextMenu(ContextMenuMsg::Pane {
+                id,
+                anchor: (event.x, event.y),
+            })
+        }))
+}
+
+/// A pane title's pointer target: a press focuses the pane, and a right click opens its menu
+/// without focusing it.
+fn title_region(ctx: &Context<AppRoot>, pane: &Pane) -> MouseRegion {
+    let id = pane.id;
+    let region = MouseRegion::new()
+        .disabled(pane.closing)
+        .capture_click(true)
+        .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)));
+    if ctx.state.config.mouse.context_menus {
+        region.on_context_menu(ctx.link().callback(move |event: MouseRegionEvent| {
+            Msg::ContextMenu(ContextMenuMsg::Pane {
+                id,
+                anchor: (event.x, event.y),
+            })
+        }))
+    } else {
+        region
+    }
 }
 
 /// Pointer feedback for the pane gesture Rozi currently owns.

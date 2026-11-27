@@ -37,6 +37,29 @@ pub(crate) fn picker_animation(
     })
 }
 
+/// A context menu fades in briefly whatever the picker style is: it opens where the user clicked,
+/// so a reveal only delays it. It closes at once, so a chosen entry's result is not seen through
+/// the menu. Turning picker animations off turns this off too.
+pub(crate) fn context_menu_animation(
+    animations: anim::WindowAnimationConfig,
+) -> Option<VisibilityAnimation> {
+    if !animations.enabled || animations.picker == anim::PickerAnimationStyle::Off {
+        return None;
+    }
+    Some(
+        VisibilityAnimation::new()
+            .enter(TransitionConfig {
+                duration: std::time::Duration::from_millis(100),
+                easing: Easing::EaseOutQuad,
+            })
+            .exit(TransitionConfig {
+                duration: std::time::Duration::ZERO,
+                easing: Easing::Linear,
+            })
+            .handoff(),
+    )
+}
+
 /// How a toast arrives, leaves, and moves when the stack around it changes.
 ///
 /// A slide enters from the right because toasts sit at the bottom-right (`app::entry`); the toast
@@ -926,6 +949,14 @@ mod tests {
         assert!(super::picker_animation(disabled).is_none());
         assert!(
             super::picker_animation(anim::WindowAnimationConfig {
+                picker: PickerAnimationStyle::Off,
+                ..Default::default()
+            })
+            .is_none()
+        );
+        // Turning picker animations off turns the context menu's own fade off with them.
+        assert!(
+            super::context_menu_animation(anim::WindowAnimationConfig {
                 picker: PickerAnimationStyle::Off,
                 ..Default::default()
             })

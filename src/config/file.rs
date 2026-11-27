@@ -114,6 +114,7 @@ struct FileConfig {
     layout: LayoutFileConfig,
     pane: PaneFileConfig,
     clipboard: ClipboardFileConfig,
+    mouse: MouseFileConfig,
     updates: UpdatesFileConfig,
     notifications: NotificationsFileConfig,
     sounds: SoundsFileConfig,
@@ -610,6 +611,13 @@ struct ClipboardFileConfig {
     copy_feedback: Option<String>,
     copy_feedback_on_select: Option<bool>,
     clear_selection_after_copy: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct MouseFileConfig {
+    context_menus: Option<bool>,
+    context_menu_modifier: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1340,7 +1348,18 @@ fn load_config_from_text_with_extensions(
         match RightClickClipboardAction::parse(value) {
             Some(action) => config.clipboard.right_click = action,
             None => warnings.push(format!(
-                "Ignored unknown clipboard.right_click \"{value}\" (expected one of: off, paste, copy-or-paste)"
+                "Ignored unknown clipboard.right_click \"{value}\" (expected one of: context-menu, off, paste, copy-or-paste)"
+            )),
+        }
+    }
+    if let Some(context_menus) = parsed.mouse.context_menus {
+        config.mouse.context_menus = context_menus;
+    }
+    if let Some(value) = parsed.mouse.context_menu_modifier.as_deref() {
+        match crate::config::parse_context_menu_modifier(value) {
+            Some(mods) => config.mouse.context_menu_modifier = mods,
+            None => warnings.push(format!(
+                "Ignored unknown mouse.context_menu_modifier \"{value}\" (expected off, or ctrl, alt, shift, or super joined by -)"
             )),
         }
     }
@@ -2063,7 +2082,7 @@ mod file_tests {
     #[test]
     fn clipboard_mouse_policies_parse() {
         let loaded = load_config_from_text(
-            "[clipboard]\ncopy_on_select = \"primary\"\nmiddle_click_paste = \"clipboard\"\nright_click = \"copy-or-paste\"\ncopy_feedback = \"scan\"\ncopy_feedback_on_select = true\nclear_selection_after_copy = true",
+            "[clipboard]\ncopy_on_select = \"primary\"\nmiddle_click_paste = \"clipboard\"\nright_click = \"copy-or-paste\"\ncopy_feedback = \"scan\"\ncopy_feedback_on_select = true\nclear_selection_after_copy = true\n[mouse]\ncontext_menu_modifier = \"ctrl+shift\"",
             Path::new("config.toml"),
         );
 
@@ -2081,6 +2100,14 @@ mod file_tests {
         assert_eq!(
             loaded.config.clipboard.right_click,
             RightClickClipboardAction::CopyOrPaste
+        );
+        assert_eq!(
+            loaded.config.mouse.context_menu_modifier,
+            Some(tui_lipan::KeyMods {
+                ctrl: true,
+                shift: true,
+                ..tui_lipan::KeyMods::NONE
+            })
         );
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
     }

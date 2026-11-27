@@ -21,6 +21,7 @@ pub(crate) fn enter(ctx: &mut Context<AppRoot>) -> Update {
     let Some(pane) = find_pane_mut(&mut ctx.state, target) else {
         return Update::full();
     };
+    pane.mouse_selection = None;
     let (cursor_row, cursor_col) = pane.terminal.cursor_position();
     let bottom_row = usize::from(pane.terminal.rows).saturating_sub(1);
     let (cursor_row, cursor_col) = if cursor_row > bottom_row {

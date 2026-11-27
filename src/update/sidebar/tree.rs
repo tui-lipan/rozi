@@ -271,6 +271,12 @@ fn wire_state_to_status(state: crate::session::protocol::WireChangeState) -> Fil
     }
 }
 
+pub(crate) fn request_repository_refresh(ctx: &mut Context<AppRoot>) {
+    let sidebar = &mut ctx.state.sidebar;
+    sidebar.tree_entry_refresh_token = sidebar.tree_entry_refresh_token.wrapping_add(1);
+    bump_git_refresh(sidebar);
+}
+
 fn bump_git_refresh(sidebar: &mut crate::state::SidebarState) {
     sidebar.git_refresh_token = sidebar.git_refresh_token.wrapping_add(1);
 }

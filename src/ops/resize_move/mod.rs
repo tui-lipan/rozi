@@ -21,8 +21,9 @@ pub(crate) use split_drag::{
     begin_resize_split_drag, begin_resize_split_junction_drag, continue_split_drag,
 };
 pub(crate) use tiling::{
-    adjust_focused_split_ratio, move_focused_in_direction, set_layout, swap_focused_in_direction,
-    toggle_focused_split_axis, toggle_fullscreen, toggle_layout, toggle_pin, toggle_tiling,
+    adjust_focused_split_ratio, move_focused_in_direction, set_layout, set_workspace_layout,
+    swap_focused_in_direction, toggle_focused_split_axis, toggle_fullscreen, toggle_fullscreen_for,
+    toggle_layout, toggle_pin, toggle_tiling, toggle_tiling_for,
 };
 
 #[cfg(test)]

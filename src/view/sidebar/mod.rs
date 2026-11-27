@@ -235,7 +235,7 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
         .config
         .effective_cap_style(ctx.state.config.sidebar.tab_style)
         .chars();
-    let tab_bar = super::scrolling_tab_bar(theme, strip)
+    let mut tab_bar = super::scrolling_tab_bar(theme, strip)
         .tabs(tabs.iter().map(|tab| DraggableTab::new(tab.label())))
         .selected(active)
         .bar_id(bar_id)
@@ -279,6 +279,24 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
             ctx,
             Msg::SidebarTabTransferred,
         ));
+
+    if ctx.state.config.mouse.context_menus {
+        let ids = tabs.iter().map(|tab| tab.id()).collect::<Vec<_>>();
+        let side = ctx.state.sidebar.panels[panel].dock;
+        let home = ctx.state.sidebar.panels[panel].home;
+        tab_bar = tab_bar.on_context_menu(callback(
+            ctx,
+            move |(index, event): (Option<usize>, MouseEvent)| {
+                use crate::ops::context_menu::ContextMenuMsg;
+                let anchor = (event.x, event.y);
+                let target = match index.and_then(|index| ids.get(index)) {
+                    Some(id) => ContextMenuMsg::SidebarTab(id.clone(), anchor),
+                    None => ContextMenuMsg::SidebarPanel(side, home, anchor),
+                };
+                Msg::ContextMenu(target)
+            },
+        ));
+    }
 
     let body = match tabs.get(active).copied() {
         // No tabs at all: the bar's own placeholder says it, so the body stays blank rather than
@@ -330,7 +348,20 @@ fn empty_body(ctx: &Context<AppRoot>, panel: usize, text: Option<&str>) -> Eleme
     if let Some(text) = text {
         view = view.child(placeholder(ctx, text));
     }
-    view.key(body_key(ctx, panel))
+    let view = MouseRegion::new().child(view.key(body_key(ctx, panel)));
+    if !ctx.state.config.mouse.context_menus {
+        return view.into();
+    }
+    let side = ctx.state.sidebar.panels[panel].dock;
+    let home = ctx.state.sidebar.panels[panel].home;
+    view.on_context_menu(callback(ctx, move |event: MouseRegionEvent| {
+        Msg::ContextMenu(crate::ops::context_menu::ContextMenuMsg::SidebarPanel(
+            side,
+            home,
+            (event.x, event.y),
+        ))
+    }))
+    .into()
 }
 
 /// A workspace's custom name, if it has a usable one.

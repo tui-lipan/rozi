@@ -2,6 +2,7 @@
 
 use crate::input::Action;
 use crate::layout::model::Direction::{Down, Left, Right, Up};
+use crate::layout::model::SplitAxis;
 
 pub(crate) struct BuiltinCommand {
     pub(crate) action: Action,
@@ -44,6 +45,22 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         label: "New floating pane",
         category: "Panes",
         default_keys: &["shift-enter"],
+        palette: true,
+    },
+    // Unbound: `spawn` already splits along the longer side. These are for a fixed direction, as
+    // in tmux, and need a `[keys]` binding.
+    BuiltinCommand {
+        action: Action::Split(SplitAxis::Horizontal),
+        label: "Split right",
+        category: "Panes",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::Split(SplitAxis::Vertical),
+        label: "Split down",
+        category: "Panes",
+        default_keys: &[],
         palette: true,
     },
     BuiltinCommand {
@@ -418,6 +435,14 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         category: "App",
         default_keys: &["/"],
         palette: true,
+    },
+    BuiltinCommand {
+        action: Action::OpenContextMenu,
+        label: "Pane menu",
+        category: "Panes",
+        // A host terminal can keep modified right clicks for itself, so the menu needs a key too.
+        default_keys: &["c"],
+        palette: false,
     },
     BuiltinCommand {
         action: Action::ScreenshotPane,

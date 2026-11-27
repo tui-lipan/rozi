@@ -754,6 +754,16 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
         ctx.link()
             .callback(|event: SearchEvent<usize>| Msg::SessionPickerActivate(event.item.value)),
     )
+    .on_context_menu(
+        ctx,
+        ctx.link()
+            .callback(|(event, mouse): (SearchEvent<usize>, MouseEvent)| {
+                Msg::ContextMenu(crate::ops::context_menu::ContextMenuMsg::SessionRow {
+                    index: event.item.value,
+                    anchor: (mouse.x, mouse.y),
+                })
+            }),
+    )
     .item_gutter(Arc::new(move |item: &SearchItem<usize>, _hl| {
         Some(statuses.get(item.value)?.gutter(status_styles))
     }));

@@ -1146,6 +1146,8 @@ pub enum Msg {
     },
     /// Client-owned SSH port-forwarding events and overlay actions.
     Ports(crate::ops::ports::PortMsg),
+    /// Open, act on, or close the right-click menu.
+    ContextMenu(crate::ops::context_menu::ContextMenuMsg),
     /// In-app session sharing picker actions.
     Sharing(crate::update::sharing::Msg),
 }

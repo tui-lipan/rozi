@@ -528,6 +528,15 @@ impl SpawnPlacement {
 /// always splits the currently focused one, never the tile under the cursor. The split
 /// axis follows the focused tile's aspect ratio. Falls back to a plain append when there is no
 /// valid split target (the first pane, or a floating focus).
+/// Which way a spawn splits the tile it opens beside, in Dwindle.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SplitRule {
+    /// Along the tile's longer side, with width weighted by this cell-aspect multiplier.
+    LongerSide(f32),
+    /// Always this way, whatever the tile's shape.
+    Axis(SplitAxis),
+}
+
 pub fn place_spawned_pane(
     workspace: &mut Workspace,
     id: PaneId,
@@ -535,7 +544,7 @@ pub fn place_spawned_pane(
     bounds: FloatRect,
     top_gap: f32,
     tile_gap: TileGap,
-    split_width_multiplier: f32,
+    split: SplitRule,
 ) -> SpawnPlacement {
     // Order-driven layouts read pane order, not split structure, so a new pane simply appends.
     // Dwindle splits the focused tile.
@@ -556,7 +565,12 @@ pub fn place_spawned_pane(
         let placements =
             workspace_target_rects_excluding(workspace, bounds, Some(id), top_gap, tile_gap);
         if let Some(rect) = placement_for(&placements, target) {
-            let axis = spawn_split_for_rect(rect, split_width_multiplier).0;
+            let axis = match split {
+                SplitRule::LongerSide(split_width_multiplier) => {
+                    spawn_split_for_rect(rect, split_width_multiplier).0
+                }
+                SplitRule::Axis(axis) => axis,
+            };
             let moving_first = false;
             if insert_tiled_pane_around_target(
                 workspace,
@@ -632,7 +646,9 @@ mod tests {
             bounds,
             0.0,
             crate::layout::model::TileGap::DEFAULT,
-            crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+            crate::layout::SplitRule::LongerSide(
+                crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+            ),
         );
         workspace.focused_pane = Some(1);
 
@@ -644,7 +660,9 @@ mod tests {
             bounds,
             0.0,
             crate::layout::model::TileGap::DEFAULT,
-            crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+            crate::layout::SplitRule::LongerSide(
+                crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+            ),
         );
         // 120x40 splits side by side, and the new pane takes the right slot, so it arrives from the
         // right rather than from wherever the layout happens to grow.
@@ -715,7 +733,9 @@ mod tests {
                     bounds,
                     0.0,
                     crate::layout::model::TileGap::DEFAULT,
-                    crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+                    crate::layout::SplitRule::LongerSide(
+                        crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+                    ),
                 );
                 workspace.focused_pane = Some(id);
             }
@@ -746,7 +766,9 @@ mod tests {
                 bounds,
                 0.0,
                 crate::layout::model::TileGap::DEFAULT,
-                crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+                crate::layout::SplitRule::LongerSide(
+                    crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+                ),
             );
             workspace.focused_pane = Some(id);
         }
@@ -796,7 +818,9 @@ mod tests {
                     bounds,
                     0.0,
                     crate::layout::model::TileGap::DEFAULT,
-                    crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+                    crate::layout::SplitRule::LongerSide(
+                        crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+                    ),
                 );
                 assert_eq!(placement, SpawnPlacement::Appended);
                 workspace.focused_pane = Some(id);

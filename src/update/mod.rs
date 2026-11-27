@@ -77,6 +77,7 @@ fn post_update_kind(msg: &Msg) -> PostUpdateKind {
             | Msg::UiRecordingFrame(_)
             | Msg::UiRecordingFlush { .. }
             | Msg::UiRecordingPoll { .. }
+            | Msg::ContextMenu(crate::ops::context_menu::ContextMenuMsg::PaneSelection(..))
     ) {
         PostUpdateKind::Passive
     } else {
@@ -97,6 +98,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             projects,
         } => hosts::apply(ctx, target, generation, rows, agents, projects),
         Msg::Ports(msg) => ports::handle(ctx, msg),
+        Msg::ContextMenu(msg) => crate::ops::context_menu::handle(ctx, msg),
         Msg::Sharing(msg) => sharing::handle(ctx, msg),
         Msg::LocalAgentMetadata(snapshot) => local_agents::apply(ctx, snapshot),
         Msg::PullRequests {
@@ -1311,6 +1313,11 @@ fn post_update_sync(
     if stale_search {
         ctx.state.search = None;
         ctx.state.commands_dirty = true;
+        update = update.merge(Update::full());
+    }
+    // Repairs: a context menu whose target closed, respawned, moved off screen, or left its picker,
+    // or that `[mouse] context_menus` has since turned off.
+    if crate::ops::context_menu::sync(&mut ctx.state) {
         update = update.merge(Update::full());
     }
     // Repairs: the alert pulse chain, armed when a pane or tab gains an alert and left to cancel

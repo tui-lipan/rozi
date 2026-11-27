@@ -309,6 +309,16 @@ pub(crate) fn close_focused_pane_with_confirmation(
     close_pane(ctx, id)
 }
 
+/// Kill every pane of the workspace in `slot`, switching to it first as killing it by hand would.
+/// The caller has already confirmed.
+pub(crate) fn kill_workspace(ctx: &mut Context<AppRoot>, slot: usize) -> Update {
+    if slot != ctx.state.current().active_workspace {
+        crate::ops::focus::switch_workspace(&mut ctx.state, slot);
+        crate::ops::focus::request_current_pane_focus(ctx);
+    }
+    kill_workspace_with_confirmation(ctx, false)
+}
+
 pub(crate) fn kill_workspace_with_confirmation(
     ctx: &mut Context<AppRoot>,
     confirmations_enabled: bool,

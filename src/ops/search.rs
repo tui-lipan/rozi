@@ -22,6 +22,14 @@ pub(crate) fn open_search(ctx: &mut Context<AppRoot>) -> Update {
     let Some(target) = ctx.state.focused_pane() else {
         return Update::full();
     };
+    open_search_in(ctx, target)
+}
+
+/// Open scrollback search scoped to pane `target`.
+pub(crate) fn open_search_in(
+    ctx: &mut Context<AppRoot>,
+    target: crate::pane::id::PaneId,
+) -> Update {
     invalidate_search_scan(&mut ctx.state);
     ctx.state.search = Some(ScrollbackSearchState::new(target));
     ctx.state.keybindings = None;

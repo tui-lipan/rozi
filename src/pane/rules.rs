@@ -20,6 +20,7 @@ pub(crate) fn placement_for_command(
             float,
             fullscreen: rule.fullscreen,
             focus: rule.focus,
+            split_axis: None,
         },
     )
 }

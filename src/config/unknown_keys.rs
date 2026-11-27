@@ -22,6 +22,7 @@ const TOP_LEVEL_KEYS: &[&str] = &[
     "layout",
     "pane",
     "clipboard",
+    "mouse",
     "updates",
     "notifications",
     "sounds",
@@ -293,6 +294,13 @@ fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
             "copy_feedback_on_select",
             "clear_selection_after_copy",
         ],
+        unknown,
+    );
+    collect_named_table(
+        table,
+        "",
+        "mouse",
+        &["context_menus", "context_menu_modifier"],
         unknown,
     );
     collect_named_table(

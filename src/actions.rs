@@ -29,6 +29,11 @@ fn paste_from_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
     let Some(id) = ctx.state.focused_pane() else {
         return Update::full();
     };
+    paste_into_pane(ctx, id)
+}
+
+/// Read the system clipboard and send it to pane `id`, as [`paste_from_focused_pane`] does.
+pub(crate) fn paste_into_pane(ctx: &mut Context<AppRoot>, id: crate::pane::id::PaneId) -> Update {
     if crate::ops::attachments::bridge_enabled(&ctx.state, id) {
         return match ctx.clipboard().read_content() {
             Ok(Some(content)) => crate::ops::attachments::paste(
@@ -167,6 +172,7 @@ pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) ->
     match action {
         Action::Spawn
         | Action::SpawnFloat
+        | Action::Split(_)
         | Action::RespawnPane
         | Action::Close
         | Action::Move(_)
@@ -251,12 +257,28 @@ fn execute_action_inner(
     action: Action,
     confirmations_enabled: bool,
 ) -> Update {
+    if let Err(update) = admit_action(ctx, action) {
+        return update;
+    }
+    dispatch_action(ctx, action, confirmations_enabled)
+}
+
+/// Run every gate an action passes before it does anything: the scratchpad block, a disabled
+/// reason, a follower's nudge toward control, availability, and ending a pointer gesture. `Err`
+/// carries the update for an action that stops here.
+///
+/// A context menu entry that performs an action's work on a pane other than the focused one goes
+/// through this too, so it is refused exactly when the action would be.
+pub(crate) fn admit_action(
+    ctx: &mut Context<AppRoot>,
+    action: Action,
+) -> std::result::Result<(), Update> {
     if is_blocked_by_scratchpad(&ctx.state, action) {
-        return Update::none();
+        return Err(Update::none());
     }
     if let Some(reason) = crate::commands::action_disabled_reason(action, &ctx.state) {
         crate::pane::pty_events::notify_info(ctx, reason);
-        return Update::full();
+        return Err(Update::full());
     }
     if closes_settings(action) {
         ctx.state.show_settings = false;
@@ -276,30 +298,42 @@ fn execute_action_inner(
     // local and fall through.
     if is_layout_mutating(&ctx.state, action) && !ctx.state.scratch_visible {
         if crate::ops::session::nudge_if_follower(ctx) {
-            return Update::full();
+            return Err(Update::full());
         }
         // Reshaping a session by hand is the clearest form of using it: from here on it is the
         // user's, not a disposable one the client made for them.
         ctx.state.current_mut().engaged = true;
     }
     if !crate::commands::command_available(action, &ctx.state) {
-        return Update::full();
+        return Err(Update::full());
     }
     // A shared-layout action ends any pointer gesture first; see `finish_shared_pointer_gesture`.
     if is_layout_mutating(&ctx.state, action) {
         crate::ops::resize_move::finish_shared_pointer_gesture(ctx);
     }
+    Ok(())
+}
+
+fn dispatch_action(
+    ctx: &mut Context<AppRoot>,
+    action: Action,
+    confirmations_enabled: bool,
+) -> Update {
     match action {
         // In the launcher (or any no-client resting state) there is no session to spawn into, and
         // queueing the spawn against a client that will never arrive would look like a hang. Asking
         // for a shell there is the explicit "start a new session" the launcher advertises.
-        Action::Spawn | Action::SpawnFloat
+        Action::Spawn | Action::SpawnFloat | Action::Split(_)
             if crate::ops::session::needs_session_for_pty(&ctx.state) =>
         {
             crate::ops::session::start_launcher_shell(ctx)
         }
         Action::Spawn => spawn_pane(ctx),
         Action::SpawnFloat => spawn_floating_pane_at_cursor(ctx),
+        Action::Split(axis) => match ctx.state.focused_pane() {
+            Some(id) => crate::pane::lifecycle::split_pane(ctx, id, Some(axis)),
+            None => spawn_pane(ctx),
+        },
         Action::RespawnPane => crate::pane::lifecycle::respawn_focused_pane(ctx),
         Action::TogglePaneLogging => toggle_pane_logging(ctx),
         Action::Close => {
@@ -417,6 +451,7 @@ fn execute_action_inner(
         Action::EnterHintMode => crate::ops::hints::enter(ctx),
         Action::ToggleScratchpad => crate::scratchpad::toggle(ctx),
         Action::OpenSearch => open_search(ctx),
+        Action::OpenContextMenu => crate::ops::context_menu::open_for_focused(ctx),
         Action::SaveProfile => open_save_profile_prompt(ctx),
         Action::OpenProfilePicker => open_profile_picker(ctx),
         Action::OpenWorktrees => crate::ops::worktrees::open(ctx),
@@ -593,6 +628,7 @@ fn closes_settings(action: Action) -> bool {
             | Action::ToggleHelp
             | Action::OpenLayoutPicker
             | Action::OpenSearch
+            | Action::OpenContextMenu
             | Action::RenamePane
             | Action::RenameWorkspace
             | Action::RenameSession
@@ -612,7 +648,10 @@ fn closes_settings(action: Action) -> bool {
     )
 }
 
-fn open_settings(ctx: &mut Context<AppRoot>, selected: crate::state::SettingsAction) -> Update {
+pub(crate) fn open_settings(
+    ctx: &mut Context<AppRoot>,
+    selected: crate::state::SettingsAction,
+) -> Update {
     clear_non_settings_overlays(ctx);
     ctx.state.show_settings = true;
     ctx.state.settings_navigation =

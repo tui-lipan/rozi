@@ -90,7 +90,9 @@ pub(crate) fn clipboard_config(config: &Config) -> ClipboardConfig {
             config::MiddleClickPaste::Clipboard => PasteSource::Clipboard,
         },
         right_click_action: match config.clipboard.right_click {
-            config::RightClickClipboardAction::Disabled => RightClickAction::Disabled,
+            // The pane's own context-menu handler takes this click; see `view::pane`.
+            config::RightClickClipboardAction::ContextMenu
+            | config::RightClickClipboardAction::Disabled => RightClickAction::Disabled,
             config::RightClickClipboardAction::PasteClipboard => RightClickAction::PasteClipboard,
             config::RightClickClipboardAction::CopyOrPaste => RightClickAction::CopyOrPaste,
         },

@@ -1079,6 +1079,24 @@ pub(crate) fn workspace_pages(
             .iter()
             .all(|pane| pane.closing || pane.pinned)
         {
+            if index == ctx.state.current().active_workspace
+                && ctx.state.config.mouse.context_menus
+                && let Some(id) = crate::ops::context_menu::empty_workspace(&ctx.state)
+            {
+                page = page.child_at(
+                    canvas_rect_to_root(local_bounds, top_offset).to_rect(),
+                    MouseRegion::new().on_context_menu(ctx.link().callback(
+                        move |event: MouseRegionEvent| {
+                            crate::Msg::ContextMenu(
+                                crate::ops::context_menu::ContextMenuMsg::EmptyWorkspace(
+                                    id,
+                                    (event.x, event.y),
+                                ),
+                            )
+                        },
+                    )),
+                );
+            }
             page = page.child_at(
                 canvas_rect_to_root(super::empty_workspace_rect(bounds), top_offset).to_rect(),
                 super::workspace_empty_panel(ctx),

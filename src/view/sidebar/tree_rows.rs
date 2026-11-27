@@ -239,6 +239,18 @@ pub(super) fn tab(
     }
     let focused = ctx.state.sidebar.focused && ctx.state.sidebar.active_panel_index() == panel;
     let cursor = super::resolve_cursor(ctx.state.sidebar.panels[panel].cursor, &rows);
+    let menu_targets = (ctx.state.config.mouse.context_menus
+        && matches!(
+            tab,
+            crate::config::SidebarTab::Panes
+                | crate::config::SidebarTab::Sessions
+                | crate::config::SidebarTab::Agents { .. }
+        ))
+    .then(|| {
+        rows.iter()
+            .map(|row| row.target.clone())
+            .collect::<Vec<_>>()
+    });
     let nodes = rows
         .into_iter()
         .enumerate()
@@ -323,6 +335,20 @@ pub(super) fn tab(
                 index: event.index,
             }
         }));
+    if let Some(targets) = menu_targets {
+        tree = tree.on_context_menu(ctx.link().callback(
+            move |(event, mouse): (TreeEvent, MouseEvent)| {
+                let target = targets
+                    .get(event.index)
+                    .cloned()
+                    .unwrap_or(RowTarget::Inert);
+                crate::Msg::ContextMenu(crate::ops::context_menu::ContextMenuMsg::SidebarRow(
+                    target,
+                    (mouse.x, mouse.y),
+                ))
+            },
+        ));
+    }
     if let Some(index) = cursor {
         tree = tree.selected(index);
     }

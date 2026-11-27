@@ -567,6 +567,10 @@ impl TerminalPane {
         self.screen.borrow_mut().set_presentation_token(token);
     }
 
+    pub(crate) fn scrollback_lineage(&self) -> tui_lipan::ScrollbackLineage {
+        self.screen.borrow().scrollback_lineage()
+    }
+
     pub fn screen_handle(&self) -> TerminalScreenHandle {
         TerminalScreenHandle::new(Rc::clone(&self.screen))
     }

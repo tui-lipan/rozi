@@ -5,13 +5,16 @@ pub mod copy_mode;
 pub mod routing;
 pub mod send_keys;
 
-use crate::layout::model::Direction;
+use crate::layout::model::{Direction, SplitAxis};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Action {
     Spawn,
     /// Spawn a new pane already floating, centered on the mouse pointer.
     SpawnFloat,
+    /// Split the focused pane along this axis: `Horizontal` opens the new pane to its right,
+    /// `Vertical` below it. Only Dwindle has splits to choose; elsewhere it acts as [`Self::Spawn`].
+    Split(SplitAxis),
     RespawnPane,
     TogglePaneLogging,
     Close,
@@ -56,6 +59,8 @@ pub enum Action {
     EnterHintMode,
     ToggleScratchpad,
     OpenSearch,
+    /// Open the focused pane's context menu.
+    OpenContextMenu,
     SaveProfile,
     OpenProfilePicker,
     OpenWorktrees,
@@ -168,6 +173,8 @@ pub enum Action {
 const BINDABLE_ACTIONS: &[Action] = &[
     Action::Spawn,
     Action::SpawnFloat,
+    Action::Split(SplitAxis::Horizontal),
+    Action::Split(SplitAxis::Vertical),
     Action::RespawnPane,
     Action::TogglePaneLogging,
     Action::Close,
@@ -212,6 +219,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::EnterHintMode,
     Action::ToggleScratchpad,
     Action::OpenSearch,
+    Action::OpenContextMenu,
     Action::SaveProfile,
     Action::OpenProfilePicker,
     Action::OpenWorktrees,
@@ -306,6 +314,8 @@ impl Action {
         Some(match self {
             Action::Spawn => "spawn",
             Action::SpawnFloat => "spawn-float",
+            Action::Split(SplitAxis::Horizontal) => "split-right",
+            Action::Split(SplitAxis::Vertical) => "split-down",
             Action::RespawnPane => "respawn-pane",
             Action::TogglePaneLogging => "toggle-pane-logging",
             Action::Close => "close",
@@ -350,6 +360,7 @@ impl Action {
             Action::EnterHintMode => "hint-mode",
             Action::ToggleScratchpad => "scratchpad",
             Action::OpenSearch => "search",
+            Action::OpenContextMenu => "context-menu",
             Action::SaveProfile => "save-profile",
             Action::OpenProfilePicker => "open-profile",
             Action::OpenWorktrees => "worktrees",
@@ -467,6 +478,7 @@ impl Action {
             Action::OpenSharing => Some(crate::session::protocol::Capability::SessionSharing),
             Action::Spawn
             | Action::SpawnFloat
+            | Action::Split(_)
             | Action::RespawnPane
             | Action::TogglePaneLogging
             | Action::Close
@@ -497,6 +509,7 @@ impl Action {
             | Action::EnterHintMode
             | Action::ToggleScratchpad
             | Action::OpenSearch
+            | Action::OpenContextMenu
             | Action::SaveProfile
             | Action::OpenProfilePicker
             | Action::OpenWorktrees

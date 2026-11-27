@@ -266,7 +266,7 @@ See [Layouts and panes](layouts-and-panes.md).
 | `picker_border_style` | string | `"rounded"` | Same tokens as `border_style`. The command palette, Settings, Help, Search, and other pickers. |
 | `picker_tab_background` | bool | `true` | Paints picker category tabs as a distinct strip. Off, the tabs share the picker body. |
 | `picker_tab_style` | string | `workbar_tab_style` | `"padded"`, `"round"`, `"arrow"`, `"slant"`, or `"trapezoid"`. |
-| `picker_selection_style` | string | `"padded"` | `"padded"`, `"round"`, `"arrow"`, `"slant"`, or `"trapezoid"`. Caps at the start and end of the selected picker row. |
+| `picker_selection_style` | string | `"padded"` | `"padded"`, `"round"`, `"arrow"`, `"slant"`, or `"trapezoid"`. Caps at the start and end of the selected picker row and context menu entry. |
 | `keep_special_borders` | bool | `true` | Keeps frames on floating panes, popups, and scratchpads in borderless modes. |
 | `padding` | integer or integer array | `0` | One value, `[vertical, horizontal]`, or `[top, right, bottom, left]`. Each side is clamped to `0..=8`. |
 | `title_style` | string | `"padded"` | `"padded"`, `"half"`, `"round"`, `"arrow"`, `"slant"`, or `"trapezoid"`. |
@@ -327,7 +327,7 @@ the failed row.
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
 | `agent_handoff` | bool | `true` | Runs light along the borders of panes whose agents send or receive a request or an answer; see [Watch agents talk](agents.md#watch-agents-talk). In Settings: Motion › Animations › Agent handoffs. |
 | `cursor_trail` | table | | A smear that follows the cursor when it jumps. See [Cursor trail](#cursor-trail). |
-| `picker` | string | `"fade"` | `"off"`, `"fade"`, `"portal"`, or `"scan"`, case-insensitive. Applies to searchable pickers, Settings, and their nested cards. A picker that opens in place of another appears at once. In Settings: Motion › Animations › Picker transitions. |
+| `picker` | string | `"fade"` | `"off"`, `"fade"`, `"portal"`, or `"scan"`, case-insensitive. Applies to searchable pickers, Settings, and their nested cards. Context menus always fade in briefly, unless this is `"off"`. A picker that opens in place of another appears at once. In Settings: Motion › Animations › Picker transitions. |
 | `toast` | string | `"slide"` | `"off"`, `"fade"`, or `"slide"`, case-insensitive. Slide brings a toast in from the right edge; Fade fades it in place. In Settings: Motion › Animations › Toasts. |
 | `pane_open_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. |
 | `pane_close_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. |
@@ -513,7 +513,7 @@ See [Worktrees](worktrees.md#configuration).
 | --- | --- | --- | --- |
 | `copy_on_select` | string | `"both"` on Linux, `"clipboard"` elsewhere | Where a finished mouse selection is copied: `"off"`, `"primary"`, `"clipboard"`, or `"both"`. |
 | `middle_click_paste` | string | `"primary"` on Linux, `"off"` elsewhere | What a middle click pastes: `"off"`, `"primary"`, or `"clipboard"`. |
-| `right_click` | string | `"off"` | What an otherwise unhandled right click does: `"off"`, `"paste"` from the clipboard, or `"copy-or-paste"`. |
+| `right_click` | string | `"context-menu"` | What a right click over a pane does when its program does not track the mouse: `"context-menu"` opens the [pane menu](terminal.md#context-menus), or `"off"`, `"paste"` from the clipboard, or `"copy-or-paste"`. |
 | `enable_osc52` | bool | `true` | Lets programs in panes set the system clipboard with OSC 52. |
 | `drag_and_drop` | bool | `true` | Takes drops from other applications onto panes, and lets programs in panes start drags, in a terminal that supports drag and drop (kitty 0.47 or later). See [Drag and drop](terminal.md#drag-and-drop). |
 | `copy_feedback` | string | `"flash"` | How copied text lights up: `"off"`, `"flash"`, `"fade"`, `"scan"`, or `"pulse"`. With the animation master switch off, all but `"off"` flash. |
@@ -531,6 +531,13 @@ none. Handlers in rozi's widgets and in the program running in the pane take pri
 
 These settings apply on reload and are also in the General category of Settings. See
 [Select, copy, and paste](terminal.md#select-copy-and-paste).
+
+## `[mouse]`
+
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `context_menus` | bool | `true` | Right-click [menus](terminal.md#context-menus) on panes, workspace tabs, and Sessions and Agents rows. |
+| `context_menu_modifier` | string | `"ctrl"` | Held with a right click, opens the pane menu even over a program that tracks the mouse. `"off"`, or `ctrl`, `alt`, `shift`, and `super` joined with `-`. |
 
 ## `[updates]`
 

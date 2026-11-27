@@ -2149,6 +2149,121 @@ fn focused_sidebar_backend(tabs: Vec<SidebarTab>) -> TestBackend<AppRoot> {
     backend
 }
 
+#[test]
+fn sidebar_context_menu_hides_and_recovers_the_clicked_inactive_tab() {
+    use crate::ops::context_menu::ContextMenuMsg;
+    use crate::state::ContextMenuTarget;
+    use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
+
+    crate::test_support::on_large_stack(|| {
+        let _config = crate::test_support::lock_config_file();
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::activity(), SidebarTab::Panes]);
+        let activity = SidebarTab::activity().id();
+        let panes = SidebarTab::Panes.id();
+        let lines = backend.capture_frame().to_fixed_grid_lines();
+        let (y, line) = lines
+            .iter()
+            .enumerate()
+            .find(|(_, line)| line.contains("Activity") && line.contains("Panes"))
+            .expect("sidebar tab strip");
+        let (before, _) = line.split_once("Panes").expect("Panes tab");
+        let x = before.chars().count() as u16;
+        let right_click = |backend: &mut TestBackend<AppRoot>, x| {
+            for kind in [
+                MouseKind::Down(MouseButton::Right),
+                MouseKind::Up(MouseButton::Right),
+            ] {
+                backend
+                    .send_mouse(MouseEvent {
+                        x,
+                        y: y as u16,
+                        kind,
+                        mods: KeyMods::NONE,
+                    })
+                    .expect("right-click sidebar");
+            }
+        };
+
+        right_click(&mut backend, x);
+        assert_eq!(backend.state().sidebar.active_tab(), Some(&activity));
+        assert_eq!(
+            backend
+                .state()
+                .context_menu
+                .as_ref()
+                .map(|menu| &menu.target),
+            Some(&ContextMenuTarget::SidebarTab(panes.clone()))
+        );
+        backend
+            .dispatch(crate::Msg::ContextMenu(ContextMenuMsg::Activate(
+                "hide-tab".into(),
+            )))
+            .expect("hide inactive tab");
+        assert!(!backend.state().sidebar.panels[0].tabs.contains(&panes));
+
+        right_click(&mut backend, x);
+        assert!(matches!(
+            backend
+                .state()
+                .context_menu
+                .as_ref()
+                .map(|menu| &menu.target),
+            Some(ContextMenuTarget::SidebarPanel(_, _))
+        ));
+        backend
+            .dispatch(crate::Msg::ContextMenu(ContextMenuMsg::Activate(
+                "show:panes".into(),
+            )))
+            .expect("show hidden tab");
+        assert!(backend.state().sidebar.panels[0].tabs.contains(&panes));
+        assert_eq!(backend.state().sidebar.active_tab(), Some(&activity));
+    });
+}
+
+#[test]
+fn sidebar_context_menu_moves_a_compacted_tab_to_its_displayed_panel() {
+    use crate::config::SidebarPosition::Left;
+    use crate::ops::context_menu::ContextMenuMsg;
+
+    crate::test_support::on_large_stack(|| {
+        let _config = crate::test_support::lock_config_file();
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Panes]);
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        let panes = SidebarTab::Panes.id();
+        let state = backend.state_mut();
+        state.config.sidebar.layout.left.panel_count = 1;
+        state.config.sidebar.layout.place(panes.as_str(), Left, 1);
+        state.sidebar.apply_configured_panels(&state.config.sidebar);
+        assert!(state.sidebar.panels[0].tabs.contains(&panes));
+        backend.render();
+
+        backend
+            .dispatch(crate::Msg::ContextMenu(ContextMenuMsg::SidebarTab(
+                panes.clone(),
+                (6, 0),
+            )))
+            .expect("open compacted tab menu");
+        // Move to → Left sidebar → Panel 1, the first enabled item in each menu.
+        for key in [KeyCode::Right, KeyCode::Right, KeyCode::Enter] {
+            send_sidebar_key(&mut backend, key, KeyMods::NONE);
+        }
+        assert_eq!(
+            backend
+                .state()
+                .config
+                .sidebar
+                .layout
+                .location(panes.as_str()),
+            Some((Left, 0))
+        );
+    });
+}
+
 fn send_sidebar_key(backend: &mut TestBackend<AppRoot>, code: KeyCode, mods: KeyMods) {
     backend
         .send_key(KeyEvent { code, mods })

@@ -241,6 +241,49 @@ fn close_keeps_the_pane_described_while_it_animates_out() {
     });
 }
 
+/// A wide pane splits side by side by default, so only an axis the action honours puts the new
+/// pane below it.
+#[test]
+fn split_down_opens_the_new_pane_below_even_a_wide_pane() {
+    use crate::layout::model::SplitAxis;
+    use crate::layout::tiling::DwindleTree;
+
+    in_stack(|| {
+        let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+        backend.set_viewport(tui_lipan::Rect {
+            x: 0,
+            y: 0,
+            w: 120,
+            h: 24,
+        });
+        let first = {
+            let state = backend.state_mut();
+            state.active_workspace_mut().layout_kind = crate::layout::model::LayoutKind::Dwindle;
+            state.focused_pane().expect("focused pane")
+        };
+        backend.render();
+
+        backend
+            .dispatch(crate::Msg::RunAction(crate::input::Action::Split(
+                SplitAxis::Vertical,
+            )))
+            .expect("split down");
+
+        let workspace = backend.state().active_workspace_ref();
+        let second = workspace.focused_pane.expect("the new pane takes focus");
+        assert_ne!(second, first);
+        assert_eq!(
+            workspace.tile_tree,
+            Some(DwindleTree::Split {
+                axis: SplitAxis::Vertical,
+                ratio: 0.5,
+                first: Box::new(DwindleTree::Leaf(first)),
+                second: Box::new(DwindleTree::Leaf(second)),
+            })
+        );
+    });
+}
+
 /// `1 | 4` over `2 | 3`: closing the focused 4 hands its space, and focus, back to its sibling 1
 /// rather than to 3, which merely sits closest to the vacated rectangle.
 #[test]
@@ -914,6 +957,7 @@ fn interactive_command_spawn_applies_configured_rule() {
             }),
             fullscreen: true,
             focus: false,
+            split_axis: None,
         }
     );
 }

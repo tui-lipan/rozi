@@ -1489,10 +1489,12 @@ mod tests {
 
         let panes = actions("Panes");
         assert_eq!(
-            &panes[..4],
+            &panes[..6],
             &[
                 Action::Spawn,
                 Action::SpawnFloat,
+                Action::Split(crate::layout::model::SplitAxis::Horizontal),
+                Action::Split(crate::layout::model::SplitAxis::Vertical),
                 Action::Close,
                 Action::RenamePane,
             ]

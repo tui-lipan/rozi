@@ -28,11 +28,10 @@ pub(super) fn tab_entry(ctx: &mut Context<AppRoot>, id: SidebarTabId, entry: &st
     };
     let tab_id = id.as_str();
     if let Some((side, home)) = entry.strip_prefix(MOVE_PREFIX).and_then(move_destination) {
-        let source = &ctx.state.sidebar.panels[panel];
-        if (source.dock, source.home) == (side, home) {
+        let layout = &mut ctx.state.config.sidebar.layout;
+        if layout.location(tab_id) == Some((side, home)) {
             return Update::full();
         }
-        let layout = &mut ctx.state.config.sidebar.layout;
         let dock = layout.dock_mut(side);
         dock.panel_count = dock.panel_count.max(home + 1);
         layout.place(tab_id, side, home);

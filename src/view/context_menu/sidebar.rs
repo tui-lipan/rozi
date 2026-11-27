@@ -9,6 +9,7 @@ pub(super) fn tab_menu(state: &State, id: &SidebarTabId) -> Vec<ContextMenuEntry
         return Vec::new();
     };
     let source = &state.sidebar.panels[panel];
+    let saved_location = state.config.sidebar.layout.location(id.as_str());
     let docks = [SidebarPosition::Left, SidebarPosition::Right].map(|side| {
         ContextMenuEntry::submenu(
             side.id(),
@@ -18,7 +19,7 @@ pub(super) fn tab_menu(state: &State, id: &SidebarTabId) -> Vec<ContextMenuEntry
                     format!("{MOVE_PREFIX}{}:{home}", side.id()),
                     format!("Panel {}", home + 1),
                 )
-                .disabled((source.dock, source.home) == (side, home))
+                .disabled(saved_location == Some((side, home)))
             }),
         )
     });

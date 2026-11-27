@@ -197,16 +197,17 @@ pub struct PaneActivity {
 impl Pane {
     pub(crate) fn mouse_selection_text(&self) -> Option<String> {
         let selection = self.mouse_selection.as_ref()?;
-        if selection.terminal_id != self.terminal.stable_terminal_id()
-            || selection.lineage != self.terminal.scrollback_lineage()
-        {
+        if selection.terminal_id != self.terminal.stable_terminal_id() {
             return None;
         }
-        let text = self.terminal.selection_display_text(
-            &selection.range,
-            tui_lipan::SelectionEnd::Exclusive,
-            false,
-        );
+        let range = tui_lipan::rebase_selection(
+            Some(selection.range),
+            selection.lineage,
+            self.terminal.scrollback_lineage(),
+        )?;
+        let text =
+            self.terminal
+                .selection_display_text(&range, tui_lipan::SelectionEnd::Exclusive, false);
         let text = tui_lipan::utils::trim_blank_edge_lines(&text);
         (!text.is_empty()).then(|| text.to_owned())
     }
@@ -719,6 +720,29 @@ mod tests {
                 h: 24.0,
             },
         )
+    }
+
+    #[test]
+    fn mouse_selection_survives_eviction_until_a_selected_row_is_lost() {
+        let mut pane = Pane::new(1, 2, FloatRect::default());
+        pane.terminal.apply_server_resize(20, 2);
+        pane.terminal
+            .process_server_output(b"old0\r\nold1\r\nkeep\r\nlive");
+        pane.mouse_selection = Some(PaneMouseSelection {
+            terminal_id: pane.terminal.stable_terminal_id(),
+            range: tui_lipan::TerminalSelection {
+                anchor: tui_lipan::TerminalPos { line: 2, col: 0 },
+                cursor: tui_lipan::TerminalPos { line: 2, col: 4 },
+            },
+            lineage: pane.terminal.scrollback_lineage(),
+        });
+        assert_eq!(pane.mouse_selection_text().as_deref(), Some("keep"));
+
+        pane.terminal.process_server_output(b"\r\nnext");
+        assert_eq!(pane.mouse_selection_text().as_deref(), Some("keep"));
+
+        pane.terminal.process_server_output(b"\r\nmore\r\nlast");
+        assert_eq!(pane.mouse_selection_text(), None);
     }
 
     #[test]

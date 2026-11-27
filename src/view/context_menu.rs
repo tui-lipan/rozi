@@ -44,8 +44,18 @@ pub(crate) fn context_menu_overlay(ctx: &Context<AppRoot>, menu: &ContextMenuSta
         .bg(theme.border_active)
         .bold()
         .contrast_policy(ContrastPolicy::BlackOrWhite);
+    // The selected row wears the picker's caps, so a menu matches the pickers beside it.
+    let (cap_left, cap_right) = crate::view::picker_selection_cap_glyphs(&ctx.state.config);
     ContextMenu::new(Text::new("").width(Length::Px(0)).height(Length::Px(0)))
         .entries(entries)
+        .symbol_column(true)
+        .selection_symbol(Some(cap_left))
+        .selection_symbol_right(Some(cap_right))
+        .unselected_symbol(Some(""))
+        .selection_symbol_style(crate::view::picker_selection_cap_style(
+            theme,
+            theme.border_active,
+        ))
         .open(true)
         .anchor(Some(menu.anchor))
         // Below the pointer, so the tab or row it opened on stays in view.

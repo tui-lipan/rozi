@@ -493,7 +493,8 @@ fn split(ctx: &mut Context<AppRoot>, id: PaneId, axis: Option<SplitAxis>) -> Upd
     if axis.is_some() && !pane_can_split(&ctx.state, id) {
         return Update::full();
     }
-    admitted(ctx, Action::Spawn, |ctx| {
+    let action = axis.map_or(Action::Spawn, Action::Split);
+    admitted(ctx, action, |ctx| {
         crate::pane::lifecycle::split_pane(ctx, id, axis)
     })
 }

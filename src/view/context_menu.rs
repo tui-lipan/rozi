@@ -7,7 +7,7 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::input::Action;
-use crate::layout::model::LayoutKind;
+use crate::layout::model::{LayoutKind, SplitAxis};
 use crate::msg::Msg;
 use crate::ops::context_menu::{
     ContextMenuMsg, agent_entries, pane_entries, session_entries, workspace_entries,
@@ -129,8 +129,16 @@ fn pane_menu(
     ]);
     // Only Dwindle splits a pane; the other layouts place a new pane by their own order.
     if crate::ops::context_menu::pane_can_split(&ctx.state, id) {
-        entries.push(ContextMenuEntry::action(SPLIT_RIGHT, "Split right"));
-        entries.push(ContextMenuEntry::action(SPLIT_DOWN, "Split down"));
+        entries.push(action(
+            SPLIT_RIGHT,
+            "Split right",
+            Action::Split(SplitAxis::Horizontal),
+        ));
+        entries.push(action(
+            SPLIT_DOWN,
+            "Split down",
+            Action::Split(SplitAxis::Vertical),
+        ));
     } else {
         entries.push(action(NEW_PANE, "New pane", Action::Spawn));
     }

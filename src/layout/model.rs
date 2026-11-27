@@ -4,7 +4,7 @@
 /// Gap, in cells, between left|right tiled panes.
 pub const TILE_GAP: f32 = 1.0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SplitAxis {
     Horizontal,
     Vertical,

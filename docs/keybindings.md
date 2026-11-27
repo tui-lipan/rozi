@@ -130,6 +130,8 @@ See [Sidebar keys](#sidebar-keys) for the keys that work once the sidebar has fo
 
 These actions are available in the command palette, and you can bind them under `[keys]`:
 
+- `split-right`, `split-down`, which split the focused pane in that direction in Dwindle and open
+  a new pane elsewhere
 - `toggle-pane-synchronization`
 - `toggle-pane-logging`
 - `respawn-pane`

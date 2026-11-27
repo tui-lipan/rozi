@@ -172,6 +172,7 @@ pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) ->
     match action {
         Action::Spawn
         | Action::SpawnFloat
+        | Action::Split(_)
         | Action::RespawnPane
         | Action::Close
         | Action::Move(_)
@@ -322,13 +323,17 @@ fn dispatch_action(
         // In the launcher (or any no-client resting state) there is no session to spawn into, and
         // queueing the spawn against a client that will never arrive would look like a hang. Asking
         // for a shell there is the explicit "start a new session" the launcher advertises.
-        Action::Spawn | Action::SpawnFloat
+        Action::Spawn | Action::SpawnFloat | Action::Split(_)
             if crate::ops::session::needs_session_for_pty(&ctx.state) =>
         {
             crate::ops::session::start_launcher_shell(ctx)
         }
         Action::Spawn => spawn_pane(ctx),
         Action::SpawnFloat => spawn_floating_pane_at_cursor(ctx),
+        Action::Split(axis) => match ctx.state.focused_pane() {
+            Some(id) => crate::pane::lifecycle::split_pane(ctx, id, Some(axis)),
+            None => spawn_pane(ctx),
+        },
         Action::RespawnPane => crate::pane::lifecycle::respawn_focused_pane(ctx),
         Action::TogglePaneLogging => toggle_pane_logging(ctx),
         Action::Close => {

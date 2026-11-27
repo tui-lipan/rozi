@@ -768,6 +768,8 @@
 #save-profile = ["ctrl-a z", "alt-z"]
 #spawn = { add = "super-enter" }
 #spawn-float = "alt-shift-n"
+#split-right = "%"
+#split-down = '"'
 #close = "prefix:w"
 #paste = "mod:v"
 #scratchpad = []

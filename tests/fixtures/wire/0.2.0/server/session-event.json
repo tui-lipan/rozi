@@ -1,0 +1,11 @@
+{
+  "event": {
+    "data": {
+      "key": "example"
+    },
+    "kind": "pane-spawned",
+    "seq": 1,
+    "session_instance": "example"
+  },
+  "type": "session-event"
+}

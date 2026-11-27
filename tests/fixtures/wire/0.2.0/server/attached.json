@@ -1,0 +1,210 @@
+{
+  "allow_takeover": false,
+  "capabilities": [
+    "example"
+  ],
+  "client_id": 1,
+  "clients": [
+    {
+      "id": 1,
+      "label": "example",
+      "parked": false,
+      "read_only": false,
+      "requesting_control": false
+    }
+  ],
+  "controller": 1,
+  "effective_protocol": 1,
+  "input_locked": false,
+  "layout": {
+    "canvas_cols": 1,
+    "canvas_rows": 1,
+    "pane_geometry": {
+      "border_mode": "separate",
+      "keep_special_borders": false,
+      "padding": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "show_titles": false,
+      "titlebar": "bar",
+      "top_gap": 1
+    },
+    "version": 1,
+    "workspaces": [
+      {
+        "index": 1,
+        "layout": "dwindle",
+        "name": "example",
+        "panes": [
+          {
+            "cwd": "example",
+            "floating": false,
+            "fullscreen": false,
+            "generation": 1,
+            "keep_open": false,
+            "launch": {
+              "command": "example",
+              "kind": "shell"
+            },
+            "pane_id": 1,
+            "pinned": false,
+            "profile_name": "example",
+            "rect": {
+              "h": 0.5,
+              "w": 0.5,
+              "x": 0.5,
+              "y": 0.5
+            },
+            "replay": false,
+            "scrollable_width": 0.5,
+            "title": "example"
+          }
+        ],
+        "split_ratios": [
+          0.5
+        ],
+        "start_axis": "horizontal",
+        "synchronized": false,
+        "tree": {
+          "kind": "leaf",
+          "pane": 1
+        }
+      }
+    ]
+  },
+  "layout_rev": 1,
+  "origin": {
+    "profile": "example",
+    "worktree": {
+      "path": "example"
+    }
+  },
+  "panes": [
+    {
+      "agents": [
+        {
+          "completions": 1,
+          "reference": {
+            "incarnation": 1,
+            "pane": {
+              "generation": 1,
+              "pane_id": 1,
+              "session_instance": "example"
+            },
+            "slot": {
+              "id": "example",
+              "publisher": "example"
+            }
+          }
+        }
+      ],
+      "cols": 1,
+      "exited": 1,
+      "generation": 1,
+      "logging": false,
+      "original_user": "example",
+      "pane_id": 1,
+      "pid": 1,
+      "rows": 1,
+      "runtime": {
+        "agent_launch": 1,
+        "command_phase": {
+          "phase": "unknown"
+        },
+        "cwd": "example",
+        "cwd_host": "example",
+        "cwd_source": "shell-report",
+        "detected_agent": {
+          "agent": {
+            "id": "example",
+            "label": "example"
+          },
+          "state": "idle"
+        },
+        "display_path": "example",
+        "foreground_arguments": [
+          "example"
+        ],
+        "foreground_executable": "example",
+        "foreground_pid": 1,
+        "foreground_program": "example",
+        "foreground_programs": [
+          "example"
+        ],
+        "foreground_shell": false,
+        "git_branch": "example",
+        "integration": {
+          "identity": {
+            "id": "example",
+            "label": "example"
+          },
+          "integration": "example",
+          "native_session": "example",
+          "reason": "example",
+          "reference": {
+            "incarnation": 1,
+            "pane": {
+              "generation": 1,
+              "pane_id": 1,
+              "session_instance": "example"
+            },
+            "slot": {
+              "id": "example",
+              "publisher": "example"
+            }
+          },
+          "reported_at_unix_ms": 1,
+          "seq": 1,
+          "state": "working",
+          "unless_quiet": {
+            "ended": false,
+            "reason": "example",
+            "state": "working"
+          }
+        },
+        "last_exit_status": 1,
+        "project_root": "example",
+        "recording": false,
+        "repository": "example",
+        "rows": [
+          {
+            "active": false,
+            "cwd": "example",
+            "id": "example",
+            "kind": "agent",
+            "live_session": "example",
+            "native_session": "example",
+            "project": {
+              "branch": "example",
+              "repository": "example",
+              "root": "example"
+            },
+            "publisher": "example",
+            "reason": "example",
+            "reported": false,
+            "status": "example",
+            "title": "example",
+            "work_started_at": 1
+          }
+        ],
+        "sequence": 1,
+        "status": {
+          "reason": "example",
+          "set_at": 1,
+          "value": "example"
+        },
+        "work_started_at": 1
+      },
+      "scrollback": 1,
+      "title": "example"
+    }
+  ],
+  "protocol_version": 1,
+  "rozi_version": "example",
+  "session": "example",
+  "session_instance": "example",
+  "type": "attached"
+}

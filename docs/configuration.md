@@ -266,7 +266,7 @@ See [Layouts and panes](layouts-and-panes.md).
 | `picker_border_style` | string | `"rounded"` | Same tokens as `border_style`. The command palette, Settings, Help, Search, and other pickers. |
 | `picker_tab_background` | bool | `true` | Paints picker category tabs as a distinct strip. Off, the tabs share the picker body. |
 | `picker_tab_style` | string | `workbar_tab_style` | `"padded"`, `"round"`, `"arrow"`, `"slant"`, or `"trapezoid"`. |
-| `picker_selection_style` | string | `"padded"` | `"padded"`, `"round"`, `"arrow"`, `"slant"`, or `"trapezoid"`. Caps at the start and end of the selected picker row. |
+| `picker_selection_style` | string | `"padded"` | `"padded"`, `"round"`, `"arrow"`, `"slant"`, or `"trapezoid"`. Caps at the start and end of the selected picker row and context menu entry. |
 | `keep_special_borders` | bool | `true` | Keeps frames on floating panes, popups, and scratchpads in borderless modes. |
 | `padding` | integer or integer array | `0` | One value, `[vertical, horizontal]`, or `[top, right, bottom, left]`. Each side is clamped to `0..=8`. |
 | `title_style` | string | `"padded"` | `"padded"`, `"half"`, `"round"`, `"arrow"`, `"slant"`, or `"trapezoid"`. |

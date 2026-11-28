@@ -2105,6 +2105,8 @@ pub(crate) fn tiled_resize_strips(
     let top_offset = f32::from(ctx.state.content_top_offset());
     let left_offset = f32::from(ctx.state.terminal_content_left_offset(ctx.viewport()));
 
+    // Aligning or separating dividers changes the hitbox list mid-drag. Key the handles so
+    // the captured mouse region keeps its identity when its position in the list changes.
     let mut strips = Vec::new();
     for strip in &vertical_strips {
         strips.push((strip.rect, resize_strip_element(ctx, strip, true)));
@@ -2136,7 +2138,7 @@ fn resize_strip_hitboxes(
     let mut vertical_strips = Vec::new();
     let mut horizontal_strips = Vec::new();
     for (a_id, a) in tiled {
-        for (_b_id, b) in tiled {
+        for (b_id, b) in tiled {
             // Vertical boundary → horizontal (left|right) split. `a` is the left pane. In master,
             // only the master's edge moves; the gutters between stack columns are fixed.
             let a_right = a.x + a.w;
@@ -2158,6 +2160,7 @@ fn resize_strip_hitboxes(
                             h: y1 - y0,
                         },
                         pane_id: *a_id,
+                        far_pane_id: *b_id,
                     });
                 }
             }
@@ -2191,6 +2194,7 @@ fn resize_strip_hitboxes(
                                 h,
                             },
                             pane_id: *a_id,
+                            far_pane_id: *b_id,
                         });
                     }
                 }
@@ -2206,11 +2210,13 @@ struct ResizeStripHitbox {
     /// The pane on the near side of the boundary (left or above); its trailing edge identifies the
     /// tree split that a drag on this strip resizes.
     pane_id: PaneId,
+    far_pane_id: PaneId,
 }
 
 #[derive(Clone)]
 struct ResizeJunctionHitbox {
     rect: FloatRect,
+    key: String,
     /// Pane representatives and segment starts on vertical boundaries. The drag origin chooses
     /// one segment, which identifies one horizontal tree split.
     horizontal_targets: Vec<ResizeJunctionTarget>,
@@ -2302,6 +2308,15 @@ fn resize_junction_hitboxes(
             } else {
                 junctions.push(ResizeJunctionHitbox {
                     rect,
+                    // Each intersecting pair seeds at most one junction. Its pane IDs stay
+                    // fixed as the junction moves.
+                    key: format!(
+                        "resize-junction-{}-{}-{}-{}",
+                        vertical.pane_id,
+                        vertical.far_pane_id,
+                        horizontal.pane_id,
+                        horizontal.far_pane_id,
+                    ),
                     horizontal_targets: vec![ResizeJunctionTarget {
                         pane_id: vertical.pane_id,
                         start: vertical.rect.y,
@@ -2361,6 +2376,10 @@ fn resize_strip_element(
         } else {
             PointerShape::NsResize
         })
+        .key(format!(
+            "resize-strip-{horizontal_split}-{pane_id}-{}",
+            strip.far_pane_id,
+        ))
 }
 
 fn resize_junction_element(
@@ -2375,8 +2394,8 @@ fn resize_junction_element(
     );
     let horizontal_targets = junction.horizontal_targets;
     let vertical_targets = junction.vertical_targets;
-    // Segments are picked from the drag origin, so the pair a gesture grabs is fixed for its whole
-    // lifetime; the drag session keeps it even if a later event is routed from another strip.
+    // The drag session keeps the segments grabbed at the origin even when the junction's
+    // segments change as dividers align.
     MouseRegion::new()
         .drag_threshold(1, 1)
         .on_drag_start(ctx.link().callback(move |event: MouseDragEvent| {
@@ -2414,6 +2433,7 @@ fn resize_junction_element(
         .on_drag_end(ctx.link().callback(move |_| Msg::EndResizeSplit))
         .child(Text::new("").width(Length::Flex(1)).height(Length::Flex(1)))
         .pointer_shape(PointerShape::AllScroll)
+        .key(junction.key)
 }
 
 /// Pane representatives for the horizontal and vertical splits a junction drag moves, chosen from

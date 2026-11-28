@@ -71,11 +71,9 @@ fn begin_split_drag(ctx: &mut Context<AppRoot>, kind: SplitDragKind, x: u16, y: 
 /// Resolve which boundary a drag event belongs to, and rewind the layout to the drag's starting
 /// ratios so the pointer delta can be applied absolutely.
 ///
-/// The live session - not the event payload - decides the target. Drag events are routed by the
-/// position a mouse region occupied when the pointer went down, and a resize strip moves as soon as
-/// the split it describes moves, so a mid-gesture event routinely arrives from a *neighbouring*
-/// strip's region carrying that strip's pane id. The drag origin is fixed for the whole gesture, so
-/// matching on it keeps every event applied to the boundary the pointer actually grabbed.
+/// The session retains the boundaries selected when the drag started. Moving the split changes
+/// the resize hitboxes and which segments meet at a junction. Matching the fixed drag origin
+/// keeps each move applied to the original boundaries.
 ///
 /// A move with no matching session is ignored rather than adopted. Every gesture opens with its own
 /// begin message (tui-lipan delivers `on_drag_start` ahead of the first `on_drag`), so the only moves
@@ -440,11 +438,7 @@ mod tests {
         });
     }
 
-    /// Drags driven by real pointer events, so they exercise how the framework routes a gesture
-    /// after the first move: by the position the grabbed mouse region held when the pointer went
-    /// down. A resize strip moves with the split it describes, so mid-drag events arrive from a
-    /// neighbouring strip's region - the drag session, not the event payload, has to decide which
-    /// boundary moves.
+    /// Drive pointer events through the rendered handles as changes to the layout move them.
     mod pointer_drags {
         use super::*;
         use tui_lipan::core::event::{KeyMods, MouseButton, MouseEvent, MouseKind};
@@ -660,30 +654,56 @@ mod tests {
         }
 
         /// Two stacked pairs side by side. Dragging the divider inside one column must leave the
-        /// other column's divider and the main divider alone, and must follow the pointer for the
-        /// whole gesture rather than stalling when the strip shifts underneath it.
+        /// other dividers alone and keep its resize cursor as the junctions merge or separate.
         #[test]
         fn a_column_divider_ignores_the_other_column() {
             in_test_stack(|| {
-                let tree = *split(
-                    SplitAxis::Horizontal,
-                    split(SplitAxis::Vertical, leaf(1), leaf(2)),
-                    split(SplitAxis::Vertical, leaf(3), leaf(4)),
-                );
-                let (before, after) =
-                    drag_divider(&tree, (70, grab_row(&tree, 4)), (0, 4), SplitAxis::Vertical);
-                assert_eq!(shifted(&before, &after), vec![(3, 0.0, 4.0), (4, 4.0, 0.0)]);
+                for (x, upper, lower, right_ratio) in [(20, 1, 2, 0.5), (70, 3, 4, 0.35)] {
+                    let tree = *split(
+                        SplitAxis::Horizontal,
+                        split(SplitAxis::Vertical, leaf(1), leaf(2)),
+                        Box::new(DwindleTree::Split {
+                            axis: SplitAxis::Vertical,
+                            ratio: right_ratio,
+                            first: leaf(3),
+                            second: leaf(4),
+                        }),
+                    );
+                    let mut backend = backend_with(&tree);
+                    let start = pane_leading_row(&mut backend, lower);
+                    let aligned = pane_leading_row(&mut backend, 2);
+                    let end = if lower == 2 { start - 4 } else { aligned };
+                    let delta = i32::from(end) - i32::from(start);
+                    assert_ne!(delta, 0);
+                    let before = spans(&mut backend, SplitAxis::Vertical);
+                    let across = spans(&mut backend, SplitAxis::Horizontal);
+                    backend
+                        .send_mouse(mouse(x, start, MouseKind::Down(MouseButton::Left)))
+                        .expect("press");
+                    for step in 1..=delta.abs() {
+                        let row = (i32::from(start) + step * delta.signum()) as u16;
+                        backend
+                            .send_mouse(mouse(x, row, MouseKind::Drag(MouseButton::Left)))
+                            .expect("drag");
+                        assert_eq!(
+                            backend.pointer_shape(),
+                            Some(PointerShape::NsResize),
+                            "column at x={x}, dragged from row {start} to {row}"
+                        );
+                    }
+                    backend
+                        .send_mouse(mouse(x, end, MouseKind::Up(MouseButton::Left)))
+                        .expect("release");
 
-                let (before, after) = drag_divider(
-                    &tree,
-                    (20, grab_row(&tree, 2)),
-                    (0, -4),
-                    SplitAxis::Vertical,
-                );
-                assert_eq!(
-                    shifted(&before, &after),
-                    vec![(1, 0.0, -4.0), (2, -4.0, 0.0)]
-                );
+                    let delta = delta as f32;
+                    let after = spans(&mut backend, SplitAxis::Vertical);
+                    assert_eq!(
+                        shifted(&before, &after),
+                        vec![(upper, 0.0, delta), (lower, delta, 0.0)]
+                    );
+                    assert_eq!(spans(&mut backend, SplitAxis::Horizontal), across);
+                    assert!(backend.state().split_drag.is_none());
+                }
             });
         }
 

@@ -101,6 +101,12 @@ impl AvailableUpdate {
             })
     }
 
+    /// Whether the release's compatibility document was read, so its note is known rather than
+    /// missing.
+    pub(crate) fn knows_contracts(&self) -> bool {
+        self.compatibility.is_some()
+    }
+
     /// Whether the release moves a contract the user has to act on, which is what makes the notice
     /// a warning rather than news.
     pub(crate) fn needs_caution(&self) -> bool {

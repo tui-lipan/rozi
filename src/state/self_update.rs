@@ -68,6 +68,14 @@ impl SelfUpdateRun {
         self.installed.as_ref().unwrap_or(&self.latest)
     }
 
+    /// Take `update`'s metadata when it is for the release this run installs and was actually
+    /// read. Metadata that could not be read never replaces what the run knows.
+    pub fn learn(&mut self, update: &crate::ops::update_check::AvailableUpdate) {
+        if update.latest == self.latest && update.knows_contracts() {
+            self.note = update.extension_note();
+        }
+    }
+
     /// The release-wide note for `version`, which only the announced release has.
     pub fn note_for(&self, version: &Version) -> Option<String> {
         (*version == self.latest)
@@ -154,13 +162,12 @@ impl SelfUpdateRun {
             return;
         }
         match event {
-            // A different release brings its own note. For the same one, the offer decides which
-            // metadata wins (see `self_update::sync_note`).
+            // A different release brings its own note; the same one keeps what was read.
             SelfUpdateEvent::Resolved(update) if update.latest != self.latest => {
                 self.note = update.extension_note();
                 self.latest = update.latest;
             }
-            SelfUpdateEvent::Resolved(_) => {}
+            SelfUpdateEvent::Resolved(update) => self.learn(&update),
             SelfUpdateEvent::Downloaded { downloaded, total } => {
                 self.phase = UpdatePhase::Downloading { downloaded, total };
             }

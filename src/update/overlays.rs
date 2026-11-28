@@ -761,6 +761,10 @@ pub(super) fn update_available(
     announce: bool,
 ) -> Update {
     use crate::ops::update_check::OfferChange;
+    // The release being installed takes metadata only from checks of that release.
+    if let Some(run) = ctx.state.self_update.run.as_mut() {
+        run.learn(&update);
+    }
     let latest = update.latest.clone();
     let change = crate::ops::update_check::merge_offer(&mut ctx.state.available_update, update);
     if change == OfferChange::Newer {
@@ -769,7 +773,6 @@ pub(super) fn update_available(
         ctx.state.update_started = false;
         ctx.state.commands_dirty = true;
     }
-    crate::ops::self_update::sync_note(&mut ctx.state);
     // A release this client is installing, or installed, is not news here.
     let installing = ctx
         .state

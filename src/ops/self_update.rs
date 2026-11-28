@@ -135,15 +135,19 @@ pub(crate) fn progress(
         return Update::none();
     };
     let working = run.phase.in_progress();
+    let before = run.release().clone();
     run.advance(event);
+    if *run.release() != before {
+        // **Update rozi** names the run's release.
+        ctx.state.commands_dirty = true;
+    }
     if let Some(update) = resolved.filter(|_| working) {
-        // The release being installed is on offer now, so a later check of it is not a fresh
-        // offer. Its metadata joins what the offer knew, and the run's note follows the result.
+        // The release being installed is on offer now, unless a newer one already is, so a later
+        // check of it is not a fresh offer.
         let change = crate::ops::update_check::merge_offer(&mut ctx.state.available_update, update);
         if change == crate::ops::update_check::OfferChange::Newer {
             ctx.state.commands_dirty = true;
         }
-        sync_note(&mut ctx.state);
     }
     let Some(run) = current_run(ctx, generation) else {
         return Update::none();
@@ -152,18 +156,6 @@ pub(crate) fn progress(
         Update::none()
     } else {
         Update::full()
-    }
-}
-
-/// A running update to the release on offer takes that offer's note: the offer holds the best
-/// metadata known for the release, whichever check or lookup read it.
-pub(crate) fn sync_note(state: &mut crate::state::State) {
-    let (Some(run), Some(offered)) = (state.self_update.run.as_mut(), &state.available_update)
-    else {
-        return;
-    };
-    if run.phase.in_progress() && run.latest == offered.latest {
-        run.note = offered.extension_note();
     }
 }
 
@@ -237,8 +229,12 @@ fn settle_offer(ctx: &mut Context<AppRoot>, installed: &semver::Version) {
     if offered.latest == *installed
         && let Some(run) = ctx.state.self_update.run.as_mut()
     {
-        run.latest = installed.clone();
-        run.note = offered.extension_note();
+        if run.latest != *installed {
+            // Another release than the run set out for: none of its note applies.
+            run.latest = installed.clone();
+            run.note = None;
+        }
+        run.learn(offered);
     }
     ctx.state.update_started = true;
     ctx.state.commands_dirty = true;
@@ -841,7 +837,8 @@ mod tests {
 
     /// A release published after the check is what the installer finds. The card names it from
     /// the start of the download, with its own note, and so does Commands while it runs. For the
-    /// same release, metadata that was read beats metadata that could not be, from either side; a
+    /// same release, metadata that was read beats metadata that could not be, from either side,
+    /// and stays with the release installing even once a newer one is on offer; a
     /// check of the release being installed raises no toast, and an older one never displaces the
     /// newer release on offer.
     #[test]
@@ -874,6 +871,35 @@ mod tests {
                 assert!(
                     restart_note(&same).is_some(),
                     "the note read by either the check or the installer is kept"
+                );
+            }
+
+            // A newer release is on offer by the time the installer, or a late check, reads the
+            // warning of the one installing; the warning still belongs to that one, and a lookup
+            // that could not read it does not take it away.
+            for (announced, late, resolved) in [
+                (false, None, true),
+                (false, Some(true), false),
+                (true, None, false),
+            ] {
+                let mut overtaken = updating_to("9.9.9", announced);
+                overtaken.dispatch(raising_extension_api("9.9.10")).unwrap();
+                if let Some(warned) = late {
+                    overtaken
+                        .dispatch(Msg::UpdateAvailable {
+                            update: found("9.9.9", warned),
+                            announce: false,
+                        })
+                        .unwrap();
+                }
+                report(
+                    &mut overtaken,
+                    SelfUpdateEvent::Resolved(found("9.9.9", resolved)),
+                );
+                finish(&mut overtaken, Ok(semver::Version::new(9, 9, 9)));
+                assert!(
+                    restart_note(&overtaken).is_some(),
+                    "9.9.9's own note ({announced}, {late:?}, {resolved})"
                 );
             }
 

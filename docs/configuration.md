@@ -305,7 +305,9 @@ Colors for pane alert borders and content tints. Each value is a theme role or `
 
 The focused pane still shows a finished run, and an agent waiting on you in any of its
 conversations. That blocked alert holds still instead of breathing, and clears once you answer the
-agent. A plain `rozi status blocked` marks a pane only while it is not focused.
+agent. Once you have focused or used a blocked pane, its alert holds still after focus leaves it
+too, until the agent blocks again. A plain `rozi status blocked` marks a pane only while it is not
+focused.
 
 An error alert clears once you use the pane, even while the failure lasts; the sidebar keeps showing
 the failed row.

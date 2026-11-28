@@ -224,7 +224,13 @@ pub(crate) fn apply_pane_runtime_state(
         edges.became_blocked = false;
         edges.failed = false;
         failed_rows.clear();
+        // The pane's own blocked status names no agent, so it cannot tell the new one's prompt
+        // from the old one's. Published conversations keep their identities across the relaunch.
+        pane.terminal
+            .blocked_seen
+            .retain(|blocker| *blocker != crate::state::Blocker::Status);
     }
+    pane.forget_unblocked();
     AppliedPaneRuntime {
         finished_rows,
         failed_rows,
@@ -967,6 +973,101 @@ mod tests {
         let applied = apply_pane_runtime_state(&mut pane, Vec::new(), runtime);
         assert!(!applied.edges.became_blocked);
         assert!(!applied.edges.finished);
+    }
+
+    /// A blocked prompt the user has acted on stops being news until the agent leaves it: the
+    /// next time the agent blocks, the pane pulses again.
+    #[test]
+    fn a_seen_block_is_news_again_once_the_agent_blocks_anew() {
+        let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
+        let agent = |state| PaneRuntimeState {
+            agent_launch: 1,
+            detected_agent: Some(DetectedAgent {
+                blocker: None,
+                agent: AgentIdentity::new("pi", "Pi").into(),
+                state,
+            }),
+            ..PaneRuntimeState::default()
+        };
+        apply_pane_runtime_state(&mut pane, Vec::new(), agent(DetectedAgentState::Blocked));
+        assert!(!pane.blocked_seen());
+        assert!(pane.see_blockers());
+        apply_pane_runtime_state(&mut pane, Vec::new(), agent(DetectedAgentState::Blocked));
+        assert!(pane.blocked_seen(), "an unchanged block stays seen");
+
+        apply_pane_runtime_state(&mut pane, Vec::new(), agent(DetectedAgentState::Working));
+        apply_pane_runtime_state(&mut pane, Vec::new(), agent(DetectedAgentState::Blocked));
+        assert!(!pane.blocked_seen());
+
+        pane.see_blockers();
+        let relaunched = PaneRuntimeState {
+            agent_launch: 2,
+            ..agent(DetectedAgentState::Blocked)
+        };
+        apply_pane_runtime_state(&mut pane, Vec::new(), relaunched);
+        assert!(!pane.blocked_seen(), "a relaunched agent's prompt is news");
+    }
+
+    /// A publisher listing a seen blocked agent under another row has not shown a new prompt, and
+    /// neither has the pane's agent being detected, which reads its blocked state off that row, or
+    /// relaunched while the conversation lives on.
+    #[test]
+    fn a_seen_block_stays_seen_when_the_agent_moves_rows() {
+        use crate::session::protocol::{
+            AgentRecord, AgentRef, PublishedRow, PublisherKind, RowKey,
+        };
+        let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
+        let listed = |id: &str| {
+            let row = PublishedRow {
+                publisher: "1/sessions".into(),
+                kind: PublisherKind::Agent,
+                live_session: None,
+                reported: false,
+                id: id.into(),
+                title: "Claude".into(),
+                status: "blocked".into(),
+                reason: None,
+                active: true,
+                work_started_at: None,
+                cwd: None,
+                project: None,
+                native_session: None,
+            };
+            let record = AgentRecord::from(AgentRef::for_test(
+                1,
+                7,
+                Some(RowKey::new("1/sessions", id)),
+            ));
+            let runtime = PaneRuntimeState {
+                rows: vec![row],
+                ..PaneRuntimeState::default()
+            };
+            (vec![record], runtime)
+        };
+        let (agents, runtime) = listed("a");
+        apply_pane_runtime_state(&mut pane, agents, runtime);
+        assert!(pane.see_blockers(), "the blocked row names an agent");
+        let (agents, runtime) = listed("b");
+        let detected = PaneRuntimeState {
+            agent_launch: 1,
+            detected_agent: Some(DetectedAgent {
+                blocker: None,
+                agent: AgentIdentity::new("claude", "Claude").into(),
+                state: DetectedAgentState::Blocked,
+            }),
+            ..runtime
+        };
+        apply_pane_runtime_state(&mut pane, agents.clone(), detected.clone());
+        assert!(pane.blocked_seen());
+        let relaunched = PaneRuntimeState {
+            agent_launch: 2,
+            ..detected
+        };
+        apply_pane_runtime_state(&mut pane, agents, relaunched);
+        assert!(
+            pane.blocked_seen(),
+            "the conversation outlives the relaunch"
+        );
     }
 
     #[test]

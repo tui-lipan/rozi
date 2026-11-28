@@ -433,7 +433,7 @@ fn visible_pane_alert_can_pulse(state: &State) -> bool {
     workspace.panes.iter().any(|pane| {
         let focused = focused == Some(pane.id);
         crate::view::pane_alert(pane, focused, config, &state.agent_attention)
-            .filter(|(alert, _)| crate::view::pane_alert_breathes(*alert, focused))
+            .filter(|(alert, _)| crate::view::pane_alert_breathes(*alert, pane, focused))
             .is_some_and(|(_, color)| {
                 (frames && crate::ops::theme::pane_frame_alert_can_pulse(&state.theme, color))
                     || (config.alert_paint.paints_content()

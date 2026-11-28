@@ -676,6 +676,76 @@ impl Pane {
                 .iter()
                 .any(|runtime| runtime.state == crate::session::protocol::AgentState::Blocked)
     }
+
+    /// What in this pane waits on the user, one entry per blocker. With `on_screen`, only the ones
+    /// the pane shows: an agent behind another tab of the same program has not been seen. The
+    /// pane's own blocked status counts only while no agent is blocked, since it is then usually
+    /// that agent's state seen from the pane, not a second prompt.
+    pub fn blockers(&self, on_screen: bool) -> Vec<Blocker> {
+        let blocked = |runtimes: Vec<crate::session::protocol::AgentRuntime>| {
+            runtimes
+                .into_iter()
+                .filter(|runtime| runtime.state == crate::session::protocol::AgentState::Blocked)
+                .map(|runtime| Blocker::Agent(runtime.reference.instance()))
+                .collect::<Vec<_>>()
+        };
+        let all = blocked(self.agent_runtimes());
+        if all.is_empty() {
+            return self
+                .terminal
+                .is_blocked()
+                .then_some(Blocker::Status)
+                .into_iter()
+                .collect();
+        }
+        if on_screen {
+            blocked(self.agents_on_screen())
+        } else {
+            all
+        }
+    }
+
+    /// Whether the user has acted on everything this pane is blocked on. Its alert then holds
+    /// still: it still says the pane waits, but it is no longer news. A program's own blocked
+    /// report nobody has looked at is news of its own.
+    pub fn blocked_seen(&self) -> bool {
+        let blockers = self.blockers(false);
+        !blockers.is_empty()
+            && self.unseen_program_status() != Some(tui_lipan::ProgramStatusState::Blocked)
+            && blockers
+                .iter()
+                .all(|blocker| self.terminal.blocked_seen.contains(blocker))
+    }
+
+    /// Mark every blocker the pane shows as seen. Returns whether that changed anything.
+    pub fn see_blockers(&mut self) -> bool {
+        let mut changed = false;
+        for blocker in self.blockers(true) {
+            if !self.terminal.blocked_seen.contains(&blocker) {
+                self.terminal.blocked_seen.push(blocker);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Forget the seen blockers that no longer block, so their next prompt is news again.
+    pub fn forget_unblocked(&mut self) {
+        let blockers = self.blockers(false);
+        self.terminal
+            .blocked_seen
+            .retain(|blocker| blockers.contains(blocker));
+    }
+}
+
+/// One thing a pane waits on the user for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Blocker {
+    /// The pane's own status says it is blocked.
+    Status,
+    /// An agent in the pane is blocked. Named by its instance, so the agent moving to another
+    /// published row is still the same prompt.
+    Agent(crate::session::protocol::AgentInstance),
 }
 
 /// One thing that failed in a pane.

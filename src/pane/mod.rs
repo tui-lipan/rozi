@@ -337,6 +337,9 @@ pub struct TerminalPane {
     pub runtime_sequence: u64,
     pub program_status: tui_lipan::ProgramStatusSnapshot,
     pub program_status_attention: bool,
+    /// The blockers in this pane the user has acted on, as [`crate::state::Pane::blockers`] names
+    /// them. Each drops out once it stops blocking, so its next prompt pulses again.
+    pub blocked_seen: Vec<crate::state::Blocker>,
     /// When this client last alerted for the pane's OSC 7501 status, and for which state.
     pub program_status_notified: Option<(std::time::Instant, tui_lipan::ProgramStatusState)>,
     pub last_palette: Option<TerminalColorPalette>,
@@ -527,6 +530,7 @@ impl TerminalPane {
             runtime_sequence: 0,
             program_status: Default::default(),
             program_status_attention: false,
+            blocked_seen: Vec::new(),
             program_status_notified: None,
             last_palette: None,
             media_policy: GraphicsMediaPolicy::SHARED,
@@ -613,6 +617,7 @@ impl TerminalPane {
             self.published_row_ui.clear();
             self.program_status = Default::default();
             self.program_status_attention = false;
+            self.blocked_seen.clear();
             self.program_status_notified = None;
         }
         self.pane_id = pane_id;
@@ -626,6 +631,7 @@ impl TerminalPane {
         self.runtime_sequence = 0;
         self.program_status = Default::default();
         self.program_status_attention = false;
+        self.blocked_seen.clear();
         self.program_status_notified = None;
         self.reset_screen();
     }

@@ -224,6 +224,9 @@ pub(crate) fn apply_pane_runtime_state(
         edges.became_blocked = false;
         edges.failed = false;
         failed_rows.clear();
+        // The pane's own blocked status names no agent, so it cannot tell the new one's prompt
+        // from the old one's.
+        pane.terminal.blocked_seen.clear();
     }
     pane.forget_unblocked();
     AppliedPaneRuntime {
@@ -993,6 +996,56 @@ mod tests {
         apply_pane_runtime_state(&mut pane, Vec::new(), agent(DetectedAgentState::Working));
         apply_pane_runtime_state(&mut pane, Vec::new(), agent(DetectedAgentState::Blocked));
         assert!(!pane.blocked_seen());
+
+        pane.see_blockers();
+        let relaunched = PaneRuntimeState {
+            agent_launch: 2,
+            ..agent(DetectedAgentState::Blocked)
+        };
+        apply_pane_runtime_state(&mut pane, Vec::new(), relaunched);
+        assert!(!pane.blocked_seen(), "a relaunched agent's prompt is news");
+    }
+
+    /// A publisher listing a seen blocked agent under another row has not shown a new prompt.
+    #[test]
+    fn a_seen_block_stays_seen_when_the_agent_moves_rows() {
+        use crate::session::protocol::{
+            AgentRecord, AgentRef, PublishedRow, PublisherKind, RowKey,
+        };
+        let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
+        let listed = |id: &str| {
+            let row = PublishedRow {
+                publisher: "1/sessions".into(),
+                kind: PublisherKind::Agent,
+                live_session: None,
+                reported: false,
+                id: id.into(),
+                title: "Claude".into(),
+                status: "blocked".into(),
+                reason: None,
+                active: true,
+                work_started_at: None,
+                cwd: None,
+                project: None,
+                native_session: None,
+            };
+            let record = AgentRecord::from(AgentRef::for_test(
+                1,
+                7,
+                Some(RowKey::new("1/sessions", id)),
+            ));
+            let runtime = PaneRuntimeState {
+                rows: vec![row],
+                ..PaneRuntimeState::default()
+            };
+            (vec![record], runtime)
+        };
+        let (agents, runtime) = listed("a");
+        apply_pane_runtime_state(&mut pane, agents, runtime);
+        assert!(pane.see_blockers(), "the blocked row names an agent");
+        let (agents, runtime) = listed("b");
+        apply_pane_runtime_state(&mut pane, agents, runtime);
+        assert!(pane.blocked_seen());
     }
 
     #[test]

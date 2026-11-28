@@ -695,7 +695,7 @@ impl Pane {
                     .filter(|runtime| {
                         runtime.state == crate::session::protocol::AgentState::Blocked
                     })
-                    .map(|runtime| Blocker::Agent(runtime.reference)),
+                    .map(|runtime| Blocker::Agent(runtime.reference.instance())),
             )
             .collect()
     }
@@ -736,8 +736,9 @@ impl Pane {
 pub enum Blocker {
     /// The pane's own status says it is blocked.
     Status,
-    /// An agent in the pane is blocked.
-    Agent(crate::session::protocol::AgentRef),
+    /// An agent in the pane is blocked. Named by its instance, so the agent moving to another
+    /// published row is still the same prompt.
+    Agent(crate::session::protocol::AgentInstance),
 }
 
 /// One thing that failed in a pane.

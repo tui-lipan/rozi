@@ -146,6 +146,56 @@ impl SessionServer {
         }
     }
 
+    /// Encode and deliver a synthetic mouse gesture from an attached client against the server's
+    /// live parser state, replying in the same pump step so `mark: true` acts as a stream barrier.
+    #[allow(clippy::too_many_arguments)]
+    fn handle_send_mouse(
+        &mut self,
+        client_id: ClientId,
+        request_id: u64,
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+        action: &control::MouseAction,
+        mark: bool,
+    ) -> Vec<(Target, ServerMessage)> {
+        let reply = |response| {
+            vec![(
+                Target::Sender,
+                ServerMessage::SendMouseResult {
+                    request_id,
+                    response,
+                },
+            )]
+        };
+        if !self.client_attached(client_id) {
+            return reply(control::ControlResponse::error_with(
+                control::ControlErrorCode::SessionNotAttached,
+                "client is not attached",
+            ));
+        }
+        if self.client_read_only(client_id) {
+            return reply(control::ControlResponse::error_with(
+                control::ControlErrorCode::ReadOnly,
+                "read-only client",
+            ));
+        }
+        if !local && !self.client_may_input(client_id) {
+            return reply(control::ControlResponse::error_with(
+                control::ControlErrorCode::InputLocked,
+                format!(
+                    "session `{}` has input locked; only the controller can send input",
+                    self.session_name
+                ),
+            ));
+        }
+        let owner = local.then_some(client_id);
+        match self.deliver_mouse_checked(owner, pane_id, Some(generation), action, mark) {
+            Ok(()) => reply(control::ControlResponse::empty()),
+            Err(response) => reply(response),
+        }
+    }
+
     /// Write a client's pane input, if that client may type into the pane.
     pub(super) fn accept_pane_input(
         &mut self,
@@ -1279,6 +1329,16 @@ impl SessionServer {
                 self.accept_pane_input(client_id, pane_id, local, generation, &bytes, true);
                 vec![(Target::Sender, ServerMessage::InputMarked { token })]
             }
+            ClientMessage::SendMouse {
+                request_id,
+                pane_id,
+                local,
+                generation,
+                action,
+                mark,
+            } => self.handle_send_mouse(
+                client_id, request_id, pane_id, local, generation, &action, mark,
+            ),
             ClientMessage::Pong { seq: _ } => {
                 if let Some(client) = self.client_mut(client_id) {
                     client.last_pong = Instant::now();
@@ -1962,6 +2022,7 @@ fn refused_by_its_handler(message: &ClientMessage) -> bool {
             | ClientMessage::ReportAgentSession { .. }
             | ClientMessage::SpawnPane { .. }
             | ClientMessage::MarkedInput { .. }
+            | ClientMessage::SendMouse { .. }
             | ClientMessage::Attachment { .. }
     )
 }

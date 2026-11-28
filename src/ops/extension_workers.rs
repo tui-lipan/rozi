@@ -159,6 +159,7 @@ pub(crate) fn gate(command: &ControlCommand) -> Gate {
         | ControlCommand::Focus { .. }
         | ControlCommand::SendText { .. }
         | ControlCommand::SendKeys { .. }
+        | ControlCommand::SendMouse { .. }
         | ControlCommand::NewPane { .. }
         | ControlCommand::CapturePane { .. }
         | ControlCommand::SwitchWorkspace { .. }
@@ -375,6 +376,7 @@ fn pane_targets(command: &ControlCommand) -> Result<Vec<Option<PaneId>>, Control
         | ControlCommand::AgentPrompt { target, .. } => vec![agent(target)?],
         ControlCommand::SendText { target, .. }
         | ControlCommand::SendKeys { target, .. }
+        | ControlCommand::SendMouse { target, .. }
         | ControlCommand::CapturePane { target, .. }
         | ControlCommand::AgentSession { target, .. }
         | ControlCommand::SetStatus { target, .. } => vec![*target],

@@ -1032,6 +1032,10 @@ fn raw_capture(command: &ControlCli) -> Option<RawCapture> {
         | control::ControlCommand::SendKeys {
             capture: Some(render),
             ..
+        }
+        | control::ControlCommand::SendMouse {
+            capture: Some(render),
+            ..
         } => render,
         _ => return None,
     };

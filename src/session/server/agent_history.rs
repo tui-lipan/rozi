@@ -4,8 +4,8 @@
 //! queues that input and geometry changes through restoration; headless automation gets busy.
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::{
-    AltScreenHistoryReader, HistoryRead, HistoryReadError, HistoryReadStep, MouseEncoding,
-    MouseMode, MouseModeState, mouse_event_to_bytes,
+    AltScreenHistoryReader, HistoryRead, HistoryReadError, HistoryReadStep, MouseMode,
+    MouseModeState, MouseReportGeometry, encode_mouse_event,
 };
 
 use super::connection::PaneResizeRequest;
@@ -464,27 +464,22 @@ impl SessionServer {
             HistoryReadStep::ScrollDown(ticks) => (MouseKind::ScrollDown, ticks),
             _ => return false,
         };
-        // Pixel mouse reports share SGR framing, with coordinates measured in pixels.
-        let (x, y, encoding) = if read.mouse.encoding == MouseEncoding::SgrPixels {
-            (
-                (pane.cols / 2).saturating_mul(pane.cell.width),
-                (pane.rows / 2).saturating_mul(pane.cell.height),
-                MouseEncoding::Sgr,
-            )
-        } else {
-            (pane.cols / 2, pane.rows / 2, read.mouse.encoding)
-        };
         let event = MouseEvent {
-            x,
-            y,
+            x: pane.cols / 2,
+            y: pane.rows / 2,
             kind,
             mods: KeyMods::default(),
         };
-        let Some(tick) = mouse_event_to_bytes(event, encoding, Default::default()) else {
+        let geometry = MouseReportGeometry {
+            content_origin: (0, 0),
+            sub_cell: None,
+            cell: pane.cell,
+        };
+        let Ok(forwarded) = encode_mouse_event(event, read.mouse, geometry) else {
             return false;
         };
         // All ticks in one write, so the application sees them as one burst.
-        let bytes = tick.repeat(usize::from(ticks));
+        let bytes = forwarded.bytes.repeat(usize::from(ticks));
         pane.pty
             .as_ref()
             .is_some_and(|pty| pty.write(&bytes).is_ok())

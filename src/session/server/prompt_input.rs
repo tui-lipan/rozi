@@ -85,6 +85,19 @@ impl SessionServer {
         Ok(())
     }
 
+    /// Whether shared pane `pane_id` at `generation` has a prompt Enter held back. Any stale
+    /// entry left over from an earlier generation is dropped.
+    pub(super) fn has_live_held_submit(&mut self, pane_id: PaneId, generation: u64) -> bool {
+        let Some(held) = self.held_submits.get(&pane_id) else {
+            return false;
+        };
+        if held.generation != generation {
+            self.held_submits.remove(&pane_id);
+            return false;
+        }
+        true
+    }
+
     /// Keep `bytes` for pane `pane_id` behind the Enter held for it, if there is one. An Enter held
     /// for a process the pane no longer runs is dropped, with what was queued behind it.
     pub(super) fn queue_behind_held_submit(
@@ -93,14 +106,14 @@ impl SessionServer {
         generation: u64,
         bytes: &[u8],
     ) -> bool {
-        let Some(held) = self.held_submits.get_mut(&pane_id) else {
-            return false;
-        };
-        if held.generation != generation {
-            self.held_submits.remove(&pane_id);
+        if !self.has_live_held_submit(pane_id, generation) {
             return false;
         }
-        held.queued.push_back(Queued::Input(bytes.to_vec()));
+        self.held_submits
+            .get_mut(&pane_id)
+            .expect("live held submit")
+            .queued
+            .push_back(Queued::Input(bytes.to_vec()));
         true
     }
 
@@ -231,5 +244,219 @@ mod tests {
         );
         assert_eq!(String::from_utf8_lossy(&seen), "readyfix it^Mxagain^M");
         assert!(server.held_submits.is_empty());
+    }
+
+    fn mouse_click() -> crate::control::MouseAction {
+        crate::control::MouseAction::Click {
+            position: crate::control::MousePoint { x: 4, y: 2 },
+            button: crate::control::MouseButton::Left,
+            count: 1,
+            modifiers: crate::control::MouseModifiers::default(),
+        }
+    }
+
+    fn mouse_server(
+        name: &str,
+    ) -> (
+        SessionServer,
+        mpsc::Receiver<TerminalPtyEvent>,
+        ClientId,
+        std::os::unix::net::UnixStream,
+    ) {
+        let mut server = SessionServer::new_named(name);
+        let (events, received) = mpsc::channel();
+        let pty = TerminalPty::spawn(
+            TerminalPtyConfig::new("/bin/sh")
+                .arg("-c")
+                .arg("stty raw -echo; printf ready; cat -v"),
+            move |event| {
+                let _ = events.send(event);
+            },
+        )
+        .unwrap();
+        let mut pane = super::super::tests::test_pane(1);
+        pane.screen_mut().process_bytes(b"\x1b[?1000h\x1b[?1006h");
+        pane.pty = Some(pty);
+        server.panes.insert(3, pane);
+        let (attached_id, attached_stream) = super::super::tests::attach_client(&mut server);
+        (server, received, attached_id, attached_stream)
+    }
+
+    fn headless_send_mouse(
+        server: &mut SessionServer,
+        wait: Option<crate::control::PaneWait>,
+        capture: Option<crate::control::CaptureRender>,
+    ) -> ControlResponse {
+        let (client, _stream) = super::super::tests::add_client(server);
+        let session = server.session_name.clone();
+        let replies = server.handle_session_control(
+            client,
+            session,
+            PROTOCOL_VERSION,
+            PROTOCOL_VERSION,
+            Some(protocol::Capabilities::current()),
+            crate::control::ControlRequest {
+                command: crate::control::ControlCommand::SendMouse {
+                    target: Some(3),
+                    action: mouse_click(),
+                    wait,
+                    capture,
+                    scale: None,
+                },
+                source_pane: None,
+                source_session: None,
+                extension: None,
+                caller_context: None,
+                credential: None,
+            },
+        );
+        replies
+            .into_iter()
+            .find_map(|(_, message)| match message {
+                ServerMessage::SessionControlResult { response, .. } => Some(response),
+                _ => None,
+            })
+            .expect("immediate SessionControlResult")
+    }
+
+    fn attached_send_mouse(
+        server: &mut SessionServer,
+        client_id: ClientId,
+        request_id: u64,
+    ) -> ControlResponse {
+        let replies = server.handle_message(
+            client_id,
+            ClientMessage::SendMouse {
+                request_id,
+                pane_id: 3,
+                local: false,
+                generation: 1,
+                action: mouse_click(),
+                mark: true,
+            },
+        );
+        replies
+            .into_iter()
+            .find_map(|(_, message)| match message {
+                ServerMessage::SendMouseResult {
+                    request_id: id,
+                    response,
+                } if id == request_id => Some(response),
+                _ => None,
+            })
+            .expect("SendMouseResult")
+    }
+
+    /// Viewport-dependent mouse gestures must never queue behind a held prompt Enter on any path
+    /// (attached, headless immediate, or headless waiting), and must work again once it flushes.
+    #[test]
+    fn send_mouse_conflicts_during_held_submit_and_succeeds_after_it_flushes() {
+        let (mut server, received, attached_id, _attached_stream) = mouse_server("send-mouse-held");
+        let mut seen = Vec::new();
+        echoed(&received, &mut seen, Some(b"ready"), Duration::from_secs(1));
+
+        let prompt = server.session_prompt_input(3, "fix it").unwrap();
+        server.write_prompt(3, prompt, false).unwrap();
+
+        let attached = attached_send_mouse(&mut server, attached_id, 1);
+        assert!(!attached.ok, "{attached:?}");
+        assert_eq!(
+            attached.code,
+            Some(crate::control::ControlErrorCode::Conflict)
+        );
+
+        let headless = headless_send_mouse(&mut server, None, None);
+        assert!(!headless.ok, "{headless:?}");
+        assert_eq!(
+            headless.code,
+            Some(crate::control::ControlErrorCode::Conflict)
+        );
+
+        let waiting = headless_send_mouse(
+            &mut server,
+            Some(crate::control::PaneWait {
+                text: Some("clicked".to_string()),
+                settle_ms: None,
+                timeout_ms: 5_000,
+            }),
+            Some(crate::control::CaptureRender::Text),
+        );
+        assert!(!waiting.ok, "{waiting:?}");
+        assert_eq!(
+            waiting.code,
+            Some(crate::control::ControlErrorCode::Conflict)
+        );
+        assert!(waiting.data.is_none(), "{waiting:?}");
+        assert!(server.capture_waits.is_empty());
+        assert!(server.held_submits[&3].queued.is_empty());
+
+        // Flush the held prompt submission and confirm no stray mouse bytes were queued behind it.
+        server.held_submits.get_mut(&3).unwrap().pasted -= SUBMIT_MAX_DELAY;
+        server.send_due_submits();
+        echoed(
+            &received,
+            &mut seen,
+            Some(b"fix it^M"),
+            Duration::from_secs(1),
+        );
+        echoed(&received, &mut seen, None, Duration::from_millis(100));
+        assert_eq!(String::from_utf8_lossy(&seen), "readyfix it^M");
+        assert!(server.held_submits.is_empty());
+
+        // Once the pending submission finishes, ordinary mouse gestures deliver normally.
+        let after = attached_send_mouse(&mut server, attached_id, 2);
+        assert!(after.ok, "{after:?}");
+        echoed(
+            &received,
+            &mut seen,
+            Some(b"^[[<0;5;3m"),
+            Duration::from_secs(1),
+        );
+        let text = String::from_utf8_lossy(&seen);
+        assert!(text.contains("^[[<0;5;3M^[[<0;5;3m"), "{text}");
+    }
+
+    /// A PTY write failure between validation and write must fail send-mouse on attached,
+    /// headless, and waiting paths instead of returning a false acknowledgement.
+    #[test]
+    fn send_mouse_propagates_pty_write_failure_without_acknowledging() {
+        let (mut server, _received, attached_id, _attached_stream) =
+            mouse_server("send-mouse-pty-fail");
+        // Kill the PTY without marking `pane.exited`, simulating a write failure before exit
+        // processing completes.
+        server.panes[&3].pty.as_ref().unwrap().kill().unwrap();
+        let epoch_before = server.panes[&3].output_coalesce_epoch;
+
+        let attached = attached_send_mouse(&mut server, attached_id, 10);
+        assert!(!attached.ok, "{attached:?}");
+        assert_eq!(
+            attached.code,
+            Some(crate::control::ControlErrorCode::PaneNotRunning)
+        );
+        assert_eq!(server.panes[&3].output_coalesce_epoch, epoch_before);
+
+        let headless = headless_send_mouse(&mut server, None, None);
+        assert!(!headless.ok, "{headless:?}");
+        assert_eq!(
+            headless.code,
+            Some(crate::control::ControlErrorCode::PaneNotRunning)
+        );
+
+        let waiting = headless_send_mouse(
+            &mut server,
+            Some(crate::control::PaneWait {
+                text: Some("clicked".to_string()),
+                settle_ms: None,
+                timeout_ms: 5_000,
+            }),
+            Some(crate::control::CaptureRender::Text),
+        );
+        assert!(!waiting.ok, "{waiting:?}");
+        assert_eq!(
+            waiting.code,
+            Some(crate::control::ControlErrorCode::PaneNotRunning)
+        );
+        assert!(waiting.data.is_none(), "{waiting:?}");
+        assert!(server.capture_waits.is_empty());
     }
 }

@@ -4,6 +4,7 @@
 pub mod copy_mode;
 pub mod routing;
 pub mod send_keys;
+pub mod send_mouse;
 
 use crate::layout::model::{Direction, SplitAxis};
 

@@ -12,6 +12,8 @@ use rozi::control::ExtensionProvenance;
 use rozi::control::{
     CaptureRender, ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, PaneWait,
 };
+#[cfg(unix)]
+use rozi::control::{MouseAction, MouseButton, MouseModifiers, MousePoint, MouseScrollDirection};
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::discovery::InstanceLookup;
 use rozi::session::headless::run_session_control;
@@ -1444,4 +1446,248 @@ fn a_server_on_another_version_is_reported_and_never_chosen() {
     };
     assert!(other_versions.contains(&session), "{other_versions:?}");
     assert!(!unidentified.contains(&session), "{unidentified:?}");
+}
+
+/// Real PTY mouse-reporting e2e: click, drag path, and scroll count arrive in order with the
+/// right SGR bytes; a drag under DEC 1000 is refused and writes nothing; attached
+/// `ClientMessage::SendMouse` round-trips through the real server to the same PTY.
+#[test]
+#[cfg(unix)]
+fn send_mouse_encodes_gestures_on_the_server_and_refuses_unsupported_modes() {
+    let server = spawn_listener(headless_settings());
+    let session = server.session().to_string();
+    let script = concat!(
+        "import os, sys, tty, termios\n",
+        "fd = sys.stdin.fileno()\n",
+        "old = termios.tcgetattr(fd)\n",
+        "tty.setraw(fd)\n",
+        "try:\n",
+        "    sys.stdout.write('\\x1b[?1002h\\x1b[?1006hREADY-1002\\r\\n')\n",
+        "    sys.stdout.flush()\n",
+        "    buf = ''\n",
+        "    while True:\n",
+        "        chunk = os.read(fd, 64).decode('latin1')\n",
+        "        if not chunk:\n",
+        "            break\n",
+        "        if '!' in chunk:\n",
+        "            sys.stdout.write('\\x1b[?1002l\\x1b[?1000hREADY-1000\\r\\n')\n",
+        "            sys.stdout.flush()\n",
+        "            chunk = chunk.replace('!', '')\n",
+        "        buf += chunk\n",
+        "        while '\\x1b[<' in buf:\n",
+        "            idx = buf.find('\\x1b[<')\n",
+        "            rest = buf[idx + 3:]\n",
+        "            end = next((i for i, c in enumerate(rest) if c in 'Mm'), None)\n",
+        "            if end is None:\n",
+        "                break\n",
+        "            seq = rest[:end + 1]\n",
+        "            buf = rest[end + 1:]\n",
+        "            sys.stdout.write(f'EV:{seq}\\r\\n')\n",
+        "            sys.stdout.flush()\n",
+        "finally:\n",
+        "    termios.tcsetattr(fd, termios.TCSADRAIN, old)\n",
+    );
+    let spawned = expect_ok(
+        &session,
+        ControlCommand::NewPane {
+            command: None,
+            argv: Some(vec![
+                "python3".into(),
+                "-u".into(),
+                "-c".into(),
+                script.into(),
+            ]),
+            local_cwd: None,
+            cwd: None,
+            title: None,
+            keep_open: false,
+            focus: false,
+            workspace: None,
+            size: None,
+            target: None,
+            split_ratio: None,
+        },
+    );
+    let pane = spawned["id"].as_u64().expect("spawn reported a pane id") as u32;
+    let timeout_ms = u64::try_from(io_timeout().as_millis()).unwrap();
+    capture_until(&session, pane, |text| text.contains("READY-1002"));
+
+    // Click at (4, 2) -> 1-based SGR (5, 3) Down then Up.
+    let click = control(
+        &session,
+        ControlCommand::SendMouse {
+            target: Some(pane),
+            action: MouseAction::Click {
+                position: MousePoint { x: 4, y: 2 },
+                button: MouseButton::Left,
+                count: 1,
+                modifiers: MouseModifiers::default(),
+            },
+            wait: pane_wait(Some("EV:0;5;3m"), None, timeout_ms),
+            capture: Some(CaptureRender::Text),
+            scale: None,
+        },
+    );
+    assert!(click.ok, "{click:?}");
+    let click_text = captured_text(&click);
+    let press_pos = click_text.find("EV:0;5;3M").expect("click press");
+    let release_pos = click_text.find("EV:0;5;3m").expect("click release");
+    assert!(press_pos < release_pos, "{click_text}");
+
+    // Drag (1, 1) -> (3, 2) -> Down(2,2), Drag(3,3), Drag(4,3), Up(4,3).
+    let drag = control(
+        &session,
+        ControlCommand::SendMouse {
+            target: Some(pane),
+            action: MouseAction::Drag {
+                from: MousePoint { x: 1, y: 1 },
+                to: MousePoint { x: 3, y: 2 },
+                button: MouseButton::Left,
+                modifiers: MouseModifiers::default(),
+            },
+            wait: pane_wait(Some("EV:0;4;3m"), None, timeout_ms),
+            capture: Some(CaptureRender::Text),
+            scale: None,
+        },
+    );
+    assert!(drag.ok, "{drag:?}");
+    let drag_text = captured_text(&drag);
+    let seq = ["EV:0;2;2M", "EV:32;3;3M", "EV:32;4;3M", "EV:0;4;3m"];
+    let mut cursor = 0;
+    for expected in seq {
+        let offset = drag_text[cursor..]
+            .find(expected)
+            .unwrap_or_else(|| panic!("missing `{expected}` in order:\n{drag_text}"));
+        cursor += offset + expected.len();
+    }
+
+    // Scroll up 3 ticks at (5, 3) -> three EV:64;6;4M reports.
+    let scroll = control(
+        &session,
+        ControlCommand::SendMouse {
+            target: Some(pane),
+            action: MouseAction::Scroll {
+                position: MousePoint { x: 5, y: 3 },
+                direction: MouseScrollDirection::Up,
+                count: 3,
+                modifiers: MouseModifiers::default(),
+            },
+            wait: pane_wait(Some("EV:64;6;4M"), None, timeout_ms),
+            capture: Some(CaptureRender::Text),
+            scale: None,
+        },
+    );
+    assert!(scroll.ok, "{scroll:?}");
+    let scroll_text = capture_until(&session, pane, |text| {
+        text.matches("EV:64;6;4M").count() == 3
+    });
+    assert_eq!(
+        scroll_text.matches("EV:64;6;4M").count(),
+        3,
+        "{scroll_text}"
+    );
+
+    // Switch PTY app to DEC 1000 (Normal tracking: presses/releases/wheel, no drags).
+    let switched = control(
+        &session,
+        ControlCommand::SendText {
+            target: Some(pane),
+            text: "!".into(),
+            wait: pane_wait(Some("READY-1000"), None, timeout_ms),
+            capture: None,
+            scale: None,
+        },
+    );
+    assert!(switched.ok, "{switched:?}");
+
+    // Drag under DEC 1000 must be refused and write zero bytes.
+    let refused = control(
+        &session,
+        ControlCommand::SendMouse {
+            target: Some(pane),
+            action: MouseAction::Drag {
+                from: MousePoint { x: 1, y: 1 },
+                to: MousePoint { x: 3, y: 2 },
+                button: MouseButton::Left,
+                modifiers: MouseModifiers::default(),
+            },
+            wait: None,
+            capture: None,
+            scale: None,
+        },
+    );
+    assert!(!refused.ok, "drag under DEC 1000 must be refused");
+    assert_eq!(refused.code, Some(ControlErrorCode::Unsupported));
+    assert!(
+        refused.error.as_deref().unwrap_or("").contains("DEC 1000"),
+        "{refused:?}"
+    );
+
+    // Attached client path: round-trip `ClientMessage::SendMouse` -> `ServerMessage::SendMouseResult`
+    // against the live server (negotiating current capabilities) and verify no stray bytes from the
+    // refused drag preceded the click.
+    let mut client = crate::common::TestConnection::connect(server.endpoint());
+    let mut attach = crate::common::attach_message(&session, "mouse-client");
+    if let rozi::session::protocol::ClientMessage::Attach { capabilities, .. } = &mut attach {
+        *capabilities = Some(rozi::session::protocol::Capabilities::current());
+    }
+    client.write_control(&attach);
+    let mut attached = None;
+    crate::common::read_until(&mut client, |frame| {
+        if let rozi::session::protocol::Frame::Control(message @ ServerMessage::Attached { .. }) =
+            frame
+        {
+            attached = Some(message.clone());
+            true
+        } else {
+            false
+        }
+    });
+    let ServerMessage::Attached { panes, .. } = attached.expect("attached response") else {
+        unreachable!();
+    };
+    let generation = panes
+        .iter()
+        .find(|meta| meta.pane_id == pane)
+        .expect("pane metadata")
+        .generation;
+    client.write_control(&rozi::session::protocol::ClientMessage::SendMouse {
+        request_id: 99,
+        pane_id: pane,
+        local: false,
+        generation,
+        action: MouseAction::Click {
+            position: MousePoint { x: 7, y: 4 },
+            button: MouseButton::Left,
+            count: 1,
+            modifiers: MouseModifiers::default(),
+        },
+        mark: true,
+    });
+    let mut got_result = None;
+    crate::common::read_until(&mut client, |frame| {
+        if let rozi::session::protocol::Frame::Control(ServerMessage::SendMouseResult {
+            request_id: 99,
+            response,
+        }) = frame
+        {
+            got_result = Some(response.clone());
+            true
+        } else {
+            false
+        }
+    });
+    let result = got_result.expect("server answered ClientMessage::SendMouse");
+    assert!(result.ok, "{result:?}");
+
+    let after = capture_until(&session, pane, |text| text.contains("EV:0;8;5m"));
+    let ready_idx = after.find("READY-1000").expect("READY-1000 marker");
+    let click_idx = after[ready_idx..]
+        .find("EV:0;8;5M")
+        .expect("attached click press");
+    let between = after[ready_idx + "READY-1000".len()..ready_idx + click_idx].trim();
+    assert!(
+        between.is_empty(),
+        "refused drag must write nothing; saw `{between}` in:\n{after}"
+    );
 }

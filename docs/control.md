@@ -258,6 +258,7 @@ attached.
 | `focus <PANE_ID>` | Focus a pane. | no |
 | `send-text [--target <PANE_ID>] [WAIT] [--capture text\|ansi\|png\|spans] <TEXT>` | Send literal UTF-8 text. | yes |
 | `send-keys [--target <PANE_ID>] [-l\|--literal] [WAIT] [--capture text\|ansi\|png\|spans] [--] <KEY\|TEXT>...` | Send named keys and text. | yes |
+| `send-mouse [--target <PANE_ID>] <click\|scroll-up\|scroll-down\|move\|drag> ... [WAIT] [--capture text\|ansi\|png\|spans]` | Send synthetic mouse input in zero-based pane cells. | yes |
 | `split [OPTIONS] [COMMAND \| --argv PROGRAM [ARG...]]` | Open a pane. | yes |
 | `run-action <ACTION_ID>` | Run a built-in, configured, or extension command ID. | no |
 | `invoke <ACTION> [--args-json JSON\|-] [--timeout DUR] [--format text\|json]` | Call a [deployed action](writing-extensions.md#actions) and print its result. | yes |
@@ -838,6 +839,20 @@ rozi send-keys --literal C-c
 rozi send-keys -- -n hello
 ```
 
+`send-mouse` delivers a mouse gesture directly to a pane's application in zero-based cell
+coordinates (`X` column, `Y` row), without moving focus or running rozi's own mouse bindings. The
+application must have mouse tracking enabled for the gesture; otherwise the command fails and sends
+nothing. `--count` repeats `click` or `scroll-up`/`scroll-down` from `1` to `100`, `--button`
+selects `left` (default), `middle`, or `right` for `click` and `drag`, and `--modifiers` accepts a
+comma-separated combination of `ctrl`, `alt`, and `shift`.
+
+```sh
+rozi send-mouse --target 3 click 10 5 --button left --count 2
+rozi send-mouse --target 3 scroll-down 10 5 --count 3 --modifiers ctrl
+rozi send-mouse --target 3 move 12 4
+rozi send-mouse --target 3 drag 2 2 10 6 --button left
+```
+
 `capture-pane` returns the visible grid by default, without the spaces that pad each row to the
 pane's width. `--scrollback N` returns the last `N` retained
 lines, `--scrollback full` returns all retained lines, and `--last-output` returns the output of
@@ -908,7 +923,7 @@ The two commands wait differently:
 
 - `capture-pane` waits on the screen as it is. Text that is already showing answers at once, and
   the settle period starts when the request arrives.
-- `send-text` and `send-keys` wait for the answer to their own input. Only output that arrives
+- `send-text`, `send-keys`, and `send-mouse` wait for the answer to their own input. Only output that arrives
   after the input counts, so a prompt or a previous result already on screen does not satisfy
   `--wait-for`, even after it scrolls up. The settle period starts once the session has confirmed
   the input and rozi has taken the screen as it stood right after it, not when the request arrives.

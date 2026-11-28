@@ -72,7 +72,8 @@ tall tiles split top and bottom. Terminal cells are taller than they are wide, s
 Closing the focused pane moves focus to the pane that takes over its space.
 
 Press `Space` to flip the focused split's direction. To change ratios, use `=` and `-`, resize mode,
-or drag a split boundary.
+or drag a split boundary. Drag the center of an aligned four-pane layout to resize all four panes.
+At a T-junction, the drag moves the two dividers that meet where you grabbed.
 
 ### Master
 

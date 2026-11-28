@@ -583,7 +583,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         }
         // The drag's begin message fixed its target; a move carries only where the pointer is.
         Msg::ResizeSplit(_, _, from_x, from_y, x, y)
-        | Msg::ResizeSplitJunction(_, _, from_x, from_y, x, y) => {
+        | Msg::ResizeSplitJunction(from_x, from_y, x, y) => {
             panes::resize_split(ctx, from_x, from_y, x, y)
         }
         Msg::BeginResizeSplitJunction(horizontal, vertical, x, y) => {

@@ -3,11 +3,14 @@ use tui_lipan::prelude::*;
 use crate::AppRoot;
 use crate::layout::anim::GeometryAnimation;
 use crate::layout::geometry::workspace_tile_bounds;
-use crate::layout::model::LayoutKind;
-use crate::layout::tiling::{SplitEdge, axis_split_path_for_edge, resize_tiled_split_for_edge};
+use crate::layout::model::{LayoutKind, SplitAxis};
+use crate::layout::tiling::{
+    DwindleTree, SplitEdge, axis_split_path_for_edge, resize_tiled_split_for_edge,
+    trailing_split_delta,
+};
 use crate::ops::focus::active_pane_is_fullscreen;
 use crate::pane::id::PaneId;
-use crate::state::{SplitDragKind, SplitDragSession, Workspace};
+use crate::state::{SplitDragKind, SplitDragSession};
 
 use super::float::{ensure_tile_tree, layout_has_resizable_splits};
 use super::tiling::{master_available_width, resize_master_split_by_pixels};
@@ -137,26 +140,38 @@ fn apply_split_drag(
             horizontal_panes,
             vertical_panes,
         } => {
-            let workspace = ctx.state.active_workspace_ref();
-            let horizontal_panes = distinct_split_representatives(
-                workspace,
-                &horizontal_panes,
-                crate::layout::model::SplitAxis::Horizontal,
-            );
-            let vertical_panes = distinct_split_representatives(
-                workspace,
-                &vertical_panes,
-                crate::layout::model::SplitAxis::Vertical,
-            );
-            for pane_id in horizontal_panes {
-                apply_resize_split_pixels(ctx, pane_id, true, dx);
-            }
-            for pane_id in vertical_panes {
-                apply_resize_split_pixels(ctx, pane_id, false, dy);
-            }
+            apply_junction_axis(ctx, &horizontal_panes, SplitAxis::Horizontal, dx);
+            apply_junction_axis(ctx, &vertical_panes, SplitAxis::Vertical, dy);
         }
     }
     Update::full()
+}
+
+fn apply_junction_axis(ctx: &mut Context<AppRoot>, panes: &[PaneId], axis: SplitAxis, pixels: f32) {
+    let Some(tree) = ctx.state.active_workspace_ref().tile_tree.as_ref() else {
+        return;
+    };
+    let panes = distinct_split_representatives(tree, panes, axis);
+    let mut delta = pixels;
+    if panes.len() > 1 {
+        // Aligned dividers can divide regions of different sizes. Use the first limit any of
+        // them reaches so the group stays aligned.
+        let bounds = ctx.state.layout_bounds(ctx.viewport());
+        let tile_bounds = workspace_tile_bounds(bounds, ctx.state.layout_top_gap());
+        let gap = ctx.state.tile_gap();
+        let direction = pixels.signum();
+        let distance = panes
+            .iter()
+            .filter_map(|&pane| trailing_split_delta(tree, tile_bounds, gap, pane, axis, pixels))
+            .map(|delta| (delta * direction).max(0.0))
+            .fold(pixels.abs(), f32::min);
+        delta = distance * direction;
+    }
+    if delta != 0.0 {
+        for pane in panes {
+            apply_resize_split_pixels(ctx, pane, axis == SplitAxis::Horizontal, delta);
+        }
+    }
 }
 
 fn apply_resize_split_pixels(
@@ -169,9 +184,9 @@ fn apply_resize_split_pixels(
         return false;
     }
     let axis = if horizontal_split {
-        crate::layout::model::SplitAxis::Horizontal
+        SplitAxis::Horizontal
     } else {
-        crate::layout::model::SplitAxis::Vertical
+        SplitAxis::Vertical
     };
 
     let bounds = ctx.state.layout_bounds(ctx.viewport());
@@ -186,7 +201,7 @@ fn apply_resize_split_pixels(
     }
 
     if workspace.layout_kind == LayoutKind::Master {
-        if axis != crate::layout::model::SplitAxis::Horizontal {
+        if axis != SplitAxis::Horizontal {
             return false;
         }
         let available = master_available_width(tile_bounds, tile_gap);
@@ -217,13 +232,10 @@ fn apply_resize_split_pixels(
 }
 
 fn distinct_split_representatives(
-    workspace: &Workspace,
+    tree: &DwindleTree,
     panes: &[PaneId],
-    axis: crate::layout::model::SplitAxis,
+    axis: SplitAxis,
 ) -> Vec<PaneId> {
-    let Some(tree) = workspace.tile_tree.as_ref() else {
-        return Vec::new();
-    };
     let mut paths = std::collections::HashSet::new();
     panes
         .iter()
@@ -391,14 +403,7 @@ mod tests {
                 .dispatch(Msg::BeginResizeSplitJunction(vec![1, 2], vec![1], 50, 15))
                 .expect("begin junction drag");
             backend
-                .dispatch(Msg::ResizeSplitJunction(
-                    vec![1, 2],
-                    vec![1, 3],
-                    50,
-                    15,
-                    60,
-                    18,
-                ))
+                .dispatch(Msg::ResizeSplitJunction(50, 15, 60, 18))
                 .expect("resize junction");
 
             let ratios = balanced_grid_ratios(
@@ -417,14 +422,7 @@ mod tests {
             assert_ratio_close(ratios.2, 0.5);
 
             backend
-                .dispatch(Msg::ResizeSplitJunction(
-                    vec![1, 2],
-                    vec![1, 3],
-                    50,
-                    15,
-                    61,
-                    19,
-                ))
+                .dispatch(Msg::ResizeSplitJunction(50, 15, 61, 19))
                 .expect("continue junction drag");
             let ratios = balanced_grid_ratios(
                 backend.state_mut().current_mut().workspaces[0]
@@ -937,8 +935,9 @@ mod tests {
                 let junction_row = pane_leading_row(&mut backend, 2);
                 let target_row = pane_leading_row(&mut backend, 4);
                 let start = spans(&mut backend, SplitAxis::Vertical);
-                let lower_top = |spans: &[Span]| spans.iter().find(|s| s.0 == 2).expect("pane 2").1;
-                let start_top = lower_top(&start);
+                let lower_top = |spans: &[Span], id| spans.iter().find(|s| s.0 == id).unwrap().1;
+                let start_top = lower_top(&start, 2);
+                let other_top = lower_top(&start, 4);
                 // Two rows past the other divider, still short of the minimum ratio.
                 let travel = i32::from(junction_row - target_row) + 2;
                 assert!(travel > 2, "the dividers must start apart");
@@ -951,11 +950,13 @@ mod tests {
                     backend
                         .send_mouse(mouse(50, row, MouseKind::Drag(MouseButton::Left)))
                         .expect("drag");
+                    let current = spans(&mut backend, SplitAxis::Vertical);
                     assert_eq!(
-                        lower_top(&spans(&mut backend, SplitAxis::Vertical)),
+                        lower_top(&current, 2),
                         start_top - step as f32,
                         "the divider stopped following the pointer after {step} of {travel} rows"
                     );
+                    assert_eq!(lower_top(&current, 4), other_top);
                     assert_eq!(
                         backend.pointer_shape(),
                         Some(PointerShape::AllScroll),
@@ -987,10 +988,9 @@ mod tests {
             });
         }
 
-        /// A junction moves exactly one divider per axis - the segment under the drag origin -
-        /// and keeps that pair for the whole gesture.
+        /// Dragging the shared intersection moves the column divider and both row dividers.
         #[test]
-        fn a_junction_drag_moves_one_divider_per_axis() {
+        fn an_aligned_junction_drag_resizes_all_four_panes() {
             in_test_stack(|| {
                 let tree = balanced_grid_tree();
                 let row = grab_row(&tree, 2);
@@ -1013,7 +1013,99 @@ mod tests {
                     divider_cell(ratio(&[false]), 28.0),
                     divider_cell(0.5, 28.0) + 4.0
                 );
-                assert_ratio_close(ratio(&[true]), 0.5);
+                assert_eq!(
+                    divider_cell(ratio(&[true]), 28.0),
+                    divider_cell(0.5, 28.0) + 4.0
+                );
+            });
+        }
+
+        #[test]
+        fn aligned_dividers_stop_together_at_the_first_split_limit() {
+            in_test_stack(|| {
+                let tree = *split(
+                    SplitAxis::Horizontal,
+                    split(SplitAxis::Vertical, leaf(1), leaf(2)),
+                    Box::new(DwindleTree::Split {
+                        axis: SplitAxis::Vertical,
+                        ratio: 0.25,
+                        first: leaf(3),
+                        second: Box::new(DwindleTree::Split {
+                            axis: SplitAxis::Vertical,
+                            ratio: 1.0 / 3.0,
+                            first: leaf(4),
+                            second: leaf(5),
+                        }),
+                    }),
+                );
+                let row = grab_row(&tree, 2);
+                assert_eq!(grab_row(&tree, 5), row);
+                let (before, after) = drag_divider(&tree, (50, row), (0, 12), SplitAxis::Vertical);
+                assert_eq!(
+                    shifted(&before, &after),
+                    vec![(1, 0.0, 8.0), (2, 8.0, 0.0), (4, 0.0, 8.0), (5, 8.0, 0.0)]
+                );
+            });
+        }
+
+        #[test]
+        fn aligned_dividers_stop_before_moving_an_ungrabbed_nested_divider() {
+            in_test_stack(|| {
+                for (small_pane_rows, allowed) in [(3.0, 0.0), (4.0, 2.0)] {
+                    for direction in [-1, 1] {
+                        let nested = |ratio, first, second| {
+                            Box::new(DwindleTree::Split {
+                                axis: SplitAxis::Vertical,
+                                ratio,
+                                first: leaf(first),
+                                second: leaf(second),
+                            })
+                        };
+                        let small_share = small_pane_rows / 14.0;
+                        let (right, upper, lower) = if direction == 1 {
+                            (
+                                split(SplitAxis::Vertical, leaf(3), nested(small_share, 4, 5)),
+                                3,
+                                4,
+                            )
+                        } else {
+                            (
+                                split(
+                                    SplitAxis::Vertical,
+                                    nested(1.0 - small_share, 3, 4),
+                                    leaf(5),
+                                ),
+                                4,
+                                5,
+                            )
+                        };
+                        let tree = *split(
+                            SplitAxis::Horizontal,
+                            split(SplitAxis::Vertical, leaf(1), leaf(2)),
+                            right,
+                        );
+                        let row = grab_row(&tree, 2);
+                        assert_eq!(grab_row(&tree, lower), row);
+                        let (before, after) =
+                            drag_divider(&tree, (50, row), (0, direction * 4), SplitAxis::Vertical);
+                        let delta = allowed * direction as f32;
+                        let expected = if delta == 0.0 {
+                            Vec::new()
+                        } else {
+                            vec![
+                                (1, 0.0, delta),
+                                (2, delta, 0.0),
+                                (upper, 0.0, delta),
+                                (lower, delta, 0.0),
+                            ]
+                        };
+                        assert_eq!(
+                            shifted(&before, &after),
+                            expected,
+                            "{small_pane_rows} rows, drag direction {direction}"
+                        );
+                    }
+                }
             });
         }
     }

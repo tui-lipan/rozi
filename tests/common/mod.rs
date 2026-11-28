@@ -526,6 +526,18 @@ pub(crate) fn test_launch_argv() -> (Vec<String>, Vec<String>) {
     (shell, command_shell)
 }
 
+/// Top-level `config.toml` preamble that pins PowerShell to `-NoProfile` for subprocess servers on
+/// Windows, so server-resolved interactive panes (initial detached shells, headless splits, and
+/// resurrection) do not load `$PROFILE` from the registry-backed Documents folder.
+pub(crate) fn isolated_shell_config_prefix() -> String {
+    if !cfg!(windows) {
+        return String::new();
+    }
+    let (shell, _) = test_launch_argv();
+    let encoded = toml::Value::Array(shell.into_iter().map(toml::Value::String).collect());
+    format!("shell = {encoded}\n")
+}
+
 pub(crate) fn subprocess_endpoint(runtime_base: &std::path::Path, session: &str) -> IpcEndpoint {
     if cfg!(windows) {
         session_endpoint(session).expect("resolve subprocess session endpoint")

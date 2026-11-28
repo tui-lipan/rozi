@@ -2889,3 +2889,222 @@ pub fn delete_snapshot(name: &str) -> io::Result<()> {
 
 #[cfg(all(test, unix))]
 mod tests;
+
+#[cfg(test)]
+mod pty_isolation_tests {
+    use super::with_powershell_no_profile;
+
+    #[test]
+    fn powershell_no_profile_prepends_only_when_missing_and_after_login() {
+        use crate::platform::command::ShellCommand;
+
+        assert_eq!(
+            with_powershell_no_profile(ShellCommand::new("pwsh.exe").arg("-NoLogo")).as_argv(),
+            vec!["pwsh.exe", "-NoProfile", "-NoLogo"]
+        );
+        assert_eq!(
+            with_powershell_no_profile(
+                ShellCommand::new(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
+                    .arg("-NoLogo"),
+            )
+            .as_argv(),
+            vec![
+                r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                "-NoProfile",
+                "-NoLogo",
+            ]
+        );
+        assert_eq!(
+            with_powershell_no_profile(ShellCommand::new("pwsh").arg("-Login").arg("-NoLogo"))
+                .as_argv(),
+            vec!["pwsh", "-Login", "-NoProfile", "-NoLogo"]
+        );
+        assert_eq!(
+            with_powershell_no_profile(ShellCommand::new("pwsh.exe").arg("-NoP").arg("-NoLogo"))
+                .as_argv(),
+            vec!["pwsh.exe", "-NoP", "-NoLogo"]
+        );
+        assert_eq!(
+            with_powershell_no_profile(ShellCommand::new("/bin/bash").arg("-l")).as_argv(),
+            vec!["/bin/bash", "-l"]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn isolated_test_panes_override_contaminated_windows_user_dirs() {
+        let contaminated = tempfile::tempdir().expect("create contaminated env dir");
+        let root = contaminated.path();
+        let fake_profile = root.join("userprofile");
+        let fake_roaming = root.join("roaming");
+        let fake_local = root.join("local");
+        for dir in [&fake_profile, &fake_roaming, &fake_local] {
+            std::fs::create_dir_all(dir).expect("create contaminated dir");
+        }
+        let script = root.join("probe.cmd");
+        std::fs::write(
+            &script,
+            "@echo off\r\n\
+             echo USER=%USERPROFILE%\r\n\
+             echo APP=%APPDATA%\r\n\
+             echo LOCAL=%LOCALAPPDATA%\r\n\
+             if defined HISTFILE (echo HIST=LEAKED) else (echo HIST=CLEAN)\r\n\
+             echo DONE\r\n",
+        )
+        .expect("write probe script");
+
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "session::server::pty_isolation_tests::isolated_test_panes_override_contaminated_windows_user_dirs_child",
+                "--nocapture",
+            ])
+            .env("ROZI_ISOLATION_WIN_SCRIPT", &script)
+            .env("USERPROFILE", &fake_profile)
+            .env("APPDATA", &fake_roaming)
+            .env("LOCALAPPDATA", &fake_local)
+            .env("HISTFILE", root.join("history"))
+            .output()
+            .expect("run contaminated windows isolation child");
+        assert!(
+            output.status.success(),
+            "windows isolation child failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn isolated_test_panes_override_contaminated_windows_user_dirs_child() {
+        use std::io::Write as _;
+        use std::time::{Duration, Instant};
+
+        use super::{SessionServer, bind_session_socket};
+        use crate::control::{CaptureRender, ControlCommand, ControlRequest, PaneSize};
+        use crate::platform::ipc::IpcConnection;
+        use crate::session::headless::run_session_control;
+        use crate::session::protocol::{
+            ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, write_control_frame,
+        };
+
+        let Some(script) = std::env::var_os("ROZI_ISOLATION_WIN_SCRIPT") else {
+            return;
+        };
+        let isolated = crate::platform::paths::PlatformEnv::from_process();
+        let expected_home = isolated.home.expect("isolated home").display().to_string();
+        let expected_appdata = isolated
+            .appdata
+            .expect("isolated appdata")
+            .display()
+            .to_string();
+        let expected_local = isolated
+            .local_appdata
+            .expect("isolated local_appdata")
+            .display()
+            .to_string();
+
+        let session = format!("isolated-win-pty-{}", std::process::id());
+        let (listener, endpoint) =
+            bind_session_socket(&session).expect("bind windows isolation server");
+        let server_session = session.clone();
+        let thread = std::thread::spawn(move || {
+            SessionServer::new_named_with_settings(server_session, super::ServerSettings::default())
+                .run_listener(listener)
+        });
+
+        let request = |command| ControlRequest {
+            command,
+            source_pane: None,
+            source_session: None,
+            extension: None,
+            caller_context: None,
+            credential: None,
+        };
+        let spawned = run_session_control(
+            &session,
+            request(ControlCommand::NewPane {
+                command: None,
+                argv: Some(vec![
+                    "cmd.exe".to_string(),
+                    "/C".to_string(),
+                    std::path::PathBuf::from(script).display().to_string(),
+                ]),
+                local_cwd: None,
+                cwd: None,
+                title: None,
+                keep_open: true,
+                focus: false,
+                workspace: None,
+                size: Some(PaneSize {
+                    cols: 240,
+                    rows: 10,
+                }),
+                target: None,
+                split_ratio: None,
+            }),
+        )
+        .expect("spawn windows isolation pane");
+        assert!(spawned.ok, "{spawned:?}");
+        let pane = spawned.data.expect("spawn data")["id"]
+            .as_u64()
+            .expect("pane id") as u32;
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut last_text = String::new();
+        while Instant::now() < deadline {
+            let capture = run_session_control(
+                &session,
+                request(ControlCommand::CapturePane {
+                    target: Some(pane),
+                    scrollback: None,
+                    render: CaptureRender::Text,
+                    scale: None,
+                    wait: None,
+                    image_pixels: false,
+                }),
+            )
+            .expect("capture windows isolation pane");
+            if let Some(text) = capture.data.as_ref().and_then(|data| data["text"].as_str()) {
+                last_text = text.to_string();
+                if last_text.contains("DONE") {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        if let Ok(mut stream) = IpcConnection::connect(&endpoint) {
+            let _ = write_control_frame(
+                &mut stream,
+                &ClientMessage::Attach {
+                    capabilities: None,
+                    session: session.clone(),
+                    protocol_version: PROTOCOL_VERSION,
+                    min_protocol_version: MIN_SUPPORTED_PROTOCOL,
+                    label: "win-isolation-shutdown".to_string(),
+                    read_only: false,
+                    shares_filesystem: true,
+                    expected_server_nonce: None,
+                    handoff_token: None,
+                },
+            );
+            let _ = write_control_frame(&mut stream, &ClientMessage::Shutdown);
+            let _ = stream.flush();
+        }
+        let _ = thread.join();
+        endpoint.remove_stale();
+
+        for expected in [
+            format!("USER={expected_home}"),
+            format!("APP={expected_appdata}"),
+            format!("LOCAL={expected_local}"),
+            "HIST=CLEAN".to_string(),
+        ] {
+            assert!(
+                last_text.contains(&expected),
+                "expected `{expected}` in Windows pane output:\n{last_text}"
+            );
+        }
+    }
+}

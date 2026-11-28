@@ -29,8 +29,14 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
     let test_root = private_temp_dir();
     let runtime_base = test_root.join("runtime");
     let config_path = test_root.join("config.toml");
-    std::fs::write(&config_path, "[session]\nresurrect = false\n")
-        .expect("write isolated server config");
+    std::fs::write(
+        &config_path,
+        format!(
+            "{}[session]\nresurrect = false\n",
+            crate::common::isolated_shell_config_prefix()
+        ),
+    )
+    .expect("write isolated server config");
     let endpoint = subprocess_endpoint(&runtime_base, &session);
     let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
     command

@@ -147,6 +147,14 @@ fn isolated_rozi_builds_can_start_the_same_name_with_different_first_panes() {
     let home = root.join("home");
     std::fs::create_dir(&project).unwrap();
     std::fs::create_dir(&home).unwrap();
+    let shell_config = crate::common::isolated_shell_config_prefix();
+    if !shell_config.is_empty() {
+        for isolated in [&left, &right] {
+            let config_dir = isolated.join("config");
+            std::fs::create_dir_all(&config_dir).unwrap();
+            std::fs::write(config_dir.join("config.toml"), &shell_config).unwrap();
+        }
+    }
     let run = |isolated: &std::path::Path, args: &[&str]| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
         command

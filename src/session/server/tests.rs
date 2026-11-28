@@ -10262,42 +10262,6 @@ fn a_pane_whose_program_exits_forgets_what_it_registered() {
     });
 }
 
-#[test]
-fn powershell_no_profile_prepends_only_when_missing_and_after_login() {
-    use crate::platform::command::ShellCommand;
-
-    assert_eq!(
-        with_powershell_no_profile(ShellCommand::new("pwsh.exe").arg("-NoLogo")).as_argv(),
-        vec!["pwsh.exe", "-NoProfile", "-NoLogo"]
-    );
-    assert_eq!(
-        with_powershell_no_profile(
-            ShellCommand::new(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
-                .arg("-NoLogo"),
-        )
-        .as_argv(),
-        vec![
-            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
-            "-NoProfile",
-            "-NoLogo",
-        ]
-    );
-    assert_eq!(
-        with_powershell_no_profile(ShellCommand::new("pwsh").arg("-Login").arg("-NoLogo"))
-            .as_argv(),
-        vec!["pwsh", "-Login", "-NoProfile", "-NoLogo"]
-    );
-    assert_eq!(
-        with_powershell_no_profile(ShellCommand::new("pwsh.exe").arg("-NoP").arg("-NoLogo"))
-            .as_argv(),
-        vec!["pwsh.exe", "-NoP", "-NoLogo"]
-    );
-    assert_eq!(
-        with_powershell_no_profile(ShellCommand::new("/bin/bash").arg("-l")).as_argv(),
-        vec!["/bin/bash", "-l"]
-    );
-}
-
 #[cfg(unix)]
 #[test]
 fn isolated_test_panes_block_contaminated_shell_startup_and_history() {
@@ -10551,96 +10515,6 @@ fn isolated_test_panes_block_contaminated_shell_startup_and_history_child() {
         server.accept_pane_input(client, 5, false, 1, b"exit\r", true);
         wait_until(&mut server, |server| server.panes[&5].exited.is_some());
     }
-}
-
-#[cfg(windows)]
-#[test]
-fn isolated_test_panes_override_contaminated_windows_user_dirs() {
-    let contaminated = tempfile::tempdir().expect("create contaminated env dir");
-    let root = contaminated.path();
-    let fake_profile = root.join("userprofile");
-    let fake_roaming = root.join("roaming");
-    let fake_local = root.join("local");
-    for dir in [&fake_profile, &fake_roaming, &fake_local] {
-        std::fs::create_dir_all(dir).expect("create contaminated dir");
-    }
-
-    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
-        .args([
-            "--exact",
-            "session::server::tests::isolated_test_panes_override_contaminated_windows_user_dirs_child",
-            "--nocapture",
-        ])
-        .env("ROZI_ISOLATION_WIN_CHILD", "1")
-        .env("USERPROFILE", &fake_profile)
-        .env("APPDATA", &fake_roaming)
-        .env("LOCALAPPDATA", &fake_local)
-        .env("HISTFILE", root.join("history"))
-        .output()
-        .expect("run contaminated windows isolation child");
-    assert!(
-        output.status.success(),
-        "windows isolation child failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-#[cfg(windows)]
-#[test]
-fn isolated_test_panes_override_contaminated_windows_user_dirs_child() {
-    if std::env::var_os("ROZI_ISOLATION_WIN_CHILD").is_none() {
-        return;
-    }
-    let isolated = crate::platform::paths::PlatformEnv::from_process();
-    let expected_home = isolated.home.expect("isolated home").display().to_string();
-    let expected_appdata = isolated
-        .appdata
-        .expect("isolated appdata")
-        .display()
-        .to_string();
-    let expected_local = isolated
-        .local_appdata
-        .expect("isolated local_appdata")
-        .display()
-        .to_string();
-
-    let mut server = SessionServer::new_named("isolated-win-pty-env");
-    let (_client, _stream) = attach_client(&mut server);
-    let result = server.spawn_pane(SpawnRequest {
-        owner: None,
-        pane_id: 1,
-        generation: 1,
-        launch: Some(crate::pane::launch::PaneLaunch::Direct {
-            argv: vec![
-                "cmd.exe".to_string(),
-                "/C".to_string(),
-                "echo WIN^|%USERPROFILE%^|%APPDATA%^|%LOCALAPPDATA%^|%HISTFILE%^|END".to_string(),
-            ],
-        }),
-        agent_resume: None,
-        cwd: None,
-        title: None,
-        cols: 240,
-        rows: 10,
-        keep_open: false,
-        env: Vec::new(),
-        palette: test_palette(),
-        shell: test_shell(),
-        command_shell: test_command_shell(),
-        cell: None,
-    });
-    assert!(matches!(
-        result,
-        ServerMessage::SpawnResult { ok: true, .. }
-    ));
-    wait_until(&mut server, |server| server.panes[&1].exited.is_some());
-    let text = pane_text(&mut server, None, 1);
-    let expected = format!("WIN|{expected_home}|{expected_appdata}|{expected_local}||END");
-    assert!(
-        text.contains(&expected),
-        "expected `{expected}` in Windows pane output:\n{text}"
-    );
 }
 
 /// The conversation a hand-built resume in these tests reopens.

@@ -223,7 +223,41 @@ impl Isolated {
             fs::create_dir_all(root.join(name)).expect("compat lab directory");
         }
         let config_path = root.join("config").join("config.toml");
-        fs::write(&config_path, "[session]\nresurrect = true\n").expect("compat config");
+        let shell_prefix = if cfg!(windows) {
+            let (mut shell, _) = rozi::platform::command::resolve_launch_argv(
+                None,
+                None,
+                &rozi::platform::command::ShellEnv::from_process(),
+                rozi::platform::command::LoginShell::Never,
+            );
+            if let Some(program) = shell.first() {
+                let basename = program
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .unwrap_or(program)
+                    .to_ascii_lowercase();
+                let is_powershell = matches!(
+                    basename.as_str(),
+                    "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe"
+                );
+                let has_no_profile = shell.iter().skip(1).any(|arg| {
+                    let lower = arg.to_ascii_lowercase();
+                    lower.starts_with("-nop") && "-noprofile".starts_with(&lower)
+                });
+                if is_powershell && !has_no_profile {
+                    shell.insert(1, "-NoProfile".to_string());
+                }
+            }
+            let encoded = toml::Value::Array(shell.into_iter().map(toml::Value::String).collect());
+            format!("shell = {encoded}\n")
+        } else {
+            String::new()
+        };
+        fs::write(
+            &config_path,
+            format!("{shell_prefix}[session]\nresurrect = true\n"),
+        )
+        .expect("compat config");
         Self {
             runtime: root.join("run"),
             config_path,

@@ -64,7 +64,10 @@ impl Paths {
         let config_path = test_root.join("config.toml");
         fs::write(
             &config_path,
-            "scrollback = 100\n\n[session]\nresurrect = true\n",
+            format!(
+                "{}scrollback = 100\n\n[session]\nresurrect = true\n",
+                common::isolated_shell_config_prefix()
+            ),
         )
         .expect("write test config");
         Self {

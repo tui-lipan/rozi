@@ -84,7 +84,14 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
     let session = unique_session_name();
     let runtime_base = root.join("runtime");
     let config_path = root.join("config.toml");
-    std::fs::write(&config_path, "[session]\nresurrect = false\n").unwrap();
+    std::fs::write(
+        &config_path,
+        format!(
+            "{}[session]\nresurrect = false\n",
+            crate::common::isolated_shell_config_prefix()
+        ),
+    )
+    .unwrap();
     let endpoint = subprocess_endpoint(&runtime_base, &session);
     let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
     command

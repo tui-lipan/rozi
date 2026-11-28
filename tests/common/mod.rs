@@ -299,6 +299,7 @@ impl Drop for ListenerGuard {
 }
 
 pub(crate) fn spawn_listener(settings: ServerSettings) -> ListenerGuard {
+    rozi::test_support::isolate_user_dirs();
     let session = unique_session_name();
     let (listener, endpoint) = bind_session_socket(&session).expect("bind test session listener");
     let server_session = session.clone();
@@ -470,6 +471,15 @@ pub(crate) fn unique_session_name() -> String {
         std::process::id(),
         NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
     )
+}
+
+/// Keep interactive shells launched under a subprocess test from reading the developer's zsh
+/// dotfiles or appending test commands to their real shell history file.
+pub(crate) fn isolate_shell_history(command: &mut std::process::Command) {
+    command
+        .env("HISTFILE", "")
+        .env_remove("ZDOTDIR")
+        .env_remove("ROZI_ORIG_ZDOTDIR");
 }
 
 pub(crate) fn subprocess_endpoint(runtime_base: &std::path::Path, session: &str) -> IpcEndpoint {

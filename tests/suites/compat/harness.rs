@@ -244,6 +244,9 @@ impl Isolated {
             .env("APPDATA", self.root.join("AppData").join("Roaming"))
             .env("LOCALAPPDATA", self.root.join("AppData").join("Local"))
             .env("ROZI_CONFIG", &self.config_path)
+            .env("HISTFILE", "")
+            .env_remove("ZDOTDIR")
+            .env_remove("ROZI_ORIG_ZDOTDIR")
             .env_remove("ROZI_PANE")
             .env_remove("ROZI_SESSION")
             .env_remove("ROZI_SESSION_INSTANCE")
@@ -294,8 +297,10 @@ impl Isolated {
             script.push_str(&format!("export {key}={}\n", posix_single(text)));
         }
         script.push_str(
-            "unset ROZI_PANE ROZI_SESSION ROZI_SESSION_INSTANCE ROZI_SOCKET ROZI_BIN \
-             ROZI_EXTENSION ROZI_EXTENSION_ID ROZI_EXTENSION_GENERATION ROZI_AGENT\n",
+            "export HISTFILE=''\n\
+             unset ZDOTDIR ROZI_ORIG_ZDOTDIR ROZI_PANE ROZI_SESSION ROZI_SESSION_INSTANCE \
+             ROZI_SOCKET ROZI_BIN ROZI_EXTENSION ROZI_EXTENSION_ID ROZI_EXTENSION_GENERATION \
+             ROZI_AGENT\n",
         );
         let bin = server.to_str().expect("server path is utf-8");
         script.push_str(&format!("exec {} \"$@\"\n", posix_single(bin)));

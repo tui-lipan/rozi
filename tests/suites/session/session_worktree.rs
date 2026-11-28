@@ -87,7 +87,8 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
     let config_path = root.join("config.toml");
     std::fs::write(&config_path, "[session]\nresurrect = false\n").unwrap();
     let endpoint = subprocess_endpoint(&runtime_base, &session);
-    let child = Command::new(env!("CARGO_BIN_EXE_rozi"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
+    command
         .args(["--server", &session])
         .env("HOME", &root)
         .env("XDG_CONFIG_HOME", root.join("config"))
@@ -100,9 +101,9 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
         .env("ROZI_CONFIG", config_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("launch isolated session server");
+        .stderr(Stdio::piped());
+    crate::common::isolate_shell_history(&mut command);
+    let child = command.spawn().expect("launch isolated session server");
     let mut guard = ServerGuard::new(child, root.clone());
     let mut writable = connect_when_ready(&endpoint, guard.child_mut());
     writable.write_control(&attach_message(&session, "writer"));

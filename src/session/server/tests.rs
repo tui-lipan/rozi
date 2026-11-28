@@ -10262,6 +10262,31 @@ fn a_pane_whose_program_exits_forgets_what_it_registered() {
     });
 }
 
+#[cfg(unix)]
+#[test]
+fn isolated_test_panes_do_not_inherit_user_home_or_shell_history() {
+    let expected_home = crate::platform::paths::PlatformEnv::from_process()
+        .home
+        .expect("isolated home")
+        .display()
+        .to_string();
+    let mut server = SessionServer::new_named("isolated-pty-env");
+    let (_client, _stream) = attach_client(&mut server);
+    spawn_drag_and_drop_pane(
+        &mut server,
+        r#"printf 'ENV|%s|%s|%s|END\n' "$HOME" "${HISTFILE-unset}" "${ZDOTDIR-unset}""#,
+    );
+    wait_until(&mut server, |server| {
+        pane_text(server, None, 1).contains("|END")
+    });
+    let text = pane_text(&mut server, None, 1);
+    let expected = format!("ENV|{expected_home}||unset|END");
+    assert!(
+        text.contains(&expected),
+        "expected `{expected}` in pane output:\n{text}"
+    );
+}
+
 /// The conversation a hand-built resume in these tests reopens.
 fn test_conversation() -> RetainedResume {
     RetainedResume {

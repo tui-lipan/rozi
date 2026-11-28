@@ -2626,7 +2626,7 @@ fn pty_config(
     // The server owns the pane's terminal, so it names it, in its own version. Whatever started
     // the server would otherwise show through. A pane's own environment is applied after this, so
     // a per-spawn value still wins, including over a removal.
-    INHERITED_ENV_REMOVED
+    let mut config = INHERITED_ENV_REMOVED
         .iter()
         .chain(crate::platform::environment::DESKTOP_SESSION_VARIABLES)
         .fold(config, |config, key| config.env_remove(*key))
@@ -2636,7 +2636,38 @@ fn pty_config(
         // XON/XOFF would let a stray `Ctrl+S` - or `Ctrl+Shift+S`, which the legacy key encoding
         // sends as the same byte - pause the pane's output until `Ctrl+Q`, leaving it looking
         // frozen. Hand the byte to the child instead, where readline uses it for forward search.
-        .flow_control(false)
+        .flow_control(false);
+
+    // An in-process test overrides `PlatformEnv` without mutating process globals, so a child
+    // shell spawned here would otherwise inherit the developer's real `HOME`, `XDG_*`, `ZDOTDIR`,
+    // and `HISTFILE` and append test commands to their real shell history.
+    if crate::platform::paths::user_dirs_are_isolated() {
+        let isolated = crate::platform::paths::PlatformEnv::from_process();
+        for (key, value) in [
+            ("HOME", isolated.home.as_ref()),
+            ("XDG_CONFIG_HOME", isolated.xdg_config_home.as_ref()),
+            ("XDG_STATE_HOME", isolated.xdg_state_home.as_ref()),
+            ("XDG_CACHE_HOME", isolated.xdg_cache_home.as_ref()),
+            ("XDG_DATA_HOME", isolated.xdg_data_home.as_ref()),
+            ("XDG_RUNTIME_DIR", isolated.xdg_runtime_dir.as_ref()),
+            ("APPDATA", isolated.appdata.as_ref()),
+            ("LOCALAPPDATA", isolated.local_appdata.as_ref()),
+        ] {
+            if let Some(path) = value {
+                config = config.env(key, path.display().to_string());
+            }
+        }
+        #[cfg(windows)]
+        if let Some(home) = isolated.home.as_ref() {
+            config = config.env("USERPROFILE", home.display().to_string());
+        }
+        config = config
+            .env("HISTFILE", "")
+            .env_remove("ZDOTDIR")
+            .env_remove("ROZI_ORIG_ZDOTDIR");
+    }
+
+    config
 }
 
 pub fn session_socket_path(name: &str) -> io::Result<PathBuf> {

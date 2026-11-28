@@ -49,6 +49,7 @@ fn cli() -> Command {
     ] {
         cli.env_remove(key);
     }
+    common::isolate_shell_history(&mut cli);
     cli
 }
 

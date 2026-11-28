@@ -1336,6 +1336,7 @@ fn each_instance_finds_its_own_server_among_several() {
 /// pane's own server, so it is named rather than silently skipped - and never picked.
 #[test]
 fn a_server_that_does_not_name_its_instance_is_reported_and_never_chosen() {
+    rozi::test_support::isolate_user_dirs();
     let session = crate::common::unique_session_name();
     let (listener, endpoint) =
         rozi::session::server::bind_session_socket(&session).expect("bind stand-in server");
@@ -1397,6 +1398,7 @@ fn a_server_that_does_not_name_its_instance_is_reported_and_never_chosen() {
 /// is named as such rather than the pane being told its server is gone, and never picked.
 #[test]
 fn a_server_on_another_version_is_reported_and_never_chosen() {
+    rozi::test_support::isolate_user_dirs();
     let session = crate::common::unique_session_name();
     let (listener, endpoint) =
         rozi::session::server::bind_session_socket(&session).expect("bind stand-in server");

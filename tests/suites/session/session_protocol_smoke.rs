@@ -33,7 +33,8 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
     std::fs::write(&config_path, "[session]\nresurrect = false\n")
         .expect("write isolated server config");
     let endpoint = subprocess_endpoint(&runtime_base, &session);
-    let child = Command::new(env!("CARGO_BIN_EXE_rozi"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
+    command
         .args(["--server", &session])
         // A subprocess does not inherit the integration test's in-process path override. Redirect
         // every persisted-data root explicitly, and disable resurrection because this test does
@@ -50,9 +51,9 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
         .env("ROZI_CONFIG", config_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("launch real session server");
+        .stderr(Stdio::piped());
+    crate::common::isolate_shell_history(&mut command);
+    let child = command.spawn().expect("launch real session server");
     let mut server = ServerGuard::new(child, test_root.clone());
 
     let mut first = connect_when_ready(&endpoint, server.child_mut());

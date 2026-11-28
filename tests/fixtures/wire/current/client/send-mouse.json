@@ -1,0 +1,17 @@
+{
+  "action": {
+    "button": "left",
+    "count": 1,
+    "kind": "click",
+    "position": {
+      "x": 10,
+      "y": 5
+    }
+  },
+  "generation": 1,
+  "local": false,
+  "mark": false,
+  "pane_id": 1,
+  "request_id": 1,
+  "type": "send-mouse"
+}

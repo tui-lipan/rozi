@@ -45,6 +45,29 @@ pub(crate) fn disconnected(ctx: &mut Context<AppRoot>, epoch: u64, name: String)
                 ));
         }
     }
+    let pending_mouse = ctx
+        .state
+        .pending_send_mouse_replies
+        .iter()
+        .filter_map(|(&request_id, pending)| {
+            (pending.origin_epoch == Some(epoch)).then_some(request_id)
+        })
+        .collect::<Vec<_>>();
+    for request_id in pending_mouse {
+        if let Some(pending) = ctx.state.pending_send_mouse_replies.remove(&request_id) {
+            let _ = pending
+                .reply
+                .send(crate::control::ControlResponse::error_with(
+                    crate::control::ControlErrorCode::SessionNotConnected,
+                    "session disconnected before answering send-mouse",
+                ));
+        }
+    }
+    crate::ops::capture_wait::fail_send_mouse(
+        &mut ctx.state,
+        Some(epoch),
+        "session disconnected before answering send-mouse",
+    );
     crate::ops::attached_control::fail_epoch(
         &mut ctx.state,
         epoch,

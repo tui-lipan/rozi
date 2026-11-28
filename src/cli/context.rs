@@ -223,6 +223,7 @@ pub(super) fn pin_here_target(
         CapturePane { target, .. }
         | SendText { target, .. }
         | SendKeys { target, .. }
+        | SendMouse { target, .. }
         | PaneLogging { target, .. }
         | SetStatus { target, .. }
         | RecordStart { target, .. }

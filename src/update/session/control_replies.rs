@@ -29,6 +29,27 @@ pub(crate) fn agent_report_result(
     Update::none()
 }
 
+pub(crate) fn send_mouse_result(
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    request_id: u64,
+    response: crate::control::ControlResponse,
+) -> Update {
+    if let Some(pending) = ctx.state.pending_send_mouse_replies.get(&request_id) {
+        if pending
+            .origin_epoch
+            .is_some_and(|origin_epoch| origin_epoch != epoch)
+        {
+            return Update::none();
+        }
+        if let Some(pending) = ctx.state.pending_send_mouse_replies.remove(&request_id) {
+            let _ = pending.reply.send(response);
+        }
+        return Update::none();
+    }
+    crate::ops::capture_wait::send_mouse_result(ctx, epoch, request_id, response)
+}
+
 /// Metadata precedes placement and replay so a parser never interprets server history using
 /// client configuration. A reconnect advertises the capacity again before its replay seed.
 pub(crate) fn pane_metadata(

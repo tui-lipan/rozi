@@ -415,6 +415,7 @@ fn session_worker_permitted(command: &ControlCommand) -> bool {
         | ControlCommand::ExtensionsStatus
         | ControlCommand::SendText { .. }
         | ControlCommand::SendKeys { .. }
+        | ControlCommand::SendMouse { .. }
         | ControlCommand::NewPane { .. }
         | ControlCommand::CapturePane { .. }
         | ControlCommand::Subscribe { .. }

@@ -84,6 +84,13 @@ impl WaitPlan {
                 capture,
                 scale,
                 ..
+            }
+            | ControlCommand::SendMouse {
+                target,
+                wait,
+                capture,
+                scale,
+                ..
             } => {
                 let checked = crate::control::send_capture(wait.as_ref(), *capture, *scale)?;
                 let Some(wait) = wait else {

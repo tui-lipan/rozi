@@ -960,6 +960,183 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     output: reply.output,
                 }));
             }
+            "send-mouse" => {
+                let mut target = None;
+                let mut gesture: Option<String> = None;
+                let mut coords: Vec<u16> = Vec::new();
+                let mut button: Option<control::MouseButton> = None;
+                let mut count: Option<u16> = None;
+                let mut modifiers: Option<control::MouseModifiers> = None;
+                let mut wait = PaneWaitArgs::default();
+                let mut reply = SendReplyArgs::default();
+                while let Some(arg) = iter.next() {
+                    if arg == "--target" {
+                        if target.is_some() {
+                            return Err("send-mouse --target specified more than once".to_string());
+                        }
+                        target = Some(parse_target(&mut iter)?);
+                        continue;
+                    }
+                    if wait.take(&arg, &mut iter, "send-mouse")?
+                        || reply.take(&arg, &mut iter, "send-mouse")?
+                    {
+                        continue;
+                    }
+                    match arg.as_str() {
+                        "--button" => {
+                            let value = require_value(
+                                &mut iter,
+                                "--button requires left, middle, or right",
+                            )?;
+                            if button
+                                .replace(control::MouseButton::parse_cli(&value)?)
+                                .is_some()
+                            {
+                                return Err(
+                                    "send-mouse --button specified more than once".to_string()
+                                );
+                            }
+                        }
+                        "--count" => {
+                            let value = require_value(
+                                &mut iter,
+                                "--count requires a positive integer (1..=100)",
+                            )?;
+                            let parsed = value.parse::<u16>().map_err(|_| {
+                                format!(
+                                    "--count must be an integer between 1 and {}, got `{value}`",
+                                    control::MAX_MOUSE_COUNT
+                                )
+                            })?;
+                            if count.replace(parsed).is_some() {
+                                return Err(
+                                    "send-mouse --count specified more than once".to_string()
+                                );
+                            }
+                        }
+                        "--modifiers" => {
+                            let value = require_value(
+                                &mut iter,
+                                "--modifiers requires ctrl, alt, and/or shift",
+                            )?;
+                            if modifiers
+                                .replace(control::MouseModifiers::parse_cli(&value)?)
+                                .is_some()
+                            {
+                                return Err(
+                                    "send-mouse --modifiers specified more than once".to_string()
+                                );
+                            }
+                        }
+                        other if other.starts_with('-') => {
+                            return Err(format!("unexpected send-mouse flag `{other}`"));
+                        }
+                        _ => {
+                            if gesture.is_none() {
+                                gesture = Some(arg);
+                            } else {
+                                let coord = arg.parse::<u16>().map_err(|_| {
+                                    format!(
+                                        "send-mouse coordinates must be non-negative integers, got `{arg}`"
+                                    )
+                                })?;
+                                coords.push(coord);
+                            }
+                        }
+                    }
+                }
+                let Some(gesture) = gesture else {
+                    return Err(
+                        "send-mouse requires a gesture: click, scroll-up, scroll-down, move, or drag"
+                            .to_string(),
+                    );
+                };
+                let modifiers = modifiers.unwrap_or_default();
+                let action = match gesture.as_str() {
+                    "click" => {
+                        let [x, y] = coords.as_slice() else {
+                            return Err("send-mouse click requires X Y coordinates".to_string());
+                        };
+                        control::MouseAction::Click {
+                            position: control::MousePoint { x: *x, y: *y },
+                            button: button.unwrap_or_default(),
+                            count: count.unwrap_or(1),
+                            modifiers,
+                        }
+                    }
+                    "scroll-up" | "scroll-down" => {
+                        if button.is_some() {
+                            return Err(format!("send-mouse {gesture} does not accept --button"));
+                        }
+                        let [x, y] = coords.as_slice() else {
+                            return Err(format!("send-mouse {gesture} requires X Y coordinates"));
+                        };
+                        control::MouseAction::Scroll {
+                            position: control::MousePoint { x: *x, y: *y },
+                            direction: if gesture == "scroll-up" {
+                                control::MouseScrollDirection::Up
+                            } else {
+                                control::MouseScrollDirection::Down
+                            },
+                            count: count.unwrap_or(1),
+                            modifiers,
+                        }
+                    }
+                    "move" => {
+                        if button.is_some() {
+                            return Err("send-mouse move does not accept --button".to_string());
+                        }
+                        if count.is_some() {
+                            return Err("send-mouse move does not accept --count".to_string());
+                        }
+                        let [x, y] = coords.as_slice() else {
+                            return Err("send-mouse move requires X Y coordinates".to_string());
+                        };
+                        control::MouseAction::Move {
+                            position: control::MousePoint { x: *x, y: *y },
+                            modifiers,
+                        }
+                    }
+                    "drag" => {
+                        if count.is_some() {
+                            return Err("send-mouse drag does not accept --count".to_string());
+                        }
+                        let [x1, y1, x2, y2] = coords.as_slice() else {
+                            return Err(
+                                "send-mouse drag requires X1 Y1 X2 Y2 coordinates".to_string()
+                            );
+                        };
+                        control::MouseAction::Drag {
+                            from: control::MousePoint { x: *x1, y: *y1 },
+                            to: control::MousePoint { x: *x2, y: *y2 },
+                            button: button.unwrap_or_default(),
+                            modifiers,
+                        }
+                    }
+                    other => {
+                        return Err(format!(
+                            "unknown send-mouse gesture `{other}` (expected click, scroll-up, scroll-down, move, or drag)"
+                        ));
+                    }
+                };
+                action.validate()?;
+                let wait = wait.finish()?;
+                reply.check(wait.as_ref())?;
+                let command = control::ControlCommand::SendMouse {
+                    target,
+                    action,
+                    wait,
+                    capture: reply.capture,
+                    scale: reply.scale,
+                };
+                return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
+                    output_format: reply.output_format,
+                    output: reply.output,
+                }));
+            }
             "notify" => {
                 let mut message = None;
                 let mut title = None;

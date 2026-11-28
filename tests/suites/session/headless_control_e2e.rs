@@ -10,9 +10,10 @@ use std::time::{Duration, Instant};
 
 use rozi::control::ExtensionProvenance;
 use rozi::control::{
-    CaptureRender, ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, MouseAction,
-    MouseButton, MouseModifiers, MousePoint, MouseScrollDirection, PaneWait,
+    CaptureRender, ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, PaneWait,
 };
+#[cfg(unix)]
+use rozi::control::{MouseAction, MouseButton, MouseModifiers, MousePoint, MouseScrollDirection};
 use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::discovery::InstanceLookup;
 use rozi::session::headless::run_session_control;

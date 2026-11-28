@@ -5404,4 +5404,116 @@ mod tests {
             assert!(captured_text(&answer).contains("crashed"));
         });
     }
+
+    #[test]
+    fn a_ui_send_mouse_wait_does_not_capture_when_pane_exits_before_confirmation() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            let outbound = attach_test_session(&mut backend);
+            backend.state_mut().config.pane.hold_on_exit = true;
+            feed(&mut backend, b"BEFORE-EXIT\r\n");
+
+            let action = crate::control::MouseAction::Click {
+                position: crate::control::MousePoint { x: 4, y: 2 },
+                button: crate::control::MouseButton::Left,
+                count: 1,
+                modifiers: crate::control::MouseModifiers::default(),
+            };
+            let response = ask(
+                &mut backend,
+                ControlCommand::SendMouse {
+                    target: Some(1),
+                    action,
+                    wait: pane_wait(Some("CLICKED"), 5_000),
+                    capture: Some(CaptureRender::Text),
+                    scale: None,
+                },
+            );
+            let request_id = outbound
+                .try_iter()
+                .find_map(|message| match message {
+                    ClientOutbound::Control(ClientMessage::SendMouse { request_id, .. }) => {
+                        Some(request_id)
+                    }
+                    _ => None,
+                })
+                .expect("forwarded SendMouse");
+
+            // Pane exits before SendMouseResult: keep waiting for the authoritative server reply
+            // rather than dropping the wait or returning a misleading post-input capture.
+            let epoch = backend.state().runtime_epoch;
+            let generation = backend.state().current().workspaces[0].panes[0].pty_generation;
+            backend
+                .dispatch(crate::Msg::SessionExited {
+                    epoch,
+                    pane_id: 1,
+                    local: false,
+                    generation,
+                    code: 0,
+                })
+                .expect("dispatch exit");
+            assert!(
+                response.try_recv().is_err(),
+                "unconfirmed send-mouse must wait for SendMouseResult instead of capturing on exit"
+            );
+            assert!(!backend.state().capture_waits_are_empty());
+
+            backend
+                .dispatch(crate::Msg::SessionSendMouseResult {
+                    epoch,
+                    request_id,
+                    response: ControlResponse::error_with(
+                        ControlErrorCode::PaneNotRunning,
+                        "pane 1 PTY is not running",
+                    ),
+                })
+                .expect("dispatch authoritative SendMouseResult");
+            let answer = response
+                .try_recv()
+                .expect("authoritative SendMouseResult answers the caller");
+            assert!(!answer.ok, "{answer:?}");
+            assert_eq!(answer.code, Some(ControlErrorCode::PaneNotRunning));
+            assert!(answer.data.is_none(), "{answer:?}");
+            assert!(backend.state().capture_waits_are_empty());
+
+            // If the pane exits and SendMouseResult never arrives, the deadline fails without
+            // capture data too.
+            let mut backend = settled_backend();
+            attach_test_session(&mut backend);
+            backend.state_mut().config.pane.hold_on_exit = true;
+            feed(&mut backend, b"BEFORE-TIMEOUT\r\n");
+            let unconfirmed = ask(
+                &mut backend,
+                ControlCommand::SendMouse {
+                    target: Some(1),
+                    action,
+                    wait: pane_wait(Some("CLICKED"), 40),
+                    capture: Some(CaptureRender::Text),
+                    scale: None,
+                },
+            );
+            let epoch = backend.state().runtime_epoch;
+            let generation = backend.state().current().workspaces[0].panes[0].pty_generation;
+            backend
+                .dispatch(crate::Msg::SessionExited {
+                    epoch,
+                    pane_id: 1,
+                    local: false,
+                    generation,
+                    code: 1,
+                })
+                .expect("dispatch exit");
+            assert!(unconfirmed.try_recv().is_err());
+            std::thread::sleep(std::time::Duration::from_millis(55));
+            backend
+                .dispatch(crate::Msg::CaptureWaitTick)
+                .expect("dispatch tick");
+            let timed_out = unconfirmed
+                .try_recv()
+                .expect("unconfirmed send-mouse times out without capture");
+            assert_eq!(timed_out.code, Some(ControlErrorCode::Timeout));
+            assert!(timed_out.data.is_none(), "{timed_out:?}");
+            assert!(backend.state().capture_waits_are_empty());
+        });
+    }
 }

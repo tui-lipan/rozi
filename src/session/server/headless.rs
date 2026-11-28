@@ -2027,34 +2027,88 @@ impl SessionServer {
             Ok(id) => id,
             Err(response) => return response,
         };
-        match self
-            .session_mouse_bytes(id, action)
-            .and_then(|bytes| self.session_write_input(id, bytes))
-        {
+        match self.session_write_mouse(id, action) {
             Ok(()) => ControlResponse::empty(),
             Err(response) => response,
         }
     }
 
-    /// Encode a synthetic mouse gesture for shared pane `id` against its server-side parser state.
-    pub(super) fn session_mouse_bytes(
-        &self,
+    /// Encode and write a synthetic mouse gesture to shared pane `id` for a headless caller.
+    ///
+    /// Unlike keyboard input, synthetic mouse gestures are viewport-dependent and acknowledged, so
+    /// they are never queued behind a held prompt submission and propagate PTY write failures.
+    pub(super) fn session_write_mouse(
+        &mut self,
         id: PaneId,
         action: &crate::control::MouseAction,
-    ) -> std::result::Result<Vec<u8>, ControlResponse> {
-        let Some(pane) = self.panes.get(&id) else {
+    ) -> std::result::Result<(), ControlResponse> {
+        self.ensure_headless_input_unlocked()?;
+        self.deliver_mouse_checked(None, id, None, action, false)
+    }
+
+    /// Validate, encode, and write a synthetic mouse gesture against live server parser state.
+    ///
+    /// Refuses shared panes that are reading agent history or holding a pending prompt submission
+    /// so viewport-dependent coordinates are never queued behind deferred input, and acknowledges
+    /// only after the PTY accepts the encoded bytes.
+    pub(super) fn deliver_mouse_checked(
+        &mut self,
+        owner: Option<ClientId>,
+        pane_id: PaneId,
+        expected_generation: Option<u64>,
+        action: &crate::control::MouseAction,
+        mark: bool,
+    ) -> std::result::Result<(), ControlResponse> {
+        if owner.is_none() && self.agent_history.contains_key(&pane_id) {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::Conflict,
+                "pane is reading agent history; retry after viewport restoration",
+            ));
+        }
+        let Some(pane) = self
+            .pane(owner, pane_id)
+            .filter(|pane| expected_generation.is_none_or(|expected| pane.generation == expected))
+        else {
             return Err(ControlResponse::error_with(
                 ControlErrorCode::PaneNotFound,
-                format!("pane {id} not found"),
+                format!("pane {pane_id} not found"),
             ));
         };
+        let generation = pane.generation;
         if pane.exited.is_some() || pane.pty.is_none() {
             return Err(ControlResponse::error_with(
                 ControlErrorCode::PaneNotRunning,
-                format!("pane {id} PTY is not running"),
+                format!("pane {pane_id} PTY is not running"),
             ));
         }
-        Self::encode_mouse_for_pane(id, pane, action)
+        if owner.is_none() && self.has_live_held_submit(pane_id, generation) {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::Conflict,
+                "pane has a pending prompt submission; retry after it finishes",
+            ));
+        }
+        let pane = self
+            .pane(owner, pane_id)
+            .filter(|pane| pane.generation == generation)
+            .ok_or_else(|| {
+                ControlResponse::error_with(
+                    ControlErrorCode::PaneNotFound,
+                    format!("pane {pane_id} not found"),
+                )
+            })?;
+        let bytes = Self::encode_mouse_for_pane(pane_id, pane, action)?;
+        self.write_pane_now_checked(owner, pane_id, generation, &bytes)?;
+        if mark
+            && let Some(pane) = self
+                .pane_mut(owner, pane_id)
+                .filter(|pane| pane.generation == generation)
+        {
+            pane.output_coalesce_epoch = pane.output_coalesce_epoch.saturating_add(1);
+        }
+        if owner.is_none() {
+            self.note_human_pane_input(pane_id);
+        }
+        Ok(())
     }
 
     /// Encode `action` for `pane` using its live parser mouse mode, cell dimensions, and grid size.

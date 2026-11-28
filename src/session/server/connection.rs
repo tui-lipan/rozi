@@ -189,44 +189,11 @@ impl SessionServer {
                 ),
             ));
         }
-        if !local && self.agent_history.contains_key(&pane_id) {
-            return reply(control::ControlResponse::error_with(
-                control::ControlErrorCode::Conflict,
-                "pane is reading agent history; retry after viewport restoration",
-            ));
-        }
         let owner = local.then_some(client_id);
-        let Some(pane) = self
-            .pane(owner, pane_id)
-            .filter(|pane| pane.generation == generation)
-        else {
-            return reply(control::ControlResponse::error_with(
-                control::ControlErrorCode::PaneNotFound,
-                format!("pane {pane_id} not found"),
-            ));
-        };
-        if pane.exited.is_some() || pane.pty.is_none() {
-            return reply(control::ControlResponse::error_with(
-                control::ControlErrorCode::PaneNotRunning,
-                format!("pane {pane_id} PTY is not running"),
-            ));
+        match self.deliver_mouse_checked(owner, pane_id, Some(generation), action, mark) {
+            Ok(()) => reply(control::ControlResponse::empty()),
+            Err(response) => reply(response),
         }
-        let bytes = match Self::encode_mouse_for_pane(pane_id, pane, action) {
-            Ok(bytes) => bytes,
-            Err(response) => return reply(response),
-        };
-        if mark
-            && let Some(pane) = self
-                .pane_mut(owner, pane_id)
-                .filter(|pane| pane.generation == generation)
-        {
-            pane.output_coalesce_epoch = pane.output_coalesce_epoch.saturating_add(1);
-        }
-        if !local {
-            self.note_human_pane_input(pane_id);
-        }
-        self.handle_pane_input(owner, pane_id, generation, &bytes);
-        reply(control::ControlResponse::empty())
     }
 
     /// Write a client's pane input, if that client may type into the pane.

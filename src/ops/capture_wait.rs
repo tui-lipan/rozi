@@ -254,14 +254,22 @@ pub(crate) fn send_mouse_result(
             let _ = wait.reply.send(reply);
             return false;
         }
-        if let Some(pane) = find_pane_in_namespace_mut(state, wait.pane_id, wait.local)
-            .filter(|pane| pane.pty_generation == wait.generation)
-        {
-            let screen = pane.terminal.with_screen_mut(|screen| {
-                ScreenWait::start(&wait.plan.wait, screen, true, wait.started, now)
-            });
-            wait.stage = Stage::Watching(screen);
-        }
+        let Some(pane) = find_pane_in_namespace_mut(state, wait.pane_id, wait.local)
+            .filter(|pane| pane.pty_generation == wait.generation && !pane.closing)
+        else {
+            let closed =
+                wait.plan
+                    .reply
+                    .respond(wait.pane_id, &wait.plan.wait, WaitEnd::Closed, |reply| {
+                        capture(state, wait.pane_id, wait.local, reply)
+                    });
+            let _ = wait.reply.send(closed);
+            return false;
+        };
+        let screen = pane.terminal.with_screen_mut(|screen| {
+            ScreenWait::start(&wait.plan.wait, screen, true, wait.started, now)
+        });
+        wait.stage = Stage::Watching(screen);
         true
     });
     waits.append(&mut state.capture_waits.waits);
@@ -331,6 +339,23 @@ fn evaluate(ctx: &mut Context<AppRoot>, only: Option<(PaneId, bool)>) {
             ));
             return false;
         }
+        if matches!(wait.stage, Stage::SendingMouse { .. }) {
+            // Keep the pending wait alive across pane exit/close until the authoritative
+            // `SendMouseResult` arrives or the acknowledgement deadline expires, so an
+            // unconfirmed gesture never attaches a misleading post-input capture.
+            let deadline = wait.started + Duration::from_millis(wait.plan.wait.timeout_ms);
+            if now >= deadline {
+                let _ = wait.reply.send(ControlResponse::error_with(
+                    ControlErrorCode::Timeout,
+                    format!(
+                        "pane {}: the session did not confirm send-mouse within {}ms; nothing may have been written",
+                        wait.pane_id, wait.plan.wait.timeout_ms
+                    ),
+                ));
+                return false;
+            }
+            return true;
+        }
         let pane = find_pane_in_namespace_mut(state, wait.pane_id, wait.local)
             .filter(|pane| pane.pty_generation == wait.generation && !pane.closing);
         let end = match pane {
@@ -352,19 +377,7 @@ fn evaluate(ctx: &mut Context<AppRoot>, only: Option<(PaneId, bool)>) {
                         }
                     }
                     Stage::SendingMouse { .. } => {
-                        let deadline =
-                            wait.started + Duration::from_millis(wait.plan.wait.timeout_ms);
-                        if now >= deadline {
-                            let _ = wait.reply.send(ControlResponse::error_with(
-                                ControlErrorCode::Timeout,
-                                format!(
-                                    "pane {}: the session did not confirm send-mouse within {}ms; nothing may have been written",
-                                    wait.pane_id, wait.plan.wait.timeout_ms
-                                ),
-                            ));
-                            return false;
-                        }
-                        WaitStatus::Pending
+                        unreachable!("SendingMouse handled before pane lookup")
                     }
                 };
                 match status {

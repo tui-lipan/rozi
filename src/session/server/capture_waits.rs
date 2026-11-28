@@ -54,9 +54,7 @@ impl SessionServer {
             ControlCommand::SendKeys { keys, literal, .. } => self
                 .session_key_bytes(pane_id, keys, *literal)
                 .and_then(|bytes| self.session_write_input(pane_id, bytes)),
-            ControlCommand::SendMouse { action, .. } => self
-                .session_mouse_bytes(pane_id, action)
-                .and_then(|bytes| self.session_write_input(pane_id, bytes)),
+            ControlCommand::SendMouse { action, .. } => self.session_write_mouse(pane_id, action),
             _ => Ok(()),
         };
         if let Err(response) = sent {

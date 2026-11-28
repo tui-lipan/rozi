@@ -506,28 +506,23 @@ impl SessionServer {
                 format!("pane {pane_id} not found"),
             ));
         };
-        if pane.exited.is_some() {
+        if pane.exited.is_some() || pane.pty.is_none() {
             return Err(control::ControlResponse::error_with(
                 control::ControlErrorCode::PaneNotRunning,
                 format!("pane {pane_id} PTY is not running"),
             ));
         }
-        let Some(pty) = &pane.pty else {
-            return Err(control::ControlResponse::error_with(
-                control::ControlErrorCode::PaneNotRunning,
-                format!("pane {pane_id} PTY is not running"),
-            ));
-        };
+        pane.graphics_pacer.input(Instant::now());
+        let pty = pane.pty.as_ref().expect("checked above");
+        if !pane.graphics_pacer.transport_held() {
+            pty.read_gate().resume();
+        }
         pty.write(bytes).map_err(|err| {
             control::ControlResponse::error_with(
                 control::ControlErrorCode::PaneNotRunning,
                 format!("pane {pane_id} PTY write failed: {err}"),
             )
         })?;
-        pane.graphics_pacer.input(Instant::now());
-        if !pane.graphics_pacer.transport_held() {
-            pty.read_gate().resume();
-        }
         super::runtime::note_pane_input(pane, &agents, bytes);
         Ok(())
     }

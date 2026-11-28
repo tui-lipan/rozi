@@ -107,21 +107,21 @@ The Linux memory matrix isolates user directories, endpoints, and sockets. Smoke
 long run:
 
 ```bash
-tools/memory-matrix.sh --smoke
+tools/bench/memory-matrix.sh --smoke
 ```
 
 Run the standard matrices:
 
 ```bash
-tools/memory-matrix.sh --quick --output target/perf-audit/memory-quick
-tools/memory-matrix.sh --full --output target/perf-audit/memory-full
-tools/memory-matrix.sh --lifecycle --output target/perf-audit/memory-lifecycle
+tools/bench/memory-matrix.sh --quick --output target/perf-audit/memory-quick
+tools/bench/memory-matrix.sh --full --output target/perf-audit/memory-full
+tools/bench/memory-matrix.sh --lifecycle --output target/perf-audit/memory-lifecycle
 ```
 
 Use a fixed case to repeat a noisy or failed scenario:
 
 ```bash
-tools/memory-matrix.sh --case 60 250 8 5000 styled 2 reconnected \
+tools/bench/memory-matrix.sh --case 60 250 8 5000 styled 2 reconnected \
   --output target/perf-audit/memory-case
 ```
 

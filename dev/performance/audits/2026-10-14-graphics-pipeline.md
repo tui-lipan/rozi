@@ -22,7 +22,7 @@ revisions unless a row is labelled as the baseline.
 - No compilation or other heavy work ran during sampling. A game running during an earlier pass was
   closed and those samples were discarded.
 
-Every run uses `tools/graphics-benchmark.py`, described in the [benchmark guide](../../benchmarks.md).
+Every run uses `tools/bench/graphics-benchmark.py`, described in the [benchmark guide](../../benchmarks.md).
 Host traffic is taken from successful writes by the rozi client (`--tap client-write`). Rates are
 presented frames, never producer updates. Each case is a single 20-second sample unless noted.
 
@@ -62,7 +62,7 @@ measurements below, which present natively.
 
 ## Synthetic stream
 
-`tools/graphics-stream.py` replaces one 640 × 320 RGBA image (`i=7`, `p=9`) with a moving rectangle
+`tools/bench/graphics-stream.py` replaces one 640 × 320 RGBA image (`i=7`, `p=9`) with a moving rectangle
 from 64 immutable `t=f` files. Latency runs from the producer's write returning to the host write
 that ends the frame carrying that image, matched through an index stamped in each fixture's first
 pixel. CPU is percent of one core (client / server / Ghostty).
@@ -134,7 +134,7 @@ terminal-browser 0.13.4 runs with the native module from
 [terminal-browser #157](https://github.com/zenbu-labs/terminal-browser/pull/157), built locally
 because that PR is not merged. The installed application is copied, and only the copy's module is
 replaced. GPU rendering is disabled, `render.fps` matches the client frame rate, and telemetry and
-update checks are off. The generated page (`tools/graphics-page.html`) animates six rectangles and a
+update checks are off. The generated page (`tools/bench/graphics-page.html`) animates six rectangles and a
 counter on a canvas. Raffles (`https://www.raffles.com`) runs from a copy of an existing profile that
 had dismissed the cookie notice; the copy is deleted after each run. Each run warms up for eight
 seconds. `auto` is the browser's normal patch presentation; `full` sends whole frames.

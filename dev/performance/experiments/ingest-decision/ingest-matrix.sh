@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One application-level ingest run: a session server, attached probe client(s), and PANES panes
-# that each `cat` the same corpus once. Derived from tools/memory-matrix.sh. Linux only.
+# that each `cat` the same corpus once. Derived from tools/bench/memory-matrix.sh. Linux only.
 # Usage: EXP_DIR=… ingest-matrix.sh BIN LABEL PANES CONTENT CLIENTS OUT.jsonl
 set -euo pipefail
 

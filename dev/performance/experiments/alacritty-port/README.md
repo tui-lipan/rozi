@@ -1,7 +1,7 @@
 # Compact scrollback port to Alacritty master
 
 This experiment is not used by Rozi. See the
-[measurement report](../../../dev/performance/audits/2026-09-15-alacritty-port.md).
+[measurement report](../../audits/2026-09-15-alacritty-port.md).
 
 `engine.patch` ports the dense viewport / compact history split to Alacritty `master` at
 `d692748d3f61253ebe9f5094320120d22f6a046f`, the revision proposed upstream in
@@ -23,7 +23,7 @@ Linux only. Build the branch from a clean checkout:
 ```bash
 git clone https://github.com/alacritty/alacritty && cd alacritty
 git checkout -b compact-scrollback d692748d3f61253ebe9f5094320120d22f6a046f
-git apply /path/to/rozi/tools/experiments/alacritty-port/engine.patch
+git apply /path/to/rozi/dev/performance/experiments/alacritty-port/engine.patch
 cargo test -p alacritty_terminal
 cargo build --release -p alacritty
 ```

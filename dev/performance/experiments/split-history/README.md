@@ -1,6 +1,6 @@
 # Dense viewport and compact history experiment
 
-This prototype is not enabled in Rozi. See the [results and decision](../../../dev/performance/audits/2026-09-13.md). It keeps the original width-sized `Vec<Cell>` row
+This prototype is not enabled in Rozi. See the [results and decision](../../audits/2026-09-13.md). It keeps the original width-sized `Vec<Cell>` row
 representation for the viewport and moves completed rows into a separate history deque.
 History stores either a dense row or an exact prefix plus a repeated final cell. The repeated
 cell retains colors, flags, hyperlinks, and Unicode data. Uncompressible rows stay dense.
@@ -22,7 +22,7 @@ are experiments against published `alacritty_terminal 0.26.0` and `tui-lipan 0.9
 Run from Rozi, with cached registry sources available:
 
 ```bash
-python3 tools/experiments/split-history/prepare.py --output /tmp/rozi-split-review
+python3 dev/performance/experiments/split-history/prepare.py --output /tmp/rozi-split-review
 cargo bench --bench terminal_history -- --save-baseline split-dense --sample-size 30 --measurement-time 2 --warm-up-time 1
 cargo bench --bench terminal_memory
 ```

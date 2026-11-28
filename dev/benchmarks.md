@@ -2,7 +2,7 @@
 
 This page is for contributors measuring rozi's performance. It lists the benchmark targets, how to
 compare runs, the Linux memory harness, and how to profile. Benchmark definitions live in
-`benches/` and the memory runner in `tools/memory-matrix.sh`. Timing results belong in dated
+`benches/` and the memory runner in `tools/bench/memory-matrix.sh`. Timing results belong in dated
 [performance audit reports](performance/README.md), not on this page.
 
 Before you measure:
@@ -235,7 +235,7 @@ for cell and verify pane and session masks advance without calling the component
 
 ## Linux active TUI CPU probe
 
-`tools/tui-cpu-probe.py` measures one release client and its session server separately using
+`tools/bench/tui-cpu-probe.py` measures one release client and its session server separately using
 Linux `/proc` CPU ticks. Every run creates private HOME/XDG directories, an owned session, and a
 `script`-hosted client; it does not attach to your running sessions. The guest alternates a status
 character at 10 Hz, with a fixed title, animated OSC title, or both. A dense case rewrites every
@@ -243,9 +243,9 @@ terminal row. The script repeats body-only mode to check drift, at 200×60 and 4
 
 ```sh
 cargo build --locked --release
-python3 tools/tui-cpu-probe.py target/release/rozi
+python3 tools/bench/tui-cpu-probe.py target/release/rozi
 # Run the same command with a saved before binary for comparison.
-python3 tools/tui-cpu-probe.py target/release/rozi --sidebar --panes 2 --viewport 475x116
+python3 tools/bench/tui-cpu-probe.py target/release/rozi --sidebar --panes 2 --viewport 475x116
 ```
 
 Output is JSON lines with CPU percentages of one core, not the whole machine. The default sample
@@ -270,7 +270,7 @@ measurement window.
 
 ## Linux process-memory harness
 
-`tools/memory-matrix.sh` is an opt-in Linux harness for release builds. It reads PSS and RSS from
+`tools/bench/memory-matrix.sh` is an opt-in Linux harness for release builds. It reads PSS and RSS from
 `/proc` and reports client, server, application, and child-process groups separately. Every
 scenario gets its own isolated `HOME`, XDG directories, session endpoints, and control sockets.
 
@@ -284,16 +284,16 @@ It requires Bash, Python 3, util-linux `script`, and Linux `smaps_rollup`.
 | `--lifecycle` | The full cleanup matrix, using deterministic image content |
 
 ```bash
-tools/memory-matrix.sh --smoke
-tools/memory-matrix.sh --quick
-tools/memory-matrix.sh --full --output target/memory-matrix/full
-tools/memory-matrix.sh --lifecycle --output target/memory-matrix/lifecycle
+tools/bench/memory-matrix.sh --smoke
+tools/bench/memory-matrix.sh --quick
+tools/bench/memory-matrix.sh --full --output target/memory-matrix/full
+tools/bench/memory-matrix.sh --lifecycle --output target/memory-matrix/lifecycle
 ```
 
 Reproduce one scenario:
 
 ```bash
-tools/memory-matrix.sh --case ROWS COLS PANES HISTORY CONTENT CLIENTS STATE \
+tools/bench/memory-matrix.sh --case ROWS COLS PANES HISTORY CONTENT CLIENTS STATE \
   --output target/memory-matrix/case
 ```
 
@@ -310,7 +310,7 @@ cannot, because it never decreases.
 
 ## Compare image patches in a real host
 
-Run `python3 tools/graphics-patches.py --fps 20 --duration 60` inside an owned test pane. It generates
+Run `python3 tools/bench/graphics-patches.py --fps 20 --duration 60` inside an owned test pane. It generates
 a retained background, a toolbar, a small opaque patch and a moving translucent patch with pixel
 offsets. Resize the pane to rebuild the background. `--full` instead sends changing full frames.
 The two workloads are distinct; compare each workload across rendering modes.
@@ -365,12 +365,12 @@ include frames intentionally superseded before presentation.
 
 ### Independent full-frame producer
 
-Run `python3 tools/graphics-stream.py --fps 240 --mode moving --duration 20
+Run `python3 tools/bench/graphics-stream.py --fps 240 --mode moving --duration 20
 --report /tmp/graphics-producer.json` in an owned test pane. Supported rates are 30, 60, 120 and
 240 Hz; modes are `unchanged`, `moving` and `whole`. Each complete replacement uses the same image
 and placement IDs. Only initial setup and optional mixed-workload barriers move the cursor.
 `--mixed` adds title/text/query/delete barriers and input echo; SIGWINCH adds a resize barrier.
-Use `tools/graphics-patches.py` for overlapping producer patches that must remain ordered.
+Use `tools/bench/graphics-patches.py` for overlapping producer patches that must remain ordered.
 
 The immutable RGBA pool is bounded by `--max-file-mib` (128 MiB by default) and remains on disk
 at the reported `files` path after exit, so delayed clients can still open every queued filename.
@@ -381,14 +381,14 @@ Its report counts completed producer writes; obtain presented FPS from successfu
 
 ### Owned Ghostty measurements
 
-`tools/graphics-benchmark.py` creates a private session and Ghostty window through the
+`tools/bench/graphics-benchmark.py` creates a private session and Ghostty window through the
 `ghostty-window-lab` helper. Build the selected binary first, then run measurements without Cargo
 or other CPU-intensive work. Use separate output directories for baseline and updated binaries:
 
 ```bash
 cc -shared -fPIC -O2 -Wall -Wextra -Werror -o /tmp/graphics-wiretap.so \
-  tools/graphics-wiretap.c -ldl -pthread
-python3 tools/graphics-benchmark.py \
+  tools/bench/graphics-wiretap.c -ldl -pthread
+python3 tools/bench/graphics-benchmark.py \
   --binary /absolute/path/to/rozi \
   --window-lab /absolute/path/to/window_lab.py \
   --output /tmp/graphics-after-120 \
@@ -447,24 +447,24 @@ the producer's placements and Rozi redraws the pane. The baseline before this wo
 stream. `graphics_frame_interval_us` times synchronized updates that carry any Kitty command, and
 `producer_tree` sums CPU and PSS over the producer and its descendants, including a detached
 daemon. Processes that outlive the session are ended by run marker or by the identities recorded
-for that tree. `tools/graphics-browser.sh BROWSER FPS PRESENTER URL` opens terminal-browser as a
+for that tree. `tools/bench/graphics-browser.sh BROWSER FPS PRESENTER URL` opens terminal-browser as a
 producer: it sets `render.fps`, `render.presenter` (`auto` or `full`) and disables telemetry,
 update checks and GPU rendering in the run's isolated configuration. `URL` may be `generated`,
-which serves `tools/graphics-page.html` over loopback. With
+which serves `tools/bench/graphics-page.html` over loopback. With
 `GRAPHICS_BROWSER_PROFILE=SOURCE:DESTINATION`, it first copies the user's profile (install
 suffixes of `terminal-browser-*`) into the run's isolated directories, so a page such as Raffles
 starts with its cookie notice already dismissed; it refuses unless the XDG directories are
 isolated. Delete the copy after the run, because it holds that profile's cookies. For example:
 
 ```bash
-python3 tools/graphics-benchmark.py --binary /absolute/path/to/rozi \
+python3 tools/bench/graphics-benchmark.py --binary /absolute/path/to/rozi \
   --window-lab /absolute/path/to/window_lab.py --output /tmp/graphics-browser-60 \
   --wiretap /tmp/graphics-wiretap.so --fps 60 --seconds 20 \
-  --command "$PWD/tools/graphics-browser.sh /path/to/terminal-browser 60 auto generated"
+  --command "$PWD/tools/bench/graphics-browser.sh /path/to/terminal-browser 60 auto generated"
 ```
 
 A small animated page understates full-frame cost. For sustained browser video, generate a fixture
-with `tools/graphics-video.sh DIRECTORY plain|noise` before measuring, serve it over loopback and
+with `tools/bench/graphics-video.sh DIRECTORY plain|noise` before measuring, serve it over loopback and
 pass its URL. `plain` compresses well; `noise` is close to incompressible and is the case where any
 per-frame compression or copy shows up. Measure each Rozi build with terminal-browser's automatic
 transport, then again with `TERMINAL_BROWSER_FRAMES=file` in the runner's environment: the browser
@@ -474,12 +474,12 @@ per second and frame-interval percentiles at the same producer viewport; record 
 SHA-256, because realtime VP9 encoding can differ between FFmpeg builds.
 
 ```bash
-tools/graphics-video.sh /tmp/graphics-video noise
+tools/bench/graphics-video.sh /tmp/graphics-video noise
 python3 -m http.server --bind 127.0.0.1 --directory /tmp/graphics-video 18974 &
-python3 tools/graphics-benchmark.py --binary /absolute/path/to/rozi \
+python3 tools/bench/graphics-benchmark.py --binary /absolute/path/to/rozi \
   --window-lab /absolute/path/to/window_lab.py --output /tmp/graphics-video-60 \
   --fps 60 --producer-fps 60 --seconds 20 --warmup 8 --width 1900 --height 1050 \
-  --command "$PWD/tools/graphics-browser.sh /path/to/terminal-browser 60 full http://127.0.0.1:18974/"
+  --command "$PWD/tools/bench/graphics-browser.sh /path/to/terminal-browser 60 full http://127.0.0.1:18974/"
 ```
 
 `--tap host-read` loads the interposer in Ghostty instead and records what Ghostty reads from its

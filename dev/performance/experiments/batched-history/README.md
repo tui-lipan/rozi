@@ -1,6 +1,6 @@
 # Bounded batch compaction experiment
 
-See the [measurement report](../../../dev/performance/audits/2026-09-14.md).
+See the [measurement report](../../audits/2026-09-14.md).
 
 This third experiment builds on the dense viewport / compact history split. It is not enabled
 in Rozi. The patches apply to the published `alacritty_terminal 0.26.0` and `tui-lipan 0.9.0`
@@ -28,7 +28,7 @@ alive across iterations; automatic batch work remains inside ingestion there too
 ## Prepare
 
 ```bash
-python3 tools/experiments/batched-history/prepare.py --output /tmp/rozi-batch-review
+python3 dev/performance/experiments/batched-history/prepare.py --output /tmp/rozi-batch-review
 ```
 
 Requires cached released crates, Python 3.11+, Cargo, and `patch`. The destination must be new.

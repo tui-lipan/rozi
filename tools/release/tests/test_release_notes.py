@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.release_notes import (
+from tools.release.release_notes import (
     SUMMARY_MAX_CHARS,
     Commit,
     ReleaseNotesError,
@@ -104,7 +104,7 @@ class FilteringTests(unittest.TestCase):
         self.assertEqual(
             exclusion_reason(
                 "ci: write release notes from commit summaries",
-                [".opencode/commands/changelog.md", "scripts/release_notes.py"],
+                [".opencode/commands/changelog.md", "tools/release/release_notes.py"],
             ),
             "CI-only change",
         )
@@ -467,7 +467,7 @@ class ReleaseBodyTests(unittest.TestCase):
 
     def test_the_earlier_packaging_fixtures_are_publishable_bodies(self):
         # Pull request Release runs embed these as earlier releases' notes.
-        fixtures = Path(__file__).parents[2] / "tests" / "fixtures" / "earlier-release-notes"
+        fixtures = Path(__file__).parents[3] / "tests" / "fixtures" / "earlier-release-notes"
         paths = sorted(fixtures.iterdir())
         self.assertTrue(paths)
         for path in paths:
@@ -478,7 +478,7 @@ class ReleaseBodyTests(unittest.TestCase):
     def test_the_packaging_fixture_is_a_publishable_body(self):
         # Pull request Release runs embed this file in place of generated notes; it has to stay a
         # body a real release could publish, unchanged by validation.
-        fixture = Path(__file__).parents[2] / "tests" / "fixtures" / "release-notes.md"
+        fixture = Path(__file__).parents[3] / "tests" / "fixtures" / "release-notes.md"
         raw = fixture.read_text(encoding="utf-8")
         self.assertEqual(validate_notes(raw), raw)
 

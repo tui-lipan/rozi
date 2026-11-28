@@ -58,7 +58,7 @@ with a fixed title. This is a workload comparison, not a shipped optimization or
 the saving in a real Codex session. The simple tiled harness also does not reproduce the live
 floating pane's backdrop and other desktop activity, so it does not fully explain its 10.47%.
 
-To reproduce using the isolation and client-launch pattern in `tools/memory-matrix.sh`:
+To reproduce using the isolation and client-launch pattern in `tools/bench/memory-matrix.sh`:
 
 1. Build with `cargo build --locked --release`. Create a private HOME and all XDG directories,
    clear inherited `ROZI*` control context in the child environment, and disable the features above.

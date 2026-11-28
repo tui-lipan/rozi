@@ -187,7 +187,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       # The Ghostty terminal engine (`ghostty-engine`) builds libghostty-vt with Zig.
-      # The Linux containers install their own pinned Zig (scripts/install-zig.sh) and build for
+      # The Linux containers install their own pinned Zig (tools/release/install-zig.sh) and build for
       # the same glibc ceiling as the rest of the payload. Like the rest of this build, the library
       # is not cached.
       - name: Install Zig 0.17.1
@@ -225,7 +225,7 @@ jobs:
                 curl --proto "=https" --tlsv1.2 -fsSL https://sh.rustup.rs \
                   | sh -s -- -y --profile minimal --default-toolchain 1.96.0 --no-modify-path
                 export PATH=/root/.cargo/bin:$PATH
-                ZIG="$(scripts/install-zig.sh)"
+                ZIG="$(tools/release/install-zig.sh)"
                 export ZIG
                 cargo build --locked --release --target "${{ matrix.target }}" \
                   --features ghostty-engine

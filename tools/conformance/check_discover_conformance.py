@@ -12,7 +12,7 @@ def main():
     parser.add_argument("index_script", type=Path, help="path to scripts/build_index.py")
     parser.add_argument(
         "--corpus", type=Path,
-        default=Path(__file__).resolve().parents[1] / "tests/fixtures/discover-eligibility.json",
+        default=Path(__file__).resolve().parents[2] / "tests/fixtures/discover-eligibility.json",
     )
     args = parser.parse_args()
     spec = importlib.util.spec_from_file_location("build_index", args.index_script)

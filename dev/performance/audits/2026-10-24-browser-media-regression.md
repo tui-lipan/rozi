@@ -25,7 +25,7 @@ and the same Cargo.lock. No source, installed browser module or personal configu
 - A loopback HTML page played an autoplaying, muted, looping 1600×900, 60 fps WebM test video.
   It was generated with FFmpeg `testsrc2`, eight seconds of VP9 at 3 Mbit/s. Video SHA-256
   `aa165f5e552926ca18b90a943b566ba8c2c63b4fcb6a252b9d9d48006632514c`.
-- The maintained `tools/graphics-benchmark.py` and `tools/graphics-browser.sh` ran the browser
+- The maintained `tools/bench/graphics-benchmark.py` and `tools/bench/graphics-browser.sh` ran the browser
   at 60 fps with GPU rendering disabled. Eight seconds of warmup and twenty seconds of sampling.
   No compiler, capture request or interposer ran during the CPU samples.
 - CPU is user+system time as a percentage of one core, sampled separately for client, server,
@@ -154,7 +154,7 @@ sample and lowered server RSS from 29.4 to 17 MiB.
 
 ## Harder workload
 
-A 1920×1080 noise video (`tools/graphics-video.sh DIR noise`, scene SHA-256
+A 1920×1080 noise video (`tools/bench/graphics-video.sh DIR noise`, scene SHA-256
 `641b13601964086c91ceed9ca5615f69e08ea081590d94041ff1e00901998fdb`) is close to incompressible.
 The 1900×1050 window gave a 234×56 producer viewport of 1872×952 pixels. Automatic transport,
 full presentation, one run each:
@@ -235,7 +235,7 @@ local validation must do the same.
 
 ## Reproduction and retained evidence
 
-`tools/graphics-video.sh DIRECTORY plain|noise` now generates maintained 1920×1080 fixtures; see
+`tools/bench/graphics-video.sh DIRECTORY plain|noise` now generates maintained 1920×1080 fixtures; see
 the benchmark guide. The investigation's original fixture was generated outside the repository:
 
 ```sh
@@ -247,7 +247,7 @@ Serve a page containing `<video autoplay muted loop playsinline src="scene.webm"
 with its video filling the viewport. Run the existing harness, selecting each release executable:
 
 ```sh
-python3 tools/graphics-benchmark.py --binary /absolute/path/to/rozi \
+python3 tools/bench/graphics-benchmark.py --binary /absolute/path/to/rozi \
   --window-lab /absolute/path/to/window_lab.py --output /tmp/unique-run \
   --fps 60 --producer-fps 60 --seconds 20 --warmup 8 --workspace 11 \
   --width 1800 --height 1000 \

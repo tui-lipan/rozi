@@ -34,7 +34,7 @@ runs:
 
     # setup-zig verifies the tarball's minisign signature. Its own Zig caches are off: the build
     # script uses private ones and deletes them, and the built library is cached above. Keep the
-    # version in step with scripts/install-zig.sh and the sys crate's ZIG_VERSION.
+    # version in step with tools/release/install-zig.sh and the sys crate's ZIG_VERSION.
     - name: Install Zig 0.17.1
       if: steps.cache.outputs.cache-hit != 'true'
       uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1

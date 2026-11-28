@@ -29,13 +29,13 @@ changes that fix them against Rozi 0.0.33.
 
 ## Method
 
-`tools/graphics-browser.sh BROWSER 60 auto URL` started terminal-browser in pane 1 with
+`tools/bench/graphics-browser.sh BROWSER 60 auto URL` started terminal-browser in pane 1 with
 `render.fps 60`, the default `auto` presenter, telemetry and update checks off, and GPU rendering
 disabled. Three workloads ran:
 
-- **Video**: the `tools/graphics-video.sh DIR plain` page, a 1600x900, 60 fps VP9 test video served
+- **Video**: the `tools/bench/graphics-video.sh DIR plain` page, a 1600x900, 60 fps VP9 test video served
   over loopback on the laptop.
-- **Generated**: `tools/graphics-page.html`, six small rectangles moving over a static background.
+- **Generated**: `tools/bench/graphics-page.html`, six small rectangles moving over a static background.
 - **Scroll**: `https://en.wikipedia.org/wiki/Terminal_emulator`, with `Down` sent to the pane every
   100 ms through `rozi --session NAME send-keys` for the whole sample.
 

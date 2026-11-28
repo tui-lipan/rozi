@@ -34,7 +34,7 @@ const SHOWN_DIR: &str = "shown";
 /// The most releases What's new shows: enough that someone who updates only now and then still
 /// sees every release they skipped, few enough that the dialog stays about recent changes. The tab
 /// row scrolls, so this is not bound by its width. The release workflow embeds this many earlier releases
-/// (`EARLIER_RELEASES` in `scripts/release_notes.py`), so a release without notes of its own still
+/// (`EARLIER_RELEASES` in `tools/release/release_notes.py`), so a release without notes of its own still
 /// shows as many.
 const MAX_RELEASES: usize = 20;
 

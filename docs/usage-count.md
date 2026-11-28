@@ -37,7 +37,7 @@ weeks and at most three, then deletes them. It does not store the request, your 
 the time it arrived. Your address is used only to limit how often it can send.
 
 The totals are public: <https://usage.tui-lipan.dev/v1/stats?app=rozi>. The counter's source is
-[`tools/usage-counter`](../tools/usage-counter/) in the rozi repository.
+[`services/usage-counter`](../services/usage-counter/) in the rozi repository.
 
 ## When it is sent
 

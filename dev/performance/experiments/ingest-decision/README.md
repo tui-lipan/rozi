@@ -1,7 +1,7 @@
 # Compact history ingest decision
 
 This is the last compact-history experiment. It is not enabled in Rozi. See the
-[measurement report](../../../dev/performance/audits/2026-09-14-ingest.md).
+[measurement report](../../audits/2026-09-14-ingest.md).
 
 The candidate is the render-history engine, unchanged, with its framework changes ported to
 released `tui-lipan` 0.9.1. The bulk `RowParts` builder uses the released attr-keyed run helpers.
@@ -22,8 +22,8 @@ Linux only. Run Cargo commands one at a time, and keep the lockfile out of any c
 ```bash
 exp=target/ingest-decision
 mkdir -p "$exp"
-python3 tools/experiments/ingest-decision/prepare.py --output "$exp/src"
-python3 tools/experiments/ingest-decision/make-corpus.py "$exp/corpus"
+python3 dev/performance/experiments/ingest-decision/prepare.py --output "$exp/src"
+python3 dev/performance/experiments/ingest-decision/make-corpus.py "$exp/corpus"
 
 cp Cargo.lock "$exp/Cargo.lock.before"
 cargo build --release --locked
@@ -35,8 +35,8 @@ CARGO_TARGET_DIR=target/ingest-compact cargo \
 cp target/ingest-compact/release/rozi "$exp/rozi-compact"
 cp "$exp/Cargo.lock.before" Cargo.lock
 
-EXP_DIR="$PWD/$exp" REPS=5 tools/experiments/ingest-decision/run-matrix.sh "$exp/results.jsonl"
-python3 tools/experiments/ingest-decision/summarize.py "$exp/results.jsonl"
+EXP_DIR="$PWD/$exp" REPS=5 dev/performance/experiments/ingest-decision/run-matrix.sh "$exp/results.jsonl"
+python3 dev/performance/experiments/ingest-decision/summarize.py "$exp/results.jsonl"
 ```
 
 `run-matrix.sh` takes optional `"PANES CONTENT CLIENTS"` arguments to rerun a subset. The report's

@@ -356,7 +356,7 @@ resized to 980 by 650 and restored. Actual producer sizes were 36 rows by 66 col
 528 by 612 pixels, then 32 rows by 58 columns, 464 by 544 pixels, then the original size.
 Each read-only late viewer was 760 by 720. No personal session or configuration was used.
 
-The maintained `tools/graphics-patches.py` scene was adapted only for consuming transport and
+The maintained `tools/bench/graphics-patches.py` scene was adapted only for consuming transport and
 retained final output. It ran at 5 fps for 20 seconds, then stopped producing images. A separate
 pane continued ordinary text every 0.2 seconds. Physical host captures showed the checkerboard
 base, cyan toolbar, offset opaque patch and translucent moving patch. Both consuming transports

@@ -41,8 +41,8 @@ the frame's rows need painting, it uses a single full paint instead of walking t
 Build and save a release binary before and after applying the changes, then run them serially:
 
 ```sh
-python3 tools/tui-cpu-probe.py /absolute/path/to/before --seconds 10
-python3 tools/tui-cpu-probe.py /absolute/path/to/after --seconds 10
+python3 tools/bench/tui-cpu-probe.py /absolute/path/to/before --seconds 10
+python3 tools/bench/tui-cpu-probe.py /absolute/path/to/after --seconds 10
 cargo bench --bench snapshot_rebuild -- sparse_tui_update \
   --warm-up-time 1 --measurement-time 2 --sample-size 20
 ```

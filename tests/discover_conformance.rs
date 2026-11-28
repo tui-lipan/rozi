@@ -1,4 +1,4 @@
-//! The same corpus can be checked against the Python index with scripts/check_discover_conformance.py.
+//! The same corpus can be checked against the Python index with tools/conformance/check_discover_conformance.py.
 use std::process::Command;
 
 #[test]

@@ -100,7 +100,7 @@ runs `cargo audit` weekly; the regular CI's cargo-deny job checks RustSec adviso
 change.
 
 Tagged releases resolve the previous published `v` release and exact tagged commit in
-`scripts/release_notes.py`, then Rosie runs `.opencode/commands/changelog.md` with
+`tools/release/release_notes.py`, then Rosie runs `.opencode/commands/changelog.md` with
 `openai/gpt-6-luna` and writes notes from each candidate Summary. The workflow
 validates the fixed Markdown section format and publishes the resulting artifact unchanged. Note
 generation gates signing and has no fallback. GitHub Releases is the only changelog; the

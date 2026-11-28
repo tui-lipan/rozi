@@ -148,6 +148,13 @@ pub(crate) fn progress(
         if change == crate::ops::update_check::OfferChange::Newer {
             ctx.state.commands_dirty = true;
         }
+        // A check may already have read the metadata of the release it switched to.
+        if let (Some(run), Some(offered)) = (
+            ctx.state.self_update.run.as_mut(),
+            ctx.state.available_update.as_ref(),
+        ) {
+            run.learn(offered);
+        }
     }
     let Some(run) = current_run(ctx, generation) else {
         return Update::none();
@@ -877,6 +884,18 @@ mod tests {
             // A newer release is on offer by the time the installer, or a late check, reads the
             // warning of the one installing; the warning still belongs to that one, and a lookup
             // that could not read it does not take it away.
+            // The installer switches to a release a check already read the warning of, then cannot
+            // read it itself, and a newer release is announced before it finishes.
+            let mut switched = updating_to("9.9.9", false);
+            switched.dispatch(raising_extension_api("9.9.10")).unwrap();
+            report(
+                &mut switched,
+                SelfUpdateEvent::Resolved(found("9.9.10", false)),
+            );
+            switched.dispatch(raising_extension_api("9.9.11")).unwrap();
+            finish(&mut switched, Ok(semver::Version::new(9, 9, 10)));
+            assert!(restart_note(&switched).is_some(), "9.9.10's known note");
+
             for (announced, late, resolved) in [
                 (false, None, true),
                 (false, Some(true), false),

@@ -112,13 +112,15 @@ pub(crate) fn acknowledge_pane_input_in_namespace(
     pane.terminal.finished_unseen = false;
     pane.terminal.error_unseen = false;
     pane.terminal.program_status_attention = false;
+    // A blocked agent stays blocked until it is answered, so its mark stays; it only stops pulsing.
+    let blocked_seen = pane.see_blockers();
     let mut agent_cleared = false;
     for runtime in on_screen {
         agent_cleared |= state
             .agent_attention
             .acknowledge(&runtime.reference, runtime.noticed_runs());
     }
-    changed || agent_cleared
+    changed || blocked_seen || agent_cleared
 }
 
 fn acknowledge_pane(state: &mut State, pane_id: PaneId) -> bool {

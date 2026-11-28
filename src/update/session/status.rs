@@ -225,6 +225,7 @@ pub(crate) fn apply_pane_runtime_state(
         edges.failed = false;
         failed_rows.clear();
     }
+    pane.forget_unblocked();
     AppliedPaneRuntime {
         finished_rows,
         failed_rows,
@@ -967,6 +968,31 @@ mod tests {
         let applied = apply_pane_runtime_state(&mut pane, Vec::new(), runtime);
         assert!(!applied.edges.became_blocked);
         assert!(!applied.edges.finished);
+    }
+
+    /// A blocked prompt the user has acted on stops being news until the agent leaves it: the
+    /// next time the agent blocks, the pane pulses again.
+    #[test]
+    fn a_seen_block_is_news_again_once_the_agent_blocks_anew() {
+        let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
+        let agent = |state| PaneRuntimeState {
+            agent_launch: 1,
+            detected_agent: Some(DetectedAgent {
+                blocker: None,
+                agent: AgentIdentity::new("pi", "Pi").into(),
+                state,
+            }),
+            ..PaneRuntimeState::default()
+        };
+        apply_pane_runtime_state(&mut pane, Vec::new(), agent(DetectedAgentState::Blocked));
+        assert!(!pane.blocked_seen());
+        assert!(pane.see_blockers());
+        apply_pane_runtime_state(&mut pane, Vec::new(), agent(DetectedAgentState::Blocked));
+        assert!(pane.blocked_seen(), "an unchanged block stays seen");
+
+        apply_pane_runtime_state(&mut pane, Vec::new(), agent(DetectedAgentState::Working));
+        apply_pane_runtime_state(&mut pane, Vec::new(), agent(DetectedAgentState::Blocked));
+        assert!(!pane.blocked_seen());
     }
 
     #[test]

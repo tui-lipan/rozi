@@ -341,7 +341,7 @@ pub(crate) fn pane_frame_chrome(
         })
         .flatten();
     let alert_pulses = alert.is_some_and(|(state, color)| {
-        pane_alert_breathes(state, focused)
+        pane_alert_breathes(state, pane, focused)
             && pane_alert_pulses(
                 theme,
                 color,
@@ -448,7 +448,7 @@ pub(crate) fn pane_alert(
     // marking its border would only restate what is on screen and would never clear on its own.
     // An agent's blocked state stays lit on the focused pane, since answering the agent clears it
     // and the prompt may sit behind another conversation tab; [`pane_alert_breathes`] holds it
-    // still there. A bare `rozi status blocked` names no agent to answer, and only its producer can
+    // still there, and anywhere once the user has acted on it. A bare `rozi status blocked` names no agent to answer, and only its producer can
     // clear it, so it stays a live condition. Error and finished are latches, raised for news the
     // user has not read yet, and they stay lit on the focused pane until an input answers them
     // (`acknowledge_pane_if_attended`). A failure can last as long as its thread stays loaded, so
@@ -490,10 +490,15 @@ pub(crate) fn pane_alert(
     .find_map(|(alert, active, color)| Some((alert, active.then_some(color).flatten()?)))
 }
 
-/// Whether `alert` breathes on this pane. A blocked focused pane holds its alert still: the prompt
-/// is in front of the user, so a pulse beside the text they are answering would only distract.
-pub(crate) fn pane_alert_breathes(alert: crate::state::PaneAlert, focused: bool) -> bool {
-    !(focused && alert == crate::state::PaneAlert::Blocked)
+/// Whether `alert` breathes on `pane`. A blocked pane holds its alert still while it is focused,
+/// since the prompt is in front of the user and a pulse beside it would only distract, and once the
+/// user has acted on it, since it still waits but is no longer news.
+pub(crate) fn pane_alert_breathes(
+    alert: crate::state::PaneAlert,
+    pane: &Pane,
+    focused: bool,
+) -> bool {
+    !(alert == crate::state::PaneAlert::Blocked && (focused || pane.blocked_seen()))
 }
 
 /// The alert a pane draws on its border: [`pane_alert`], unless the configured paint leaves the
@@ -567,7 +572,7 @@ fn pane_content_alert_tint(
     let pulses = config.alert_border == AlertMode::Pulse
         && animations.enabled
         && animations.focus_chrome
-        && pane_alert_breathes(alert, focused);
+        && pane_alert_breathes(alert, pane, focused);
     let amount = pulses
         .then(|| animation::alert_tint_pulse(ctx, alert.is_calm()))
         .flatten()
@@ -2636,9 +2641,9 @@ mod tests {
             Some((PaneAlert::Blocked, BadgeColor::Error)),
             "blocked stays lit on the focused pane until the agent is answered"
         );
-        assert!(!pane_alert_breathes(PaneAlert::Blocked, true));
-        assert!(pane_alert_breathes(PaneAlert::Blocked, false));
-        assert!(pane_alert_breathes(PaneAlert::Finished, true));
+        assert!(!pane_alert_breathes(PaneAlert::Blocked, &pane, true));
+        assert!(pane_alert_breathes(PaneAlert::Blocked, &pane, false));
+        assert!(pane_alert_breathes(PaneAlert::Finished, &pane, true));
         pane.closing = true;
         assert_eq!(pane_alert(&pane, false, &config, &Default::default()), None);
         pane.closing = false;

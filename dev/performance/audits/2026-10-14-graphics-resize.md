@@ -69,7 +69,7 @@ Raw cases are under `target/rz-legacy60`, `target/rz-default60`, `target/rz-defa
 To repeat the default 60 Hz case from this worktree, use a fresh output directory:
 
 ```bash
-python3 tools/graphics-benchmark.py \
+python3 tools/bench/graphics-benchmark.py \
   --binary /tmp/rozi-graphics-bench-bin/rozi-resize-complete \
   --window-lab /home/razuer/.agents/skills/ghostty-window-lab/scripts/window_lab.py \
   --output /home/razuer/Projects/rozi/target/rz-repeat60 \

@@ -67,8 +67,9 @@ NON_USER_FACING_PATH_PREFIXES = (
     "benches/",
     "dev/",
     "docs/",
-    "scripts/",
+    "services/",
     "tests/",
+    "tools/",
 )
 PR_LINK_RE = re.compile(r"/pull/(\d+)\b")
 # A call argument such as `selected(None)` follows an identifier; a placeholder link does not.
@@ -226,7 +227,7 @@ def exclusion_reason(subject: str, paths: Sequence[str]) -> str | None:
         lambda path: path.startswith(".github/")
         or path.startswith(".agents/")
         or path.startswith(".opencode/")
-        or path.startswith("scripts/")
+        or path.startswith("tools/release/")
         or path == "dev/release-process.md",
     ):
         return "CI-only change"

@@ -1,6 +1,6 @@
 # Render-oriented history reads
 
-This prototype is not enabled in Rozi. See the [measurement report](../../../dev/performance/audits/2026-09-14-render.md).
+This prototype is not enabled in Rozi. See the [measurement report](../../audits/2026-09-14-render.md).
 It keeps the dense viewport / compact history split and changes how snapshots read it.
 
 Live viewport rendering indexes dense rows directly. History traversal stays explicit for
@@ -23,7 +23,7 @@ The conversion algorithm is unchanged. Immediate compaction remains the experime
 Run from Rozi, with cached registry sources available:
 
 ```bash
-python3 tools/experiments/render-history/prepare.py --output /tmp/rozi-render-review
+python3 dev/performance/experiments/render-history/prepare.py --output /tmp/rozi-render-review
 ```
 
 The destination must be new. The script reads cached sources and patches copies without changing

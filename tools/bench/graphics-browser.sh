@@ -5,7 +5,7 @@
 #   BROWSER    terminal-browser launcher (bin/terminal-browser of an installation)
 #   FPS        render.fps for the browser, matching the client's frame rate
 #   PRESENTER  render.presenter: auto (normal patches) or full
-#   URL        a page URL, or "generated" for tools/graphics-page.html over loopback
+#   URL        a page URL, or "generated" for tools/bench/graphics-page.html over loopback
 #
 # Settings are written to the browser's configuration in the caller's XDG_CONFIG_HOME, so run it
 # only with the benchmark's isolated directories. GPU rendering is disabled for repeatable runs.

@@ -1,4 +1,4 @@
-# Agent plugins
+# Agent integrations
 
 First-party plugins that integrate supported coding agents with rozi's activity tracking.
 

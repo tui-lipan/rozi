@@ -11,7 +11,7 @@ archived here as final evidence. It is not used by Rozi.
 
 - Baseline: Alacritty `d692748d`, release build.
 - Candidate: the same revision with the port, archived as
-  [`tools/experiments/alacritty-port`](../../../tools/experiments/alacritty-port/README.md). Its
+  [`dev/performance/experiments/alacritty-port`](../experiments/alacritty-port/README.md). Its
   last commit is `e8e5aee6` on a local branch.
 - `dense` is the candidate with compaction off, which is what every existing Alacritty user would
   run. `compact` sets `ALACRITTY_COMPACT_SCROLLBACK=1`.

@@ -9,7 +9,7 @@ Add the absolute path to this directory to `plugins` in your OpenCode `cli.json`
 
 ```json
 {
-  "plugins": ["/absolute/path/to/rozi/plugins/opencode"],
+  "plugins": ["/absolute/path/to/rozi/integrations/opencode"],
   "tabs": { "mode": "on" }
 }
 ```
@@ -62,7 +62,7 @@ A failed message fetch or interrupted turn may have no response. Text over 1 MiB
 ## Verify
 
 ```sh
-node --test plugins/opencode/*.test.mjs
+node --test integrations/opencode/*.test.mjs
 ```
 
 Tests cover client ownership, per-session directories and IDs, child activity, concurrent waits,

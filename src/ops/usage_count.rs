@@ -28,7 +28,7 @@
 //! - `[updates] count_usage = false`, `[updates] check = false`, `DO_NOT_TRACK`, a CI environment,
 //!   and a debug build each keep the install out of the count.
 //!
-//! The wire format is a public contract with the counter in `tools/usage-counter/`. Add fields
+//! The wire format is a public contract with the counter in `services/usage-counter/`. Add fields
 //! rather than change them, and bump [`SCHEMA_VERSION`] only for a change the counter must
 //! recognise.
 
@@ -1192,7 +1192,7 @@ mod tests {
 
         // The counter's tests post this file, so the two sides agree on every field and its type.
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../tools/usage-counter/test/client-report.json"
+            "../../services/usage-counter/test/client-report.json"
         ))
         .unwrap();
         let fixture = fixture.as_object().unwrap();
@@ -1212,7 +1212,7 @@ mod tests {
     /// Every install channel's wire name is one the counter lists.
     #[test]
     fn every_install_channel_has_a_name_the_counter_knows() {
-        let counter = include_str!("../../tools/usage-counter/src/report.js");
+        let counter = include_str!("../../services/usage-counter/src/report.js");
         for source in [
             InstallSource::Managed,
             InstallSource::Cargo,

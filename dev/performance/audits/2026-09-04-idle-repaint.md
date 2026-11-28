@@ -30,7 +30,7 @@ profile this host is not currently configured for.
 | Revision | Rozi `ca5f34b`, release build |
 | OS | Arch Linux, kernel 7.1.9-arch1-2 |
 | CPU | AMD Ryzen 7 5700X3D, governor and EPP `performance`, boost on |
-| Harness | isolated `HOME`/XDG root, server plus one `script`-hosted client, `/proc/<pid>/stat` over a 6 s window, modelled on `tools/memory-matrix.sh` |
+| Harness | isolated `HOME`/XDG root, server plus one `script`-hosted client, `/proc/<pid>/stat` over a 6 s window, modelled on `tools/bench/memory-matrix.sh` |
 | Guest | `printf '\r%s working'` in `/bin/sh`, one write per tick, primary screen, no scroll |
 | Config | animations off, so nothing but the guest's output can drive a frame |
 
@@ -216,7 +216,7 @@ the fix paints is a row that was usually already damaged.
 
 ## Reproducing
 
-The harness is not committed; it is a variant of `tools/memory-matrix.sh` that replaces the pane
+The harness is not committed; it is a variant of `tools/bench/memory-matrix.sh` that replaces the pane
 workload with a rate-controlled spinner and samples `utime + stime` rather than PSS. The pieces
 worth keeping are the isolated root, the `script`-hosted client, and reading the wrapper's log size
 for host bytes.

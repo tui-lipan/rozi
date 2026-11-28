@@ -45,7 +45,7 @@ with the temporary Git patch and source allowance removed.
 - Rozi: based on `60742a5a`, release build with framework revision `f1e6085b`
   from [tui-lipan #328](https://github.com/tui-lipan/tui-lipan/pull/328).
 - Pane: 79 columns × 19 rows, 1501 × 798 pixels, 19 × 42 pixels per cell.
-- Workload: `tools/graphics-patches.py`, 20 updates per second, reusable raw RGBA files.
+- Workload: `tools/bench/graphics-patches.py`, 20 updates per second, reusable raw RGBA files.
   The patch scene retains a background and toolbar and changes a 37 × 23 opaque patch plus a
   moving 127 × 75 translucent patch. Full-frame mode sends a new background-sized image each tick.
 - Each run has independent scratch configuration, data, state, cache and runtime directories,

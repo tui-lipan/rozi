@@ -15,7 +15,7 @@ Run the same cases through an existing checkout of
 [tui-lipan/rozi-extension-index](https://github.com/tui-lipan/rozi-extension-index):
 
 ```sh
-python scripts/check_discover_conformance.py ../rozi-extension-index/scripts/build_index.py
+python tools/conformance/check_discover_conformance.py ../rozi-extension-index/scripts/build_index.py
 ```
 
 The Python runner imports the supplied generator and calls `catalog_entry` with synthetic repository

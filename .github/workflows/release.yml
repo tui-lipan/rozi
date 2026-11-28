@@ -20,8 +20,8 @@ on:
       - ".opencode/agents/rosie.md"
       - ".opencode/commands/changelog.md"
       - ".opencode/release-notes.json"
-      - "scripts/release_notes.py"
-      - "scripts/tests/test_release_notes.py"
+      - "tools/release/release_notes.py"
+      - "tools/release/tests/test_release_notes.py"
   workflow_dispatch:
 
 # Both tui-lipan and relswap come from crates.io, so Cargo.lock pins the exact engine each signed
@@ -128,7 +128,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/release_notes.py prepare \
+          python3 tools/release/release_notes.py prepare \
             --repository "$GITHUB_REPOSITORY" \
             --to-tag "$GITHUB_REF_NAME" \
             --expected-to-sha "$GITHUB_SHA" \
@@ -141,7 +141,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/release_notes.py earlier \
+          python3 tools/release/release_notes.py earlier \
             --repository "$GITHUB_REPOSITORY" \
             --to-tag "$GITHUB_REF_NAME" \
             --output earlier-release-notes
@@ -171,7 +171,7 @@ jobs:
             fi
             if ! test -f release-notes.md; then
               error="release-notes.md was not written"
-            elif error=$(python3 scripts/release_notes.py validate \
+            elif error=$(python3 tools/release/release_notes.py validate \
               --input release-notes.md \
               --metadata release-notes-range.json \
               --output release-notes-checked.md 2>&1); then
@@ -184,7 +184,7 @@ jobs:
 
       - name: Validate and freeze generated Markdown
         run: |
-          python3 scripts/release_notes.py validate \
+          python3 tools/release/release_notes.py validate \
             --input release-notes.md \
             --metadata release-notes-range.json \
             --output release-notes.md
@@ -219,7 +219,7 @@ jobs:
         run: bash -n install.sh
       - name: Test release-note range and format policy
         if: ${{ !cancelled() }}
-        run: python3 -m unittest scripts.tests.test_release_notes
+        run: python3 -m unittest tools.release.tests.test_release_notes
 
   # Packaging waits for the source check and, on a tag, for the release notes, which every payload
   # embeds for its What's new dialog. A pull request or manual run generates no notes, so it embeds
@@ -323,7 +323,7 @@ jobs:
           fi
 
       # The Ghostty terminal engine (`ghostty-engine`) builds libghostty-vt with Zig.
-      # The Linux containers install their own pinned Zig (scripts/install-zig.sh) and build for
+      # The Linux containers install their own pinned Zig (tools/release/install-zig.sh) and build for
       # the same glibc ceiling as the rest of the payload. Like the rest of this build, the library
       # is not cached.
       - name: Install Zig 0.17.1
@@ -361,7 +361,7 @@ jobs:
                 curl --proto "=https" --tlsv1.2 -fsSL https://sh.rustup.rs \
                   | sh -s -- -y --profile minimal --default-toolchain 1.96.0 --no-modify-path
                 export PATH=/root/.cargo/bin:$PATH
-                ZIG="$(scripts/install-zig.sh)"
+                ZIG="$(tools/release/install-zig.sh)"
                 export ZIG
                 cargo build --locked --release --target "${{ matrix.target }}" \
                   --features ghostty-engine

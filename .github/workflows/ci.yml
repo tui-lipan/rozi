@@ -102,7 +102,7 @@ jobs:
         run: cargo test --locked --no-fail-fast
       - name: Check THIRD_PARTY_NOTICES.md is current
         if: ${{ !cancelled() }}
-        run: python3 scripts/third_party_notices.py --check
+        run: python3 tools/release/third_party_notices.py --check
 
   remote-ssh:
     name: localhost SSH transport
@@ -167,7 +167,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Test the OpenCode plugin
-        run: node --test plugins/opencode/*.test.mjs
+        run: node --test integrations/opencode/*.test.mjs
 
   # crates.io is the last release step and the only one that cannot be retried from the same tag,
   # so a crate it would refuse has to fail here, before anything is tagged. Release tags require a

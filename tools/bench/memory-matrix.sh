@@ -10,7 +10,7 @@ SAMPLE_INTERVAL=0.2
 
 usage() {
   cat <<'EOF'
-Usage: tools/memory-matrix.sh [--quick|--full|--lifecycle|--smoke] [--case ROWS COLS PANES HISTORY CONTENT CLIENTS [STATE]] [--output DIR]
+Usage: tools/bench/memory-matrix.sh [--quick|--full|--lifecycle|--smoke] [--case ROWS COLS PANES HISTORY CONTENT CLIENTS [STATE]] [--output DIR]
 
 Linux-only, opt-in PSS benchmark. --quick is the default; --smoke runs a bounded
 image lifecycle to validate dependencies, replay, cleanup, and shutdown.
@@ -45,7 +45,7 @@ for command in cargo python3 script stty; do
   command -v "$command" >/dev/null || { echo "missing required command: $command" >&2; exit 1; }
 done
 
-REPO=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+REPO=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$REPO"
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR=$(cd "$OUTPUT_DIR" && pwd)

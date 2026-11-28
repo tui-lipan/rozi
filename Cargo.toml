@@ -27,9 +27,11 @@ exclude = [
   "/docs/wrangler.jsonc",
   # Release-note policy and automation run only in GitHub Actions.
   "/.opencode/",
-  "/scripts/",
-  # Developer-only capture and benchmark tooling; keep the crates.io package below its size cap.
+  # Developer-only release, capture, and benchmark tooling, archived performance experiments, and
+  # the usage counter Worker; keep the crates.io package below its size cap.
   "/tools/",
+  "/dev/performance/experiments/",
+  "/services/",
   # Test harnesses and benchmarks are not needed to install the published binary.
   "/tests/",
   "/benches/",

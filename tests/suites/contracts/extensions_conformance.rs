@@ -162,7 +162,7 @@ fn opencode_plugin_lifecycle_passes_without_a_live_ui() {
     if !node.is_ok_and(|output| output.status.success()) {
         return;
     }
-    let root = repository_root().join("plugins/opencode");
+    let root = repository_root().join("integrations/opencode");
     let output = Command::new("node")
         .arg("--test")
         .arg(root.join("v2.test.mjs"))

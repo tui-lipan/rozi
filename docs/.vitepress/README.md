@@ -55,7 +55,7 @@ border, shadow, and glow in CSS, so the glow can spread past the video's edges. 
 ### Links that leave `docs/`
 
 Pages link to repository files that are not part of the site — `../AGENTS.md`,
-`../examples/config.toml`, `../plugins/…`. Those work on GitHub and in an
+`../examples/config.toml`, `../integrations/…`. Those work on GitHub and in an
 editor but would be dead links once only `docs/` is published, so
 `repoLinks.ts` rewrites them to `github.com/tui-lipan/rozi` URLs before
 VitePress parses the markdown. Links to a directory with no index page, such as

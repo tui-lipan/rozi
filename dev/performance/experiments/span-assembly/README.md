@@ -1,6 +1,6 @@
 # Dense span-assembly profiling
 
-This prototype is not enabled in Rozi. See the [measurement report](../../../dev/performance/audits/2026-09-14-span.md).
+This prototype is not enabled in Rozi. See the [measurement report](../../audits/2026-09-14-span.md).
 It instruments released `tui-lipan 0.9.0` against released `alacritty_terminal 0.26.0`. There is no
 engine fork and no compact-history path.
 
@@ -13,7 +13,7 @@ and checked against the current snapshot.
 Run from Rozi, with the cached registry source available:
 
 ```bash
-python3 tools/experiments/span-assembly/prepare.py --output /tmp/rozi-span-assembly
+python3 dev/performance/experiments/span-assembly/prepare.py --output /tmp/rozi-span-assembly
 ```
 
 The destination must be new. The script copies cached `tui-lipan 0.9.0` and patches that copy.

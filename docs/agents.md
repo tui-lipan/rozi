@@ -662,7 +662,7 @@ told apart.
 
 ### OpenCode sessions and worktrees
 
-The [OpenCode V2 plugin](../plugins/opencode/README.md) publishes each open root-session tab as its
+The [OpenCode V2 plugin](../integrations/opencode/README.md) publishes each open root-session tab as its
 own agent row, including tabs working in different Git worktrees. Each row carries the session's
 directory and native conversation ID. Selecting a row switches OpenCode to that tab through its
 UI API. Child sessions contribute to their parent's activity, and pending permissions or input

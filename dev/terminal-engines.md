@@ -18,7 +18,7 @@ cargo build --features ghostty-engine
 
 Release and nightly builds set `GHOSTTY_VT_GLIBC=2.28` inside the manylinux containers and
 `MACOSX_DEPLOYMENT_TARGET=13.0` on macOS, and check both floors on the result. The Linux containers
-install Zig through `scripts/install-zig.sh`, which pins its checksum.
+install Zig through `tools/release/install-zig.sh`, which pins its checksum.
 
 ## How the engine is chosen
 
@@ -50,7 +50,7 @@ Builds with the feature link libghostty-vt and its bundled dependencies. `THIRD_
 shipped in every release archive, is generated from the locked `-src` crate:
 
 ```bash
-python3 scripts/third_party_notices.py
+python3 tools/release/third_party_notices.py
 ```
 
 CI fails when it is out of date, so rerun it after updating tui-lipan.

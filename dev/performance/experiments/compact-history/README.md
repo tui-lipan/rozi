@@ -2,7 +2,7 @@
 
 This experiment is **not enabled in Rozi**. It saves substantial short-line history memory but
 fails the ingest performance gate. Keep it as a reproducible starting point, not a dependency
-patch to ship. See the [investigation](../../../dev/performance/audits/2026-09-10.md).
+patch to ship. See the [investigation](../../audits/2026-09-10.md).
 
 `engine.patch` applies to the published `alacritty_terminal 0.26.0` crate. It changes row storage
 to an exact prefix plus a repeated final cell, compacts rows entering history, and adapts reflow.
@@ -30,7 +30,7 @@ Use `--engine-source` and `--framework-source` to select explicit pristine sourc
 From the Rozi root:
 
 ```bash
-python3 tools/experiments/compact-history/prepare.py --output /tmp/rozi-compact-history-review
+python3 dev/performance/experiments/compact-history/prepare.py --output /tmp/rozi-compact-history-review
 ```
 
 Use a fresh destination name if that directory already exists. A failed preparation leaves its

@@ -154,8 +154,8 @@ impl SelfUpdateRun {
             return;
         }
         match event {
-            // The announced release keeps the metadata it was announced with; only a different
-            // release brings its own.
+            // A different release brings its own note. For the same one, the offer decides which
+            // metadata wins (see `self_update::sync_note`).
             SelfUpdateEvent::Resolved(update) if update.latest != self.latest => {
                 self.note = update.extension_note();
                 self.latest = update.latest;

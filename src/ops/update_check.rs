@@ -318,6 +318,38 @@ fn offer(
     }
 }
 
+/// What a release a check or the installer found does to the one on offer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OfferChange {
+    /// A newer release, or the first one: a fresh offer.
+    Newer,
+    /// The release already on offer. It may have filled in metadata the offer lacked.
+    Same,
+    /// An older release than the one on offer, which stays.
+    Older,
+}
+
+/// Fold `found` into `offered`. The newest known release never moves backwards, and for the same
+/// release, compatibility metadata that was read wins over metadata that could not be.
+pub(crate) fn merge_offer(
+    offered: &mut Option<AvailableUpdate>,
+    found: AvailableUpdate,
+) -> OfferChange {
+    match offered {
+        Some(current) if found.latest < current.latest => OfferChange::Older,
+        Some(current) if found.latest == current.latest => {
+            if current.compatibility.is_none() {
+                current.compatibility = found.compatibility;
+            }
+            OfferChange::Same
+        }
+        _ => {
+            *offered = Some(found);
+            OfferChange::Newer
+        }
+    }
+}
+
 /// Atomically let one client announce each release. If state storage is unavailable, prefer a
 /// repeated useful notice over hiding updates forever.
 ///

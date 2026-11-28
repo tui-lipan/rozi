@@ -760,26 +760,31 @@ pub(super) fn update_available(
     update: crate::ops::update_check::AvailableUpdate,
     announce: bool,
 ) -> Update {
-    let known = ctx.state.available_update.as_ref() == Some(&update);
-    if !known {
+    use crate::ops::update_check::OfferChange;
+    let latest = update.latest.clone();
+    let change = crate::ops::update_check::merge_offer(&mut ctx.state.available_update, update);
+    if change == OfferChange::Newer {
         // A newer release than the one this client already offered is a fresh offer, even if the
         // user had started updating to the previous one.
         ctx.state.update_started = false;
-        ctx.state.available_update = Some(update.clone());
         ctx.state.commands_dirty = true;
     }
+    crate::ops::self_update::sync_note(&mut ctx.state);
     // A release this client is installing, or installed, is not news here.
     let installing = ctx
         .state
         .self_update
         .run
         .as_ref()
-        .is_some_and(|run| update.latest <= *run.release());
-    if !announce || installing {
-        return if known {
-            Update::none()
-        } else {
+        .is_some_and(|run| latest <= *run.release());
+    let Some(update) = ctx.state.available_update.clone() else {
+        return Update::none();
+    };
+    if !announce || installing || change == OfferChange::Older {
+        return if change == OfferChange::Newer {
             Update::full()
+        } else {
+            Update::none()
         };
     }
     let in_commands = crate::commands::command_available(Action::UpdateRozi, &ctx.state);

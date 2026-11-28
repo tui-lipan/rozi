@@ -127,29 +127,43 @@ pub(crate) fn progress(
     generation: u64,
     event: SelfUpdateEvent,
 ) -> Update {
-    if let SelfUpdateEvent::Resolved(update) = &event
-        && current_run(ctx, generation).is_some_and(|run| run.phase.in_progress())
-    {
-        // The release being installed is the one on offer now: Commands names it, and a later
-        // check of the same release is not a fresh offer.
-        let newer = ctx
-            .state
-            .available_update
-            .as_ref()
-            .is_none_or(|offered| offered.latest < update.latest);
-        if newer {
-            ctx.state.available_update = Some(update.clone());
+    let resolved = match &event {
+        SelfUpdateEvent::Resolved(update) => Some(update.clone()),
+        _ => None,
+    };
+    let Some(run) = current_run(ctx, generation) else {
+        return Update::none();
+    };
+    let working = run.phase.in_progress();
+    run.advance(event);
+    if let Some(update) = resolved.filter(|_| working) {
+        // The release being installed is on offer now, so a later check of it is not a fresh
+        // offer. Its metadata joins what the offer knew, and the run's note follows the result.
+        let change = crate::ops::update_check::merge_offer(&mut ctx.state.available_update, update);
+        if change == crate::ops::update_check::OfferChange::Newer {
             ctx.state.commands_dirty = true;
         }
+        sync_note(&mut ctx.state);
     }
     let Some(run) = current_run(ctx, generation) else {
         return Update::none();
     };
-    run.advance(event);
     if run.hidden {
         Update::none()
     } else {
         Update::full()
+    }
+}
+
+/// A running update to the release on offer takes that offer's note: the offer holds the best
+/// metadata known for the release, whichever check or lookup read it.
+pub(crate) fn sync_note(state: &mut crate::state::State) {
+    let (Some(run), Some(offered)) = (state.self_update.run.as_mut(), &state.available_update)
+    else {
+        return;
+    };
+    if run.phase.in_progress() && run.latest == offered.latest {
+        run.note = offered.extension_note();
     }
 }
 
@@ -826,48 +840,67 @@ mod tests {
     }
 
     /// A release published after the check is what the installer finds. The card names it from
-    /// the start of the download, with its own note, and so does Commands - also once a still
-    /// newer release is announced while it runs, which raises no toast for the one installing.
-    /// Finding the announced release again changes nothing, even without its metadata.
+    /// the start of the download, with its own note, and so does Commands while it runs. For the
+    /// same release, metadata that was read beats metadata that could not be, from either side; a
+    /// check of the release being installed raises no toast, and an older one never displaces the
+    /// newer release on offer.
     #[test]
     fn the_card_names_the_release_the_installer_found() {
         crate::test_support::on_large_stack(|| {
-            let mut same = updating_to("9.9.9", true);
-            report(
-                &mut same,
-                SelfUpdateEvent::Resolved(crate::ops::update_check::AvailableUpdate::for_test(
-                    "9.9.9",
-                    InstallSource::Managed,
-                    None,
-                )),
-            );
-            finish(&mut same, Ok(semver::Version::new(9, 9, 9)));
-            assert!(
-                restart_note(&same).is_some(),
-                "a refetch that lost the metadata keeps the announced note"
-            );
+            let found = |version: &str, warned: bool| {
+                let Msg::UpdateAvailable { update, .. } = (if warned {
+                    raising_extension_api(version)
+                } else {
+                    Msg::UpdateAvailable {
+                        update: crate::ops::update_check::AvailableUpdate::for_test(
+                            version,
+                            InstallSource::Managed,
+                            None,
+                        ),
+                        announce: true,
+                    }
+                }) else {
+                    unreachable!()
+                };
+                update
+            };
+            for (announced, resolved) in [(true, false), (false, true)] {
+                let mut same = updating_to("9.9.9", announced);
+                report(
+                    &mut same,
+                    SelfUpdateEvent::Resolved(found("9.9.9", resolved)),
+                );
+                finish(&mut same, Ok(semver::Version::new(9, 9, 9)));
+                assert!(
+                    restart_note(&same).is_some(),
+                    "the note read by either the check or the installer is kept"
+                );
+            }
 
             let mut backend = updating_to("9.9.9", false);
-            let Msg::UpdateAvailable { update, .. } = raising_extension_api("9.9.10") else {
-                unreachable!()
-            };
-            report(&mut backend, SelfUpdateEvent::Resolved(update));
+            report(
+                &mut backend,
+                SelfUpdateEvent::Resolved(found("9.9.10", true)),
+            );
             let downloading = screen(&mut backend);
             assert!(downloading.contains("→ v9.9.10"), "{downloading}");
             assert!(!downloading.contains("v9.9.9"), "{downloading}");
-            assert_eq!(
-                backend
-                    .state()
-                    .available_update
-                    .as_ref()
-                    .map(|offer| &offer.latest),
-                Some(&semver::Version::new(9, 9, 10))
-            );
             backend.dispatch(Msg::SelfUpdateHide).unwrap();
-            backend.dispatch(raising_extension_api("9.9.10")).unwrap();
+            backend
+                .dispatch(Msg::UpdateAvailable {
+                    update: found("9.9.10", false),
+                    announce: true,
+                })
+                .unwrap();
             assert!(!notice_raised(&backend), "9.9.10 is already installing");
             backend.dispatch(raising_extension_api("9.9.11")).unwrap();
             assert!(notice_raised(&backend), "9.9.11 is news");
+            backend
+                .dispatch(Msg::UpdateAvailable {
+                    update: found("9.9.10", true),
+                    announce: false,
+                })
+                .unwrap();
             assert_eq!(
                 crate::commands::resolved_label(
                     crate::input::Action::UpdateRozi,
@@ -884,8 +917,11 @@ mod tests {
             finish(&mut backend, Ok(semver::Version::new(9, 9, 10)));
             assert!(
                 restart_note(&backend).is_some(),
-                "9.9.10's note travels with it"
+                "9.9.10's note survives a check that could not read it"
             );
+            let offered = backend.state().available_update.as_ref().unwrap();
+            assert_eq!(offered.latest, semver::Version::new(9, 9, 11));
+            assert!(!backend.state().update_started, "9.9.11 is still offered");
         });
     }
 
@@ -1253,7 +1289,8 @@ mod tests {
 
     /// The updater asked for the latest release itself and caught up to one a check announced
     /// while it ran. That offer is settled: its note is the installed release's, its notice goes,
-    /// and choosing Later does not bring Update rozi back for a release already installed.
+    /// and choosing Later does not bring Update rozi back for a release already installed, even
+    /// when a later check of it reads different metadata.
     #[test]
     fn an_update_that_catches_up_to_a_newer_offer_settles_it() {
         crate::test_support::on_large_stack(|| {
@@ -1268,6 +1305,16 @@ mod tests {
             );
             assert!(!notice_raised(&backend), "no notice for what is installed");
             backend.dispatch(Msg::RelaunchCancel).unwrap();
+            backend
+                .dispatch(Msg::UpdateAvailable {
+                    update: crate::ops::update_check::AvailableUpdate::for_test(
+                        "9.9.10",
+                        InstallSource::Managed,
+                        None,
+                    ),
+                    announce: false,
+                })
+                .unwrap();
             assert!(!crate::commands::command_available(
                 crate::input::Action::UpdateRozi,
                 backend.state()

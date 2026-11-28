@@ -1047,5 +1047,66 @@ mod tests {
                 );
             });
         }
+
+        #[test]
+        fn aligned_dividers_stop_before_moving_an_ungrabbed_nested_divider() {
+            in_test_stack(|| {
+                for (small_pane_rows, allowed) in [(3.0, 0.0), (4.0, 2.0)] {
+                    for direction in [-1, 1] {
+                        let nested = |ratio, first, second| {
+                            Box::new(DwindleTree::Split {
+                                axis: SplitAxis::Vertical,
+                                ratio,
+                                first: leaf(first),
+                                second: leaf(second),
+                            })
+                        };
+                        let small_share = small_pane_rows / 14.0;
+                        let (right, upper, lower) = if direction == 1 {
+                            (
+                                split(SplitAxis::Vertical, leaf(3), nested(small_share, 4, 5)),
+                                3,
+                                4,
+                            )
+                        } else {
+                            (
+                                split(
+                                    SplitAxis::Vertical,
+                                    nested(1.0 - small_share, 3, 4),
+                                    leaf(5),
+                                ),
+                                4,
+                                5,
+                            )
+                        };
+                        let tree = *split(
+                            SplitAxis::Horizontal,
+                            split(SplitAxis::Vertical, leaf(1), leaf(2)),
+                            right,
+                        );
+                        let row = grab_row(&tree, 2);
+                        assert_eq!(grab_row(&tree, lower), row);
+                        let (before, after) =
+                            drag_divider(&tree, (50, row), (0, direction * 4), SplitAxis::Vertical);
+                        let delta = allowed * direction as f32;
+                        let expected = if delta == 0.0 {
+                            Vec::new()
+                        } else {
+                            vec![
+                                (1, 0.0, delta),
+                                (2, delta, 0.0),
+                                (upper, 0.0, delta),
+                                (lower, delta, 0.0),
+                            ]
+                        };
+                        assert_eq!(
+                            shifted(&before, &after),
+                            expected,
+                            "{small_pane_rows} rows, drag direction {direction}"
+                        );
+                    }
+                }
+            });
+        }
     }
 }

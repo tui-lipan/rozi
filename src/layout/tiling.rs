@@ -1107,11 +1107,12 @@ pub fn split_available_for_edge(
     target_axis: SplitAxis,
     edge: SplitEdge,
 ) -> Option<f32> {
-    split_geometry_for_edge(tree, rect, gap, focused, target_axis, edge)
-        .map(|(_, usable)| usable.max(1.0))
+    split_at_edge(tree, rect, gap, focused, target_axis, edge).map(|(_, rect)| {
+        usable_axis_extent(axis_extent(rect, target_axis), target_axis, gap).max(1.0)
+    })
 }
 
-/// The distance a trailing divider can travel before its split ratio hits a limit.
+/// How far a trailing divider can move while keeping its nested dividers in place.
 pub(crate) fn trailing_split_delta(
     tree: &DwindleTree,
     rect: FloatRect,
@@ -1120,20 +1121,70 @@ pub(crate) fn trailing_split_delta(
     axis: SplitAxis,
     pixels: f32,
 ) -> Option<f32> {
-    let (before, usable) =
-        split_geometry_for_edge(tree, rect, gap, pane, axis, SplitEdge::Trailing)?;
+    let (split, rect) = split_at_edge(tree, rect, gap, pane, axis, SplitEdge::Trailing)?;
+    let DwindleTree::Split {
+        ratio,
+        first,
+        second,
+        ..
+    } = split
+    else {
+        return None;
+    };
+    let (first_rect, _) = split_float_rect(rect, axis, *ratio, gap);
+    let before = axis_extent(first_rect, axis);
+    let usable = usable_axis_extent(axis_extent(rect, axis), axis, gap);
     let ratio = cell_split_ratio(before + pixels, usable);
-    Some((usable * ratio).round() - before)
+    let direction = pixels.signum();
+    let limit = (((usable * ratio).round() - before) * direction).clamp(0.0, pixels.abs()) as u32;
+    if limit == 0
+        || matches!(
+            (&**first, &**second),
+            (DwindleTree::Leaf(_), DwindleTree::Leaf(_))
+        )
+    {
+        return Some(limit as f32 * direction);
+    }
+
+    let can_move = |cells| {
+        let delta = cells as f32 * direction;
+        // Use the real resize so the preview includes the same gap and cell rounding rules.
+        let mut preview = split.clone();
+        resize_split_in_tree(
+            &mut preview,
+            rect,
+            gap,
+            pane,
+            axis,
+            Some(SplitEdge::Trailing),
+            delta,
+        ) && divider_positions_match((split, rect), (&preview, rect), gap, axis, delta)
+    };
+    if can_move(limit) {
+        return Some(limit as f32 * direction);
+    }
+    // Holding a nested divider gets harder as the grabbed divider moves farther in one direction.
+    // Search whole cells between the original position and the rejected limit.
+    let (mut accepted, mut rejected) = (0, limit);
+    while rejected - accepted > 1 {
+        let candidate = accepted + (rejected - accepted) / 2;
+        if can_move(candidate) {
+            accepted = candidate;
+        } else {
+            rejected = candidate;
+        }
+    }
+    Some(accepted as f32 * direction)
 }
 
-fn split_geometry_for_edge(
+fn split_at_edge(
     tree: &DwindleTree,
     rect: FloatRect,
     gap: TileGap,
     focused: PaneId,
     target_axis: SplitAxis,
     edge: SplitEdge,
-) -> Option<(f32, f32)> {
+) -> Option<(&DwindleTree, FloatRect)> {
     let DwindleTree::Split {
         axis,
         ratio,
@@ -1153,19 +1204,68 @@ fn split_geometry_for_edge(
         return None;
     };
 
-    if let Some(deeper) =
-        split_geometry_for_edge(child, child_rect, gap, focused, target_axis, edge)
-    {
+    if let Some(deeper) = split_at_edge(child, child_rect, gap, focused, target_axis, edge) {
         return Some(deeper);
     }
 
     if *axis != target_axis || !split_edge_matches_focused_side(edge, focused_is_first) {
         return None;
     }
-    Some((
-        axis_extent(first_rect, target_axis),
-        usable_axis_extent(axis_extent(rect, target_axis), target_axis, gap),
-    ))
+    Some((tree, rect))
+}
+
+/// Compare the same divider in two arrangements of the same tree. Only the grabbed divider
+/// at the root may move. Check the absolute cell where each of its two panes meets it.
+fn divider_positions_match(
+    (original, before): (&DwindleTree, FloatRect),
+    (resized, after): (&DwindleTree, FloatRect),
+    gap: TileGap,
+    axis: SplitAxis,
+    delta: f32,
+) -> bool {
+    let (
+        DwindleTree::Split {
+            axis: split_axis,
+            ratio: before_ratio,
+            first,
+            second,
+        },
+        DwindleTree::Split {
+            ratio: after_ratio,
+            first: resized_first,
+            second: resized_second,
+            ..
+        },
+    ) = (original, resized)
+    else {
+        return true;
+    };
+    let (before_first, before_second) = split_float_rect(before, *split_axis, *before_ratio, gap);
+    let (after_first, after_second) = split_float_rect(after, *split_axis, *after_ratio, gap);
+    if *split_axis == axis {
+        let edges = |first: FloatRect, second: FloatRect| match axis {
+            SplitAxis::Horizontal => ((first.x + first.w).round(), second.x.round()),
+            SplitAxis::Vertical => ((first.y + first.h).round(), second.y.round()),
+        };
+        let (old_near, old_far) = edges(before_first, before_second);
+        let (new_near, new_far) = edges(after_first, after_second);
+        if new_near - old_near != delta || new_far - old_far != delta {
+            return false;
+        }
+    }
+    divider_positions_match(
+        (first, before_first),
+        (resized_first, after_first),
+        gap,
+        axis,
+        0.0,
+    ) && divider_positions_match(
+        (second, before_second),
+        (resized_second, after_second),
+        gap,
+        axis,
+        0.0,
+    )
 }
 
 /// Axis, divided extent, and side of the innermost split holding `focused` - the divider between

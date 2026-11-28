@@ -1107,6 +1107,33 @@ pub fn split_available_for_edge(
     target_axis: SplitAxis,
     edge: SplitEdge,
 ) -> Option<f32> {
+    split_geometry_for_edge(tree, rect, gap, focused, target_axis, edge)
+        .map(|(_, usable)| usable.max(1.0))
+}
+
+/// The distance a trailing divider can travel before its split ratio hits a limit.
+pub(crate) fn trailing_split_delta(
+    tree: &DwindleTree,
+    rect: FloatRect,
+    gap: TileGap,
+    pane: PaneId,
+    axis: SplitAxis,
+    pixels: f32,
+) -> Option<f32> {
+    let (before, usable) =
+        split_geometry_for_edge(tree, rect, gap, pane, axis, SplitEdge::Trailing)?;
+    let ratio = cell_split_ratio(before + pixels, usable);
+    Some((usable * ratio).round() - before)
+}
+
+fn split_geometry_for_edge(
+    tree: &DwindleTree,
+    rect: FloatRect,
+    gap: TileGap,
+    focused: PaneId,
+    target_axis: SplitAxis,
+    edge: SplitEdge,
+) -> Option<(f32, f32)> {
     let DwindleTree::Split {
         axis,
         ratio,
@@ -1127,7 +1154,7 @@ pub fn split_available_for_edge(
     };
 
     if let Some(deeper) =
-        split_available_for_edge(child, child_rect, gap, focused, target_axis, edge)
+        split_geometry_for_edge(child, child_rect, gap, focused, target_axis, edge)
     {
         return Some(deeper);
     }
@@ -1135,13 +1162,10 @@ pub fn split_available_for_edge(
     if *axis != target_axis || !split_edge_matches_focused_side(edge, focused_is_first) {
         return None;
     }
-    let gap = gap.for_axis(target_axis);
-    let extent = match target_axis {
-        SplitAxis::Horizontal => rect.w,
-        SplitAxis::Vertical => rect.h,
-    };
-    let usable_gap = if extent > gap { gap } else { 0.0 };
-    Some((extent - usable_gap).max(1.0))
+    Some((
+        axis_extent(first_rect, target_axis),
+        usable_axis_extent(axis_extent(rect, target_axis), target_axis, gap),
+    ))
 }
 
 /// Axis, divided extent, and side of the innermost split holding `focused` - the divider between

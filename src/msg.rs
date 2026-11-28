@@ -674,9 +674,8 @@ pub enum Msg {
     /// Grab a tiled split junction: pane representatives for horizontal/vertical tree splits,
     /// followed by the drag origin (x, y).
     BeginResizeSplitJunction(Vec<PaneId>, Vec<PaneId>, u16, u16),
-    /// Drag a tiled split junction: pane representatives for horizontal/vertical tree splits,
-    /// followed by (from_x, from_y, x, y).
-    ResizeSplitJunction(Vec<PaneId>, Vec<PaneId>, u16, u16, u16, u16),
+    /// Drag a tiled split junction: (from_x, from_y, x, y).
+    ResizeSplitJunction(u16, u16, u16, u16),
     EndResizeSplit,
     /// Grab the scratchpad's top edge to resize its height: drag origin y (root coordinates).
     BeginScratchResize(u16),

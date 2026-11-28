@@ -18,7 +18,6 @@ use rozi::session::protocol::{
 fn rozi(root: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
     command
-        .env("HOME", root)
         .env("ROZI_CONFIG", root.join("config.toml"))
         .env("XDG_RUNTIME_DIR", root)
         .env("XDG_STATE_HOME", root.join("state"))
@@ -27,7 +26,7 @@ fn rozi(root: &Path) -> Command {
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("APPDATA", root.join("config"))
         .env("LOCALAPPDATA", root.join("state"));
-    common::isolate_shell_history(&mut command);
+    common::isolate_shell_env(&mut command, root);
     command
 }
 

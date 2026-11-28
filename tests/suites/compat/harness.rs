@@ -236,6 +236,7 @@ impl Isolated {
         command
             .current_dir(&self.root)
             .env("HOME", self.root.join("home"))
+            .env("USERPROFILE", self.root.join("home"))
             .env("XDG_CONFIG_HOME", self.root.join("config"))
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env("XDG_DATA_HOME", self.root.join("data"))
@@ -247,6 +248,9 @@ impl Isolated {
             .env("HISTFILE", "")
             .env_remove("ZDOTDIR")
             .env_remove("ROZI_ORIG_ZDOTDIR")
+            .env_remove("ENV")
+            .env_remove("BASH_ENV")
+            .env_remove("XDG_DATA_DIRS")
             .env_remove("ROZI_PANE")
             .env_remove("ROZI_SESSION")
             .env_remove("ROZI_SESSION_INSTANCE")
@@ -298,7 +302,8 @@ impl Isolated {
         }
         script.push_str(
             "export HISTFILE=''\n\
-             unset ZDOTDIR ROZI_ORIG_ZDOTDIR ROZI_PANE ROZI_SESSION ROZI_SESSION_INSTANCE \
+             unset ZDOTDIR ROZI_ORIG_ZDOTDIR ENV BASH_ENV XDG_DATA_DIRS \
+             ROZI_PANE ROZI_SESSION ROZI_SESSION_INSTANCE \
              ROZI_SOCKET ROZI_BIN ROZI_EXTENSION ROZI_EXTENSION_ID ROZI_EXTENSION_GENERATION \
              ROZI_AGENT\n",
         );

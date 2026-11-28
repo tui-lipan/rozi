@@ -473,13 +473,57 @@ pub(crate) fn unique_session_name() -> String {
     )
 }
 
-/// Keep interactive shells launched under a subprocess test from reading the developer's zsh
-/// dotfiles or appending test commands to their real shell history file.
-pub(crate) fn isolate_shell_history(command: &mut std::process::Command) {
+/// Keep shells launched under a subprocess test from reading the developer's dotfiles or
+/// appending test commands to their real history file.
+pub(crate) fn isolate_shell_env(command: &mut std::process::Command, home: &std::path::Path) {
     command
+        .env("HOME", home)
+        .env("USERPROFILE", home)
         .env("HISTFILE", "")
         .env_remove("ZDOTDIR")
-        .env_remove("ROZI_ORIG_ZDOTDIR");
+        .env_remove("ROZI_ORIG_ZDOTDIR")
+        .env_remove("ENV")
+        .env_remove("BASH_ENV")
+        .env_remove("XDG_DATA_DIRS");
+}
+
+/// Resolve the platform interactive shell and command runner for subprocess tests, adding
+/// `-NoProfile` to PowerShell so Windows panes do not load `$PROFILE` from the registry-backed
+/// Documents folder even when `USERPROFILE` is redirected.
+pub(crate) fn test_launch_argv() -> (Vec<String>, Vec<String>) {
+    let (mut shell, command_shell) = rozi::platform::command::resolve_launch_argv(
+        None,
+        None,
+        &rozi::platform::command::ShellEnv::from_process(),
+        rozi::platform::command::LoginShell::Never,
+    );
+    if let Some(program) = shell.first() {
+        let basename = program
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(program)
+            .to_ascii_lowercase();
+        let is_powershell = matches!(
+            basename.as_str(),
+            "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe"
+        );
+        let has_no_profile = shell.iter().skip(1).any(|arg| {
+            let lower = arg.to_ascii_lowercase();
+            lower.starts_with("-nop") && "-noprofile".starts_with(&lower)
+        });
+        if is_powershell && !has_no_profile {
+            let insert_at = if shell.get(1).is_some_and(|arg| {
+                let lower = arg.to_ascii_lowercase();
+                lower.starts_with("-l") && "-login".starts_with(&lower)
+            }) {
+                2
+            } else {
+                1
+            };
+            shell.insert(insert_at, "-NoProfile".to_string());
+        }
+    }
+    (shell, command_shell)
 }
 
 pub(crate) fn subprocess_endpoint(runtime_base: &std::path::Path, session: &str) -> IpcEndpoint {

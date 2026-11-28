@@ -154,11 +154,12 @@ fn isolated_rozi_builds_can_start_the_same_name_with_different_first_panes() {
             .arg(isolated)
             .args(args)
             .current_dir(root)
-            .env("HOME", &home)
             .env("XDG_DATA_HOME", root.join("data"))
+            .env("APPDATA", root.join("AppData").join("Roaming"))
+            .env("LOCALAPPDATA", root.join("AppData").join("Local"))
             .env("ROZI_CONFIG", root.join("outside.toml"))
             .env("ROZI_SOCKET", root.join("outside.sock"));
-        crate::common::isolate_shell_history(&mut command);
+        crate::common::isolate_shell_env(&mut command, &home);
         command.output().unwrap()
     };
     let left_start = run(

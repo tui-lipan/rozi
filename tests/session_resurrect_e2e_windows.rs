@@ -87,13 +87,12 @@ impl Paths {
         command
             .args(["--server", session])
             .env("ROZI_CONFIG", &self.config_path)
-            .env("USERPROFILE", &self.test_root)
             .env("LOCALAPPDATA", &self.local_app_data)
             .env("APPDATA", &self.roaming_app_data)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
-        common::isolate_shell_history(&mut command);
+        common::isolate_shell_env(&mut command, &self.test_root);
         command.spawn().expect("launch real session server")
     }
 }

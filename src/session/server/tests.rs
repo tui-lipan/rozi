@@ -10262,28 +10262,384 @@ fn a_pane_whose_program_exits_forgets_what_it_registered() {
     });
 }
 
+#[test]
+fn powershell_no_profile_prepends_only_when_missing_and_after_login() {
+    use crate::platform::command::ShellCommand;
+
+    assert_eq!(
+        with_powershell_no_profile(ShellCommand::new("pwsh.exe").arg("-NoLogo")).as_argv(),
+        vec!["pwsh.exe", "-NoProfile", "-NoLogo"]
+    );
+    assert_eq!(
+        with_powershell_no_profile(
+            ShellCommand::new(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
+                .arg("-NoLogo"),
+        )
+        .as_argv(),
+        vec![
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "-NoProfile",
+            "-NoLogo",
+        ]
+    );
+    assert_eq!(
+        with_powershell_no_profile(ShellCommand::new("pwsh").arg("-Login").arg("-NoLogo"))
+            .as_argv(),
+        vec!["pwsh", "-Login", "-NoProfile", "-NoLogo"]
+    );
+    assert_eq!(
+        with_powershell_no_profile(ShellCommand::new("pwsh.exe").arg("-NoP").arg("-NoLogo"))
+            .as_argv(),
+        vec!["pwsh.exe", "-NoP", "-NoLogo"]
+    );
+    assert_eq!(
+        with_powershell_no_profile(ShellCommand::new("/bin/bash").arg("-l")).as_argv(),
+        vec!["/bin/bash", "-l"]
+    );
+}
+
 #[cfg(unix)]
 #[test]
-fn isolated_test_panes_do_not_inherit_user_home_or_shell_history() {
+fn isolated_test_panes_block_contaminated_shell_startup_and_history() {
+    let contaminated = tempfile::tempdir().expect("create contaminated env dir");
+    let root = contaminated.path();
+    let sentinel = root.join("leaked.log");
+    let history = root.join("real_history");
+    let fake_home = root.join("home");
+    let zdotdir = root.join("zdotdir");
+    let xdg_data = root.join("xdg_data");
+    let fish_vendor = xdg_data.join("fish").join("vendor_conf.d");
+    for dir in [&fake_home, &zdotdir, &fish_vendor] {
+        std::fs::create_dir_all(dir).expect("create contaminated dir");
+    }
+    std::fs::write(&history, "original-entry\n").expect("seed history file");
+    let sh_sentinel = format!("echo leaked >> '{}'\n", sentinel.display());
+    for file in [
+        fake_home.join(".bashrc"),
+        fake_home.join(".profile"),
+        fake_home.join(".bash_profile"),
+        fake_home.join(".zshenv"),
+        fake_home.join(".zshrc"),
+        zdotdir.join(".zshenv"),
+        zdotdir.join(".zshrc"),
+        root.join("posix_env.sh"),
+        root.join("bash_env.sh"),
+    ] {
+        std::fs::write(file, &sh_sentinel).expect("write sentinel startup script");
+    }
+    std::fs::write(
+        fish_vendor.join("leak.fish"),
+        format!("echo fish-leaked >> '{}'\n", sentinel.display()),
+    )
+    .expect("write fish sentinel");
+
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "--exact",
+            "session::server::tests::isolated_test_panes_block_contaminated_shell_startup_and_history_child",
+            "--nocapture",
+        ])
+        .env("ROZI_ISOLATION_CHILD", "1")
+        .env("HOME", &fake_home)
+        .env("HISTFILE", &history)
+        .env("ZDOTDIR", &zdotdir)
+        .env("ROZI_ORIG_ZDOTDIR", &zdotdir)
+        .env("ENV", root.join("posix_env.sh"))
+        .env("BASH_ENV", root.join("bash_env.sh"))
+        .env("XDG_DATA_DIRS", &xdg_data)
+        .output()
+        .expect("run contaminated isolation child");
+    assert!(
+        output.status.success(),
+        "isolation child failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !sentinel.exists(),
+        "a contaminated startup script executed: {:?}",
+        std::fs::read_to_string(&sentinel)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&history).expect("read history file"),
+        "original-entry\n",
+        "contaminated HISTFILE was modified"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn isolated_test_panes_block_contaminated_shell_startup_and_history_child() {
+    if std::env::var_os("ROZI_ISOLATION_CHILD").is_none() {
+        return;
+    }
+    let injection_env = crate::platform::shell_integration::InjectionEnv::from_process();
+    assert_eq!(injection_env.zdotdir, None);
+    assert_eq!(injection_env.orig_zdotdir, None);
+    assert_eq!(injection_env.xdg_data_dirs, None);
+
     let expected_home = crate::platform::paths::PlatformEnv::from_process()
         .home
         .expect("isolated home")
         .display()
         .to_string();
     let mut server = SessionServer::new_named("isolated-pty-env");
-    let (_client, _stream) = attach_client(&mut server);
-    spawn_drag_and_drop_pane(
-        &mut server,
-        r#"printf 'ENV|%s|%s|%s|END\n' "$HOME" "${HISTFILE-unset}" "${ZDOTDIR-unset}""#,
+    let (client, _stream) = attach_client(&mut server);
+
+    // Interactive shell pane: exercises HOME, HISTFILE, ENV/bashrc, ZDOTDIR, XDG_DATA_DIRS.
+    let interactive_shell = if crate::platform::command::program_exists("bash") {
+        vec!["bash".to_string()]
+    } else {
+        vec!["/bin/sh".to_string(), "-i".to_string()]
+    };
+    let result = server.spawn_pane(SpawnRequest {
+        owner: None,
+        pane_id: 1,
+        generation: 1,
+        launch: None,
+        agent_resume: None,
+        cwd: None,
+        title: None,
+        cols: 240,
+        rows: 10,
+        keep_open: false,
+        env: Vec::new(),
+        palette: test_palette(),
+        shell: interactive_shell,
+        command_shell: test_command_shell(),
+        cell: None,
+    });
+    assert!(matches!(
+        result,
+        ServerMessage::SpawnResult { ok: true, .. }
+    ));
+    server.accept_pane_input(
+        client,
+        1,
+        false,
+        1,
+        b"printf 'ISOLATED|%s|%s|%s|%s|%s|%s|END\\n' \"$HOME\" \"${HISTFILE-unset}\" \"${ZDOTDIR-unset}\" \"${ENV-unset}\" \"${BASH_ENV-unset}\" \"${XDG_DATA_DIRS-unset}\"; exit\r",
+        true,
     );
     wait_until(&mut server, |server| {
-        pane_text(server, None, 1).contains("|END")
+        server.panes[&1].exited.is_some()
+            && pane_text(server, None, 1).contains(&format!("ISOLATED|{expected_home}|"))
     });
     let text = pane_text(&mut server, None, 1);
-    let expected = format!("ENV|{expected_home}||unset|END");
+    let expected = format!("ISOLATED|{expected_home}||unset|unset|unset|unset|END");
     assert!(
         text.contains(&expected),
-        "expected `{expected}` in pane output:\n{text}"
+        "expected `{expected}` in interactive pane output:\n{text}"
+    );
+
+    // Interactive POSIX `/bin/sh` exercises `ENV` directly even when `bash` was chosen above.
+    let sh_result = server.spawn_pane(SpawnRequest {
+        owner: None,
+        pane_id: 2,
+        generation: 1,
+        launch: None,
+        agent_resume: None,
+        cwd: None,
+        title: None,
+        cols: 120,
+        rows: 10,
+        keep_open: false,
+        env: Vec::new(),
+        palette: test_palette(),
+        shell: vec!["/bin/sh".to_string(), "-i".to_string()],
+        command_shell: test_command_shell(),
+        cell: None,
+    });
+    assert!(matches!(
+        sh_result,
+        ServerMessage::SpawnResult { ok: true, .. }
+    ));
+    server.accept_pane_input(client, 2, false, 1, b"printf 'SH_OK\\n'; exit\r", true);
+    wait_until(&mut server, |server| server.panes[&2].exited.is_some());
+
+    // Non-interactive Bash exercises `BASH_ENV`.
+    if crate::platform::command::program_exists("bash") {
+        let bash_result = server.spawn_pane(SpawnRequest {
+            owner: None,
+            pane_id: 3,
+            generation: 1,
+            launch: Some(crate::pane::launch::PaneLaunch::shell(
+                "echo BASH_NONINT_OK",
+            )),
+            agent_resume: None,
+            cwd: None,
+            title: None,
+            cols: 120,
+            rows: 10,
+            keep_open: false,
+            env: Vec::new(),
+            palette: test_palette(),
+            shell: test_shell(),
+            command_shell: vec!["bash".to_string(), "-c".to_string()],
+            cell: None,
+        });
+        assert!(matches!(
+            bash_result,
+            ServerMessage::SpawnResult { ok: true, .. }
+        ));
+        wait_until(&mut server, |server| server.panes[&3].exited.is_some());
+    }
+
+    // Fish shell-integration injection must keep only Rozi's vendor directory, not host XDG_DATA_DIRS.
+    let (fish_cmd, fish_env) = crate::platform::shell_integration::inject(
+        crate::platform::command::ShellCommand::new("fish"),
+        crate::config::ShellIntegrationMode::Auto,
+        &injection_env,
+    );
+    assert_eq!(fish_cmd.program, "fish");
+    let fish_xdg = fish_env
+        .iter()
+        .find(|(key, _)| key == "XDG_DATA_DIRS")
+        .map(|(_, value)| value.as_str())
+        .expect("fish integration sets XDG_DATA_DIRS");
+    assert!(
+        !fish_xdg.contains(':'),
+        "isolated fish XDG_DATA_DIRS must not inherit host entries: {fish_xdg}"
+    );
+    if crate::platform::command::program_exists("fish") {
+        let fish_result = server.spawn_pane(SpawnRequest {
+            owner: None,
+            pane_id: 4,
+            generation: 1,
+            launch: None,
+            agent_resume: None,
+            cwd: None,
+            title: None,
+            cols: 120,
+            rows: 10,
+            keep_open: false,
+            env: fish_env,
+            palette: test_palette(),
+            shell: fish_cmd.as_argv(),
+            command_shell: test_command_shell(),
+            cell: None,
+        });
+        assert!(matches!(
+            fish_result,
+            ServerMessage::SpawnResult { ok: true, .. }
+        ));
+        server.accept_pane_input(client, 4, false, 1, b"exit\r", true);
+        wait_until(&mut server, |server| server.panes[&4].exited.is_some());
+    }
+    if crate::platform::command::program_exists("zsh") {
+        let zsh_result = server.spawn_pane(SpawnRequest {
+            owner: None,
+            pane_id: 5,
+            generation: 1,
+            launch: None,
+            agent_resume: None,
+            cwd: None,
+            title: None,
+            cols: 120,
+            rows: 10,
+            keep_open: false,
+            env: Vec::new(),
+            palette: test_palette(),
+            shell: vec!["zsh".to_string()],
+            command_shell: test_command_shell(),
+            cell: None,
+        });
+        assert!(matches!(
+            zsh_result,
+            ServerMessage::SpawnResult { ok: true, .. }
+        ));
+        server.accept_pane_input(client, 5, false, 1, b"exit\r", true);
+        wait_until(&mut server, |server| server.panes[&5].exited.is_some());
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn isolated_test_panes_override_contaminated_windows_user_dirs() {
+    let contaminated = tempfile::tempdir().expect("create contaminated env dir");
+    let root = contaminated.path();
+    let fake_profile = root.join("userprofile");
+    let fake_roaming = root.join("roaming");
+    let fake_local = root.join("local");
+    for dir in [&fake_profile, &fake_roaming, &fake_local] {
+        std::fs::create_dir_all(dir).expect("create contaminated dir");
+    }
+
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "--exact",
+            "session::server::tests::isolated_test_panes_override_contaminated_windows_user_dirs_child",
+            "--nocapture",
+        ])
+        .env("ROZI_ISOLATION_WIN_CHILD", "1")
+        .env("USERPROFILE", &fake_profile)
+        .env("APPDATA", &fake_roaming)
+        .env("LOCALAPPDATA", &fake_local)
+        .env("HISTFILE", root.join("history"))
+        .output()
+        .expect("run contaminated windows isolation child");
+    assert!(
+        output.status.success(),
+        "windows isolation child failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn isolated_test_panes_override_contaminated_windows_user_dirs_child() {
+    if std::env::var_os("ROZI_ISOLATION_WIN_CHILD").is_none() {
+        return;
+    }
+    let isolated = crate::platform::paths::PlatformEnv::from_process();
+    let expected_home = isolated.home.expect("isolated home").display().to_string();
+    let expected_appdata = isolated
+        .appdata
+        .expect("isolated appdata")
+        .display()
+        .to_string();
+    let expected_local = isolated
+        .local_appdata
+        .expect("isolated local_appdata")
+        .display()
+        .to_string();
+
+    let mut server = SessionServer::new_named("isolated-win-pty-env");
+    let (_client, _stream) = attach_client(&mut server);
+    let result = server.spawn_pane(SpawnRequest {
+        owner: None,
+        pane_id: 1,
+        generation: 1,
+        launch: Some(crate::pane::launch::PaneLaunch::Direct {
+            argv: vec![
+                "cmd.exe".to_string(),
+                "/C".to_string(),
+                "echo WIN^|%USERPROFILE%^|%APPDATA%^|%LOCALAPPDATA%^|%HISTFILE%^|END".to_string(),
+            ],
+        }),
+        agent_resume: None,
+        cwd: None,
+        title: None,
+        cols: 240,
+        rows: 10,
+        keep_open: false,
+        env: Vec::new(),
+        palette: test_palette(),
+        shell: test_shell(),
+        command_shell: test_command_shell(),
+        cell: None,
+    });
+    assert!(matches!(
+        result,
+        ServerMessage::SpawnResult { ok: true, .. }
+    ));
+    wait_until(&mut server, |server| server.panes[&1].exited.is_some());
+    let text = pane_text(&mut server, None, 1);
+    let expected = format!("WIN|{expected_home}|{expected_appdata}|{expected_local}||END");
+    assert!(
+        text.contains(&expected),
+        "expected `{expected}` in Windows pane output:\n{text}"
     );
 }
 

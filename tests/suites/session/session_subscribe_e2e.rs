@@ -45,7 +45,6 @@ impl Lab {
 
     fn env(&self) -> Vec<(&'static str, PathBuf)> {
         vec![
-            ("HOME", self.root.clone()),
             ("XDG_CONFIG_HOME", self.root.join("c")),
             ("XDG_DATA_HOME", self.root.join("d")),
             ("XDG_STATE_HOME", self.root.join("s")),
@@ -58,7 +57,7 @@ impl Lab {
     fn rozi(&self, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
         command.args(args).envs(self.env()).current_dir(&self.root);
-        crate::common::isolate_shell_history(&mut command);
+        crate::common::isolate_shell_env(&mut command, &self.root);
         for inherited in [
             "ROZI_PANE",
             "ROZI_SESSION",

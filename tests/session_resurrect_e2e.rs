@@ -277,7 +277,6 @@ fn spawn_server(
     command
         .args(["--server", session])
         .env("ROZI_CONFIG", config_path)
-        .env("HOME", &home_base)
         .env("XDG_RUNTIME_DIR", runtime_base)
         .env("XDG_STATE_HOME", state_base)
         .env("XDG_CONFIG_HOME", config_base)
@@ -288,7 +287,7 @@ fn spawn_server(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    common::isolate_shell_history(&mut command);
+    common::isolate_shell_env(&mut command, &home_base);
     command.spawn().expect("launch real session server")
 }
 

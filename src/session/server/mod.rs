@@ -2585,6 +2585,38 @@ const INHERITED_ENV_REMOVED: &[&str] = &[
     "SSH_TTY",
 ];
 
+/// Append `-NoProfile` to a PowerShell interactive shell command so isolated test panes do not
+/// source the developer's `$PROFILE` (which Windows resolves from the registry-backed Documents
+/// folder even when `USERPROFILE` is redirected).
+fn with_powershell_no_profile(
+    mut shell: crate::platform::command::ShellCommand,
+) -> crate::platform::command::ShellCommand {
+    let basename = shell
+        .program
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(&shell.program)
+        .to_ascii_lowercase();
+    if !matches!(
+        basename.as_str(),
+        "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe"
+    ) {
+        return shell;
+    }
+    let already_has = shell.args.iter().any(|arg| {
+        let lower = arg.to_ascii_lowercase();
+        lower.starts_with("-nop") && "-noprofile".starts_with(&lower)
+    });
+    if !already_has {
+        let insert_at = usize::from(shell.args.first().is_some_and(|arg| {
+            let lower = arg.to_ascii_lowercase();
+            lower.starts_with("-l") && "-login".starts_with(&lower)
+        }));
+        shell.args.insert(insert_at, "-NoProfile".to_string());
+    }
+    shell
+}
+
 fn pty_config(
     launch: Option<&crate::pane::launch::PaneLaunch>,
     shell: &[String],
@@ -2594,6 +2626,7 @@ fn pty_config(
     use crate::platform::command::ShellCommand;
 
     let env = crate::platform::command::ShellEnv::from_process();
+    let isolated = crate::platform::paths::user_dirs_are_isolated();
 
     let config = match launch {
         Some(crate::pane::launch::PaneLaunch::Shell { command }) if !command.trim().is_empty() => {
@@ -2616,6 +2649,11 @@ fn pty_config(
             let shell = ShellCommand::from_argv(shell).unwrap_or_else(|| {
                 crate::platform::command::resolve_interactive_shell(None, &env, login)
             });
+            let shell = if isolated {
+                with_powershell_no_profile(shell)
+            } else {
+                shell
+            };
             let mut config = TerminalPtyConfig::new(shell.program).term("xterm-256color");
             for arg in shell.args {
                 config = config.arg(arg);
@@ -2639,32 +2677,35 @@ fn pty_config(
         .flow_control(false);
 
     // An in-process test overrides `PlatformEnv` without mutating process globals, so a child
-    // shell spawned here would otherwise inherit the developer's real `HOME`, `XDG_*`, `ZDOTDIR`,
-    // and `HISTFILE` and append test commands to their real shell history.
-    if crate::platform::paths::user_dirs_are_isolated() {
-        let isolated = crate::platform::paths::PlatformEnv::from_process();
+    // shell spawned here would otherwise inherit the developer's real `HOME`, `XDG_*`, shell
+    // startup variables, and `HISTFILE` and execute their dotfiles or append to their history.
+    if isolated {
+        let isolated_env = crate::platform::paths::PlatformEnv::from_process();
         for (key, value) in [
-            ("HOME", isolated.home.as_ref()),
-            ("XDG_CONFIG_HOME", isolated.xdg_config_home.as_ref()),
-            ("XDG_STATE_HOME", isolated.xdg_state_home.as_ref()),
-            ("XDG_CACHE_HOME", isolated.xdg_cache_home.as_ref()),
-            ("XDG_DATA_HOME", isolated.xdg_data_home.as_ref()),
-            ("XDG_RUNTIME_DIR", isolated.xdg_runtime_dir.as_ref()),
-            ("APPDATA", isolated.appdata.as_ref()),
-            ("LOCALAPPDATA", isolated.local_appdata.as_ref()),
+            ("HOME", isolated_env.home.as_ref()),
+            ("XDG_CONFIG_HOME", isolated_env.xdg_config_home.as_ref()),
+            ("XDG_STATE_HOME", isolated_env.xdg_state_home.as_ref()),
+            ("XDG_CACHE_HOME", isolated_env.xdg_cache_home.as_ref()),
+            ("XDG_DATA_HOME", isolated_env.xdg_data_home.as_ref()),
+            ("XDG_RUNTIME_DIR", isolated_env.xdg_runtime_dir.as_ref()),
+            ("APPDATA", isolated_env.appdata.as_ref()),
+            ("LOCALAPPDATA", isolated_env.local_appdata.as_ref()),
         ] {
             if let Some(path) = value {
                 config = config.env(key, path.display().to_string());
             }
         }
         #[cfg(windows)]
-        if let Some(home) = isolated.home.as_ref() {
+        if let Some(home) = isolated_env.home.as_ref() {
             config = config.env("USERPROFILE", home.display().to_string());
         }
         config = config
             .env("HISTFILE", "")
             .env_remove("ZDOTDIR")
-            .env_remove("ROZI_ORIG_ZDOTDIR");
+            .env_remove("ROZI_ORIG_ZDOTDIR")
+            .env_remove("ENV")
+            .env_remove("BASH_ENV")
+            .env_remove("XDG_DATA_DIRS");
     }
 
     config

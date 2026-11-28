@@ -30,7 +30,6 @@ struct Lab {
 
 fn environment(command: &mut Command, root: &Path) {
     command
-        .env("HOME", root)
         .env("ROZI_CONFIG", root.join("config.toml"))
         .env("XDG_RUNTIME_DIR", root)
         .env("XDG_STATE_HOME", root.join("state"))
@@ -41,7 +40,7 @@ fn environment(command: &mut Command, root: &Path) {
         .env_remove("ROZI_PANE")
         .env_remove("ROZI_SESSION_INSTANCE")
         .env_remove("ROZI_EXTENSION_CREDENTIAL");
-    common::isolate_shell_history(command);
+    common::isolate_shell_env(command, root);
 }
 
 impl Lab {

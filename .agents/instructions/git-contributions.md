@@ -19,6 +19,14 @@ breaks and how to migrate. It goes in the PR Summary, or in the commit body when
 `!` title without it fails the `PR description` check, and release notes list the section under
 Compatibility.
 
+A change is breaking only when it breaks rozi itself for someone who upgrades: its behavior, CLI,
+configuration, actions, hooks, extension interface, or session protocol and snapshots. Repository
+layout, developer tooling, and the paths of third-party plugins kept in this repository (such as
+`integrations/opencode`) are not, even when someone must update a path in another program's config.
+The interface such a plugin uses to talk to rozi is part of rozi: breaking it is breaking. Anything
+distributed through a release archive or a package registry also counts, including its install path
+and package name.
+
 Raising the session wire generation (`PROTOCOL_VERSION`) or the oldest generation a build speaks
 (`MIN_SUPPORTED_PROTOCOL`) is always a breaking change: running sessions on an older generation need
 Upgrade session. An additive wire change behind a capability is not. See

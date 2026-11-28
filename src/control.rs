@@ -9,9 +9,13 @@ use crate::pane::id::PaneId;
 use crate::platform::ipc::{EndpointRegistry, IpcListener};
 
 mod capability;
+pub mod mouse;
 pub mod pick;
 
 pub use capability::ControlCapability;
+pub use mouse::{
+    MAX_MOUSE_COUNT, MouseAction, MouseButton, MouseModifiers, MousePoint, MouseScrollDirection,
+};
 
 /// Version of the public control request and response API.
 pub const CONTROL_API_VERSION: u32 = 1;
@@ -120,6 +124,7 @@ impl ControlCommand {
             | Self::Subscribe { .. } => Permission::View,
             Self::SendText { .. }
             | Self::SendKeys { .. }
+            | Self::SendMouse { .. }
             | Self::SetStatus { .. }
             | Self::AgentPrompt { .. }
             | Self::AgentReport { .. }
@@ -277,6 +282,7 @@ impl ControlCommand {
                 Some(crate::session::protocol::Capability::SessionSharing)
             }
             Self::Publish { .. } => Some(crate::session::protocol::Capability::SessionPublish),
+            Self::SendMouse { .. } => Some(crate::session::protocol::Capability::SendMouse),
             Self::Unknown => {
                 debug_assert!(false, "an unknown control command must never be sent");
                 None
@@ -297,6 +303,7 @@ impl ControlCommand {
                 | Self::PaneClose { .. }
                 | Self::SendText { .. }
                 | Self::SendKeys { .. }
+                | Self::SendMouse { .. }
                 | Self::AgentPrompt { .. }
                 // Only a UI has a view to scroll or focus to move. A pane in a background session
                 // must not reach the one on screen, whose pane with the same id is another pane.
@@ -469,7 +476,8 @@ impl ControlCommand {
         match self {
             Self::CapturePane { wait, .. }
             | Self::SendText { wait, .. }
-            | Self::SendKeys { wait, .. } => wait.as_ref(),
+            | Self::SendKeys { wait, .. }
+            | Self::SendMouse { wait, .. } => wait.as_ref(),
             _ => None,
         }
     }
@@ -711,6 +719,19 @@ pub enum ControlCommand {
         /// When true, every entry in `keys` is forwarded as literal UTF-8 (no key-name parsing).
         #[serde(default)]
         literal: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wait: Option<PaneWait>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capture: Option<CaptureRender>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale: Option<u8>,
+    },
+    /// Send a synthetic mouse gesture to a pane, encoded on the session server against its mouse
+    /// tracking state. `wait`, `capture`, and `scale` mean what they do for `send-text`.
+    SendMouse {
+        #[serde(default)]
+        target: Option<PaneId>,
+        action: MouseAction,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         wait: Option<PaneWait>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3592,7 +3613,8 @@ mod tests {
                 crate::session::protocol::Capability::SpawnAgentResume => "0.1.1",
                 crate::session::protocol::Capability::AgentAskNow
                 | crate::session::protocol::Capability::AgentAskNoReply
-                | crate::session::protocol::Capability::AgentSessionReports => "0.1.2",
+                | crate::session::protocol::Capability::AgentSessionReports
+                | crate::session::protocol::Capability::SendMouse => "0.1.2",
                 _ => "0.0.44",
             };
             assert_eq!(cap.introduced_in(), expected, "{cap}");

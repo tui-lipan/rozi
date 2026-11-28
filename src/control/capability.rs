@@ -91,6 +91,9 @@ pub enum ControlCapability {
     /// `subscribe` and hooks accept the `agent-state-changed` and `foreground-changed` events. An older
     /// binary refuses a subscription naming either, and warns about a hook that does.
     RuntimeEvents,
+    /// `send-mouse` delivers synthetic mouse gestures encoded on the session server against its
+    /// parser's mouse tracking state.
+    SendMouse,
     /// A session server runs deployed actions: `invoke`, `invocation-list`, `invocation-cancel`, and
     /// `actions-list`.
     SessionActions,
@@ -128,7 +131,7 @@ pub enum ControlCapability {
 
 impl ControlCapability {
     /// Every control capability this binary has, in name order.
-    pub const ALL: [ControlCapability; 46] = [
+    pub const ALL: [ControlCapability; 47] = [
         ControlCapability::AgentAskNoReply,
         ControlCapability::AgentAskNow,
         ControlCapability::AgentPromptResults,
@@ -163,6 +166,7 @@ impl ControlCapability {
         ControlCapability::RemoteControl,
         ControlCapability::RemoteExtensionRuntime,
         ControlCapability::RuntimeEvents,
+        ControlCapability::SendMouse,
         ControlCapability::SessionActions,
         ControlCapability::SessionControl,
         ControlCapability::SessionDeployments,
@@ -214,6 +218,7 @@ impl ControlCapability {
             ControlCapability::RemoteControl => "remote-control",
             ControlCapability::RemoteExtensionRuntime => "remote-extension-runtime",
             ControlCapability::RuntimeEvents => "runtime-events",
+            ControlCapability::SendMouse => "send-mouse",
             ControlCapability::SessionActions => "session-actions",
             ControlCapability::SessionControl => "session-control",
             ControlCapability::SessionDeployments => "session-deployments",

@@ -184,7 +184,7 @@ The shape inside `data` depends on `cmd`. The CLI's JSON output keeps this envel
 | `metrics` | Client counters and the most recent cached server counters. |
 | `capture-pane` | `{ "id": number, "title": string or null, "render": "text" or "ansi", "text": string }`, for `png` `{ "id": number, "title": string or null, "render": "png", "png_base64": string }`, or for `spans` `{ "id": number, "title": string or null, "render": "spans", "frame": object }`; see [Spans frames](#spans-frames) |
 | `capture-ui` | `{ "width": number, "height": number }` plus the same `render` and `text`, `png_base64`, or `frame` fields as `capture-pane` |
-| `send-text`, `send-keys` with `capture` | The same capture as `capture-pane`, taken once the wait resolved. Absent without `capture`. |
+| `send-text`, `send-keys`, `send-mouse` with `capture` | The same capture as `capture-pane`, taken once the wait resolved. Absent without `capture`. |
 | `new-pane` | `{ "id": number, "accepted": bool, "pty_ready": bool }` |
 | `share-grant`, `share-revoke`, `share-list` | `{ "endpoint": string or absent, "grants": [{ "user": string, "uid": number, "role": "viewer" \| "editor" \| "controller", "connected": number }] }` |
 | Other one-shot commands | Absent on success. |
@@ -554,12 +554,21 @@ An image in a recorded frame has an `id` naming the `image` event that holds its
 {"cmd":"send-keys","target":3,"keys":["C-c"],"literal":true}
 {"cmd":"send-keys","target":3,"keys":["cargo test","Enter"],
  "wait":{"text":"test result:","timeout_ms":600000},"capture":"text"}
+{"cmd":"send-mouse","target":3,
+ "action":{"kind":"click","position":{"x":10,"y":5},"button":"left","count":1}}
 ```
 
-`send-text.target` and `send-keys.target` are optional; rozi falls back to `source_pane`, then the
-focused pane. `keys` uses the names in
+`send-text.target`, `send-keys.target`, and `send-mouse.target` are optional; rozi falls back to
+`source_pane`, then the focused pane. `keys` uses the names in
 [Control CLI](control.md#sending-keys-and-capturing-output). With `literal: true`, every entry is
 sent as literal text.
+
+`send-mouse.action` is tagged by `kind`: `"click"` (`position`, optional `button`, `count` 1–100,
+`modifiers`), `"scroll"` (`position`, `direction` `"up"`/`"down"`, optional `count` 1–100,
+`modifiers`), `"move"` (`position`, optional `modifiers`), or `"drag"` (`from`, `to`, optional
+`button`, `modifiers`). Coordinates are zero-based pane cells. The request fails without writing
+bytes when the pane is still starting, coordinates are outside the pane, or the application's mouse
+tracking mode does not report the gesture.
 
 `wait` holds the reply until the pane answers the input; see [Pane waits](#pane-waits). `capture`
 (`"text"`, `"ansi"`, `"png"`, or `"spans"`) returns the screen once the wait resolves, and needs
@@ -568,8 +577,8 @@ sent as literal text.
 
 ### Pane waits
 
-`capture-pane`, `send-text`, and `send-keys` accept a `wait` object. Without one, the reply is
-immediate.
+`capture-pane`, `send-text`, `send-keys`, and `send-mouse` accept a `wait` object. Without one,
+the reply is immediate.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -581,10 +590,11 @@ immediate.
 else fails with `invalid-argument` before anything is sent or waited for.
 
 - `capture-pane` matches the screen as it is, so text already showing answers at once.
-- `send-text` and `send-keys` write their input first and match only output that arrives after it.
-  Text on screen when the input was written does not count, even once it has scrolled. `settle_ms`
-  counts from once the input has been confirmed and the screen right after it taken as the
-  baseline, which on a UI attached to a remote session can be measurably later than the write.
+- `send-text`, `send-keys`, and `send-mouse` write their input first and match only output that
+  arrives after it. Text on screen when the input was written does not count, even once it has
+  scrolled. `settle_ms` counts from once the input has been confirmed and the screen right after it
+  taken as the baseline, which on a UI attached to a remote session can be measurably later than
+  the write.
 - A changed screen means changed characters, colors, or styles. Cursor movement, title changes, and
   redraws of identical content are not changes.
 - `timeout` and `pane-not-running` (the program exited, or the pane closed) carry the capture in
@@ -730,11 +740,11 @@ gains no authority an attached client would not have.
 A session server answers `list-panes`, `layout-get`, `layout-set`, `pane-set`, `pane-move`,
 `pane-swap`, `pane-close`, `context`, `agents-list`, `agent-get`, `agent-read`, `agent-response`, `agent-wait`,
 `agent-prompt`, `agent-ask`, `agent-reply`, `agent-await`, `agent-request`, `agent-requests`,
-`agent-cancel`, `agent-report`, `agent-release`, `agent-session`, `metrics`, `capture-pane`, `send-text`,
-`send-keys`, `new-pane`, `set-status`, `pane-logging`, `record-start`, `record-stop`, `record-list`,
-`record-mark`, `share-grant`, `share-revoke`, `share-list`, `extensions-deploy`,
-`extensions-undeploy`, and `extensions-status`. It refuses
-every other `cmd` with `ok: false` and a reason naming what the request needs a UI for.
+`agent-cancel`, `agent-report`, `agent-release`, `agent-session`, `metrics`, `capture-pane`,
+`send-text`, `send-keys`, `send-mouse`, `new-pane`, `set-status`, `pane-logging`, `record-start`,
+`record-stop`, `record-list`, `record-mark`, `share-grant`, `share-revoke`, `share-list`,
+`extensions-deploy`, `extensions-undeploy`, and `extensions-status`. It refuses every other `cmd`
+with `ok: false` and a reason naming what the request needs a UI for.
 
 These requests behave differently than against a UI:
 
@@ -747,7 +757,7 @@ These requests behave differently than against a UI:
 | `layout-set`, `pane-set`, `pane-move`, `pane-swap` | Applied to the server's layout document and committed as a new revision by client `0`, which every attached client applies. `committed` is always `true`. Refused with `not-controller` while any client holds layout control, and with `unavailable` for a session that has panes but no layout document. |
 | `metrics` | Returns only `sampled_at_unix_ms` and `server`, sampled at request time, so `age_ms` is `0` and `stale` is `false`. |
 | `new-pane` | `focus` must be `false`. Refused with `not-controller` while any client holds layout control. The server reads `[[rules]]` and the shell from its own config, picks the pane id, appends the pane to the resolved workspace (default 1) in the shared layout, and broadcasts the new revision as client `0`. `pty_ready` reports whether the pane's process started. |
-| `send-text`, `send-keys` | Refused while the session's input lock is on, which only an attached client can release. |
+| `send-text`, `send-keys`, `send-mouse` | Refused while the session's input lock is on, which only an attached client can release. |
 | `agent-ask`, `agent-reply`, `agent-await`, `agent-request`, `agent-requests`, `agent-cancel` | Answered only by a session server. The calling agent is the one `source_pane` names, when `source_session` is this server; otherwise the caller is not an agent. |
 | Any request with `extension` provenance | Refused. The generation is minted per UI process, so a server cannot check it. |
 

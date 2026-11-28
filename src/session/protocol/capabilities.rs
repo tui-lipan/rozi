@@ -85,11 +85,14 @@ pub enum Capability {
     /// The server takes [`super::ClientMessage::ReportAgentSession`] and the `agent-session`
     /// control command: a pane's conversation reported without claiming its state.
     AgentSessionReports,
+    /// The server encodes and delivers synthetic mouse gestures through
+    /// [`super::ClientMessage::SendMouse`] and the `send-mouse` control command.
+    SendMouse,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 18] = [
+    pub const ALL: [Capability; 19] = [
         Capability::AgentAskNoReply,
         Capability::AgentAskNow,
         Capability::AgentAttachments,
@@ -105,6 +108,7 @@ impl Capability {
         Capability::PaneProgramTitle,
         Capability::ProjectSummaries,
         Capability::RuntimeMetrics,
+        Capability::SendMouse,
         Capability::SessionPublish,
         Capability::SessionSharing,
         Capability::SpawnAgentResume,
@@ -131,6 +135,7 @@ impl Capability {
             Capability::AgentAskNow => "agent-ask-now",
             Capability::AgentAskNoReply => "agent-ask-no-reply",
             Capability::AgentSessionReports => "agent-session-reports",
+            Capability::SendMouse => "send-mouse",
         }
     }
 
@@ -150,7 +155,10 @@ impl Capability {
             | Self::SessionSharing
             | Self::SessionPublish => "0.0.50",
             Self::SpawnAgentResume => "0.1.1",
-            Self::AgentAskNow | Self::AgentAskNoReply | Self::AgentSessionReports => "0.1.2",
+            Self::AgentAskNow
+            | Self::AgentAskNoReply
+            | Self::AgentSessionReports
+            | Self::SendMouse => "0.1.2",
         }
     }
 
@@ -260,6 +268,11 @@ pub const GATED_VOCABULARY: &[GatedValue] = &[
         vocabulary: "ControlRequest",
         value: "agent-session",
         capability: Capability::AgentSessionReports,
+    },
+    GatedValue {
+        vocabulary: "ControlRequest",
+        value: "send-mouse",
+        capability: Capability::SendMouse,
     },
 ];
 

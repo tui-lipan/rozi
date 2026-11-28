@@ -263,6 +263,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "Send tmux-style key names, text, or both",
             ),
             row(
+                "send-mouse [--target <ID>] <click|scroll-up|scroll-down|move|drag> ...",
+                "Send synthetic mouse input to a pane",
+            ),
+            row(
                 "split [OPTIONS] [COMMAND | --argv PROGRAM [ARG...]]",
                 "Split the calling pane, or the --target pane",
             ),

@@ -902,6 +902,14 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 request_id,
                 response,
             },
+            ServerMessage::SendMouseResult {
+                request_id,
+                response,
+            } => Msg::SessionSendMouseResult {
+                epoch,
+                request_id,
+                response,
+            },
             ServerMessage::SessionOriginSet { origin } => Msg::SessionOriginSet { epoch, origin },
             ServerMessage::PaneMetadata {
                 local,

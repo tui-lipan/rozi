@@ -561,6 +561,9 @@ pub struct State {
     /// Acknowledged integration reports awaiting the owning session server's decision.
     pub pending_agent_report_replies: HashMap<u64, PendingAgentReportReply>,
     pub next_agent_report_request_id: u64,
+    /// Non-waiting `send-mouse` requests awaiting the owning session server's answer.
+    pub pending_send_mouse_replies: HashMap<u64, PendingAgentReportReply>,
+    pub next_send_mouse_request_id: u64,
     /// Control requests forwarded to a session server over its attachment, awaiting its answer.
     /// Keyed by the request id the server echoes back.
     pub pending_attached_controls: HashMap<u64, PendingAttachedControl>,
@@ -891,6 +894,8 @@ impl State {
             pending_ui_capture: None,
             pending_agent_report_replies: HashMap::new(),
             next_agent_report_request_id: 1,
+            pending_send_mouse_replies: HashMap::new(),
+            next_send_mouse_request_id: 1,
             pending_attached_controls: HashMap::new(),
             next_attached_control_request_id: 1,
             pending_recording_toggles: HashMap::new(),

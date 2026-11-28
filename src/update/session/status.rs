@@ -225,8 +225,10 @@ pub(crate) fn apply_pane_runtime_state(
         edges.failed = false;
         failed_rows.clear();
         // The pane's own blocked status names no agent, so it cannot tell the new one's prompt
-        // from the old one's.
-        pane.terminal.blocked_seen.clear();
+        // from the old one's. Published conversations keep their identities across the relaunch.
+        pane.terminal
+            .blocked_seen
+            .retain(|blocker| *blocker != crate::state::Blocker::Status);
     }
     pane.forget_unblocked();
     AppliedPaneRuntime {
@@ -1006,7 +1008,9 @@ mod tests {
         assert!(!pane.blocked_seen(), "a relaunched agent's prompt is news");
     }
 
-    /// A publisher listing a seen blocked agent under another row has not shown a new prompt.
+    /// A publisher listing a seen blocked agent under another row has not shown a new prompt, and
+    /// neither has the pane's agent being detected, which reads its blocked state off that row, or
+    /// relaunched while the conversation lives on.
     #[test]
     fn a_seen_block_stays_seen_when_the_agent_moves_rows() {
         use crate::session::protocol::{
@@ -1044,8 +1048,26 @@ mod tests {
         apply_pane_runtime_state(&mut pane, agents, runtime);
         assert!(pane.see_blockers(), "the blocked row names an agent");
         let (agents, runtime) = listed("b");
-        apply_pane_runtime_state(&mut pane, agents, runtime);
+        let detected = PaneRuntimeState {
+            agent_launch: 1,
+            detected_agent: Some(DetectedAgent {
+                blocker: None,
+                agent: AgentIdentity::new("claude", "Claude").into(),
+                state: DetectedAgentState::Blocked,
+            }),
+            ..runtime
+        };
+        apply_pane_runtime_state(&mut pane, agents.clone(), detected.clone());
         assert!(pane.blocked_seen());
+        let relaunched = PaneRuntimeState {
+            agent_launch: 2,
+            ..detected
+        };
+        apply_pane_runtime_state(&mut pane, agents, relaunched);
+        assert!(
+            pane.blocked_seen(),
+            "the conversation outlives the relaunch"
+        );
     }
 
     #[test]

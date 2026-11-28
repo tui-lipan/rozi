@@ -2644,6 +2644,18 @@ mod tests {
         assert!(!pane_alert_breathes(PaneAlert::Blocked, &pane, true));
         assert!(pane_alert_breathes(PaneAlert::Blocked, &pane, false));
         assert!(pane_alert_breathes(PaneAlert::Finished, &pane, true));
+        pane.see_blockers();
+        assert!(!pane_alert_breathes(PaneAlert::Blocked, &pane, false));
+        let mut screen = crate::pane::engine::screen(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        screen.process_bytes(b"\x1b]7501;state=blocked\x07");
+        pane.terminal.program_status = screen.program_status_snapshot();
+        pane.terminal.program_status_attention = true;
+        assert!(
+            pane_alert_breathes(PaneAlert::Blocked, &pane, false),
+            "a program's unseen blocked report is news beside a seen agent"
+        );
+        pane.terminal.program_status_attention = false;
         pane.closing = true;
         assert_eq!(pane_alert(&pane, false, &config, &Default::default()), None);
         pane.closing = false;

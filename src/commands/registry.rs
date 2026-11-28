@@ -730,7 +730,7 @@ pub(crate) fn paste_direct_binding() -> KeyBinding {
 
 /// Resolve a command's live display label, reflecting current state for toggle actions (e.g.
 /// "Disable floating" vs "Enable floating") and the active layout for `ToggleLayout`.
-fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
+pub(crate) fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
     if let Some(text) = toggle_command_label(action, state) {
         return text;
     }
@@ -738,10 +738,17 @@ fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
         let layout = state.active_workspace_ref().layout_kind.label();
         return format!("Switch layout (current: {layout})");
     }
-    if action == Action::UpdateRozi
-        && let Some(update) = state.available_update.as_ref()
-    {
-        return format!("Update rozi to v{}", update.latest);
+    if action == Action::UpdateRozi {
+        // A running update is what the command brings back, so it names that run's release.
+        let release = state
+            .self_update
+            .run
+            .as_ref()
+            .map(crate::state::SelfUpdateRun::release)
+            .or(state.available_update.as_ref().map(|update| &update.latest));
+        if let Some(release) = release {
+            return format!("Update rozi to v{release}");
+        }
     }
     if action == Action::ShowReleaseNotes
         && let Some(notes) = state.release_notes.as_ref()

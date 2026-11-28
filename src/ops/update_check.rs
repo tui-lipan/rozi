@@ -101,6 +101,12 @@ impl AvailableUpdate {
             })
     }
 
+    /// Whether the release's compatibility document was read, so its note is known rather than
+    /// missing.
+    pub(crate) fn knows_contracts(&self) -> bool {
+        self.compatibility.is_some()
+    }
+
     /// Whether the release moves a contract the user has to act on, which is what makes the notice
     /// a warning rather than news.
     pub(crate) fn needs_caution(&self) -> bool {
@@ -285,17 +291,69 @@ pub(crate) fn check() -> Option<AvailableUpdate> {
     let latest = relswap::fetch_latest_metadata(&ROZI, &downloader, &repository)
         .ok()?
         .version;
-    if latest <= running {
-        return None;
-    }
+    (latest > running).then(|| offer(latest, running, &downloader, &repository))
+}
 
-    let compatibility = fetch_compatibility(&downloader, &repository, &latest);
-    Some(AvailableUpdate {
+/// The offer for `latest`, a signed release newer than `running`, with its compatibility
+/// document when one can be read. Blocks for one HTTPS request, like [`check`].
+pub(crate) fn offer_for(latest: Version, running: Version) -> AvailableUpdate {
+    let downloader = UreqDownloader::new();
+    match Url::parse(ROZI.repository_url) {
+        Ok(repository) => offer(latest, running, &downloader, &repository),
+        Err(_) => AvailableUpdate {
+            latest,
+            running,
+            source: crate::platform::install_source::detect_current(),
+            compatibility: None,
+        },
+    }
+}
+
+fn offer(
+    latest: Version,
+    running: Version,
+    downloader: &impl Downloader,
+    repository: &Url,
+) -> AvailableUpdate {
+    let compatibility = fetch_compatibility(downloader, repository, &latest);
+    AvailableUpdate {
         latest,
         running,
         source: crate::platform::install_source::detect_current(),
         compatibility,
-    })
+    }
+}
+
+/// What a release a check or the installer found does to the one on offer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OfferChange {
+    /// A newer release, or the first one: a fresh offer.
+    Newer,
+    /// The release already on offer. It may have filled in metadata the offer lacked.
+    Same,
+    /// An older release than the one on offer, which stays.
+    Older,
+}
+
+/// Fold `found` into `offered`. The newest known release never moves backwards, and for the same
+/// release, compatibility metadata that was read wins over metadata that could not be.
+pub(crate) fn merge_offer(
+    offered: &mut Option<AvailableUpdate>,
+    found: AvailableUpdate,
+) -> OfferChange {
+    match offered {
+        Some(current) if found.latest < current.latest => OfferChange::Older,
+        Some(current) if found.latest == current.latest => {
+            if current.compatibility.is_none() {
+                current.compatibility = found.compatibility;
+            }
+            OfferChange::Same
+        }
+        _ => {
+            *offered = Some(found);
+            OfferChange::Newer
+        }
+    }
 }
 
 /// Atomically let one client announce each release. If state storage is unavailable, prefer a
@@ -303,7 +361,7 @@ pub(crate) fn check() -> Option<AvailableUpdate> {
 ///
 /// This is also what keeps the periodic re-check quiet: every later check of the same release
 /// finds the marker and says nothing, so a client left open for a week toasts once.
-fn claim_notice(latest: &Version) -> bool {
+pub(crate) fn claim_notice(latest: &Version) -> bool {
     let env = crate::platform::paths::PlatformEnv::from_process();
     claim_notice_in(
         &crate::platform::paths::state_dir(&env).join("update-notices"),

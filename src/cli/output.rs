@@ -1315,6 +1315,9 @@ pub(super) fn format_control_text(
         }
         | control::ControlCommand::SendKeys {
             capture: Some(_), ..
+        }
+        | control::ControlCommand::SendMouse {
+            capture: Some(_), ..
         } => format_capture_text(data),
         control::ControlCommand::NewPane { .. } => {
             let id = data.and_then(|value| value_u64(value, "id"));

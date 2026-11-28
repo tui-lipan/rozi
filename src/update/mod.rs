@@ -1035,6 +1035,11 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             request_id,
             response,
         } => session::agent_report_result(ctx, epoch, request_id, response),
+        Msg::SessionSendMouseResult {
+            epoch,
+            request_id,
+            response,
+        } => session::send_mouse_result(ctx, epoch, request_id, response),
         Msg::SessionAttachedControlResult {
             epoch,
             request_id,

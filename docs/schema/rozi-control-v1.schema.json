@@ -2133,6 +2133,61 @@
           "type": "object"
         },
         {
+          "description": "Send a synthetic mouse gesture to a pane, encoded on the session server against its mouse\ntracking state. `wait`, `capture`, and `scale` mean what they do for `send-text`.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/MouseAction"
+            },
+            "capture": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CaptureRender"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cmd": {
+              "const": "send-mouse",
+              "type": "string"
+            },
+            "scale": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "wait": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PaneWait"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "action"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Open a pane.",
           "properties": {
             "argv": {
@@ -4312,6 +4367,61 @@
           "required": [
             "cmd",
             "keys"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Send a synthetic mouse gesture to a pane, encoded on the session server against its mouse\ntracking state. `wait`, `capture`, and `scale` mean what they do for `send-text`.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/MouseAction"
+            },
+            "capture": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CaptureRender"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cmd": {
+              "const": "send-mouse",
+              "type": "string"
+            },
+            "scale": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "target": {
+              "default": null,
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "wait": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PaneWait"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "action"
           ],
           "type": "object"
         },
@@ -6594,6 +6704,175 @@
         "workspaces"
       ],
       "type": "object"
+    },
+    "MouseAction": {
+      "description": "One synthetic mouse gesture to encode and deliver to a pane's application.",
+      "oneOf": [
+        {
+          "description": "Press and release a button at `position`, repeated `count` times back to back.",
+          "properties": {
+            "button": {
+              "$ref": "#/$defs/MouseButton",
+              "default": "left"
+            },
+            "count": {
+              "default": 1,
+              "format": "uint16",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "click",
+              "type": "string"
+            },
+            "modifiers": {
+              "$ref": "#/$defs/MouseModifiers"
+            },
+            "position": {
+              "$ref": "#/$defs/MousePoint"
+            }
+          },
+          "required": [
+            "kind",
+            "position"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Send wheel ticks in `direction` at `position`, repeated `count` times.",
+          "properties": {
+            "count": {
+              "default": 1,
+              "format": "uint16",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "direction": {
+              "$ref": "#/$defs/MouseScrollDirection"
+            },
+            "kind": {
+              "const": "scroll",
+              "type": "string"
+            },
+            "modifiers": {
+              "$ref": "#/$defs/MouseModifiers"
+            },
+            "position": {
+              "$ref": "#/$defs/MousePoint"
+            }
+          },
+          "required": [
+            "kind",
+            "position",
+            "direction"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Move the pointer to `position` with no button held.",
+          "properties": {
+            "kind": {
+              "const": "move",
+              "type": "string"
+            },
+            "modifiers": {
+              "$ref": "#/$defs/MouseModifiers"
+            },
+            "position": {
+              "$ref": "#/$defs/MousePoint"
+            }
+          },
+          "required": [
+            "kind",
+            "position"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Press `button` at `from`, drag along the cell path to `to`, and release at `to`.",
+          "properties": {
+            "button": {
+              "$ref": "#/$defs/MouseButton",
+              "default": "left"
+            },
+            "from": {
+              "$ref": "#/$defs/MousePoint"
+            },
+            "kind": {
+              "const": "drag",
+              "type": "string"
+            },
+            "modifiers": {
+              "$ref": "#/$defs/MouseModifiers"
+            },
+            "to": {
+              "$ref": "#/$defs/MousePoint"
+            }
+          },
+          "required": [
+            "kind",
+            "from",
+            "to"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "MouseButton": {
+      "description": "Mouse button for a synthetic press, click, or drag.",
+      "enum": [
+        "left",
+        "middle",
+        "right"
+      ],
+      "type": "string"
+    },
+    "MouseModifiers": {
+      "description": "Keyboard modifiers held during a synthetic mouse gesture.",
+      "properties": {
+        "alt": {
+          "type": "boolean"
+        },
+        "ctrl": {
+          "type": "boolean"
+        },
+        "shift": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "MousePoint": {
+      "description": "Zero-based cell coordinates relative to a pane's content area.",
+      "properties": {
+        "x": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "y": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "type": "object"
+    },
+    "MouseScrollDirection": {
+      "description": "Wheel scroll direction for a synthetic scroll gesture.",
+      "enum": [
+        "up",
+        "down"
+      ],
+      "type": "string"
     },
     "NewPaneAccepted": {
       "description": "What `split` answers with once the pane exists.",

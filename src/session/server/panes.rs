@@ -487,6 +487,46 @@ impl SessionServer {
         }
     }
 
+    /// Write `bytes` immediately to a live pane's PTY without queuing behind held submits,
+    /// propagating missing-pane, exited-pane, or PTY write failures to the caller.
+    pub(super) fn write_pane_now_checked(
+        &mut self,
+        owner: Option<ClientId>,
+        pane_id: PaneId,
+        generation: u64,
+        bytes: &[u8],
+    ) -> std::result::Result<(), control::ControlResponse> {
+        let agents = self.settings.agents.clone();
+        let Some(pane) = self
+            .pane_mut(owner, pane_id)
+            .filter(|pane| pane.generation == generation)
+        else {
+            return Err(control::ControlResponse::error_with(
+                control::ControlErrorCode::PaneNotFound,
+                format!("pane {pane_id} not found"),
+            ));
+        };
+        if pane.exited.is_some() || pane.pty.is_none() {
+            return Err(control::ControlResponse::error_with(
+                control::ControlErrorCode::PaneNotRunning,
+                format!("pane {pane_id} PTY is not running"),
+            ));
+        }
+        pane.graphics_pacer.input(Instant::now());
+        let pty = pane.pty.as_ref().expect("checked above");
+        if !pane.graphics_pacer.transport_held() {
+            pty.read_gate().resume();
+        }
+        pty.write(bytes).map_err(|err| {
+            control::ControlResponse::error_with(
+                control::ControlErrorCode::PaneNotRunning,
+                format!("pane {pane_id} PTY write failed: {err}"),
+            )
+        })?;
+        super::runtime::note_pane_input(pane, &agents, bytes);
+        Ok(())
+    }
+
     pub(super) fn handle_event(&mut self, event: ServerEvent) -> Option<ServerOutbound> {
         match event {
             ServerEvent::DirectoryListing {

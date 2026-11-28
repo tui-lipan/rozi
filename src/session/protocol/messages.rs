@@ -401,6 +401,19 @@ pub enum ClientMessage {
         bytes: Vec<u8>,
         token: u64,
     },
+    /// Synthetic mouse gesture encoded on the session server against its parser state, answered by
+    /// [`ServerMessage::SendMouseResult`] with the same `request_id`. When `mark` is true, the
+    /// server advances the pane's coalesce epoch before writing so the reply also acts as the
+    /// stream barrier for a pane wait.
+    SendMouse {
+        request_id: u64,
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+        action: crate::control::MouseAction,
+        #[serde(default)]
+        mark: bool,
+    },
     /// Drag-and-drop escape codes (OSC 72) for a pane's program, from the client running the drag
     /// over it. Sending them makes this client the one the pane's answers go to, as
     /// [`ServerMessage::PaneDragAndDrop`], until the drag is over.
@@ -765,6 +778,11 @@ pub enum ServerMessage {
         request_id: u64,
         response: crate::control::ControlResponse,
     },
+    /// Reply to a [`ClientMessage::SendMouse`] request, carrying its `request_id`.
+    SendMouseResult {
+        request_id: u64,
+        response: crate::control::ControlResponse,
+    },
     SessionOriginSet {
         origin: SessionOrigin,
     },
@@ -1047,6 +1065,7 @@ impl ClientMessage {
             ClientMessage::ReportAgentSession { .. } => {
                 Some(super::Capability::AgentSessionReports)
             }
+            ClientMessage::SendMouse { .. } => Some(super::Capability::SendMouse),
             ClientMessage::Unknown => {
                 debug_assert!(false, "ClientMessage::Unknown is never sent");
                 None
@@ -1102,6 +1121,7 @@ impl ClientMessage {
             | ClientMessage::ReportAgentSession { .. }
             | ClientMessage::ReportPaneRows { .. }
             | ClientMessage::MarkedInput { .. }
+            | ClientMessage::SendMouse { .. }
             | ClientMessage::Attachment { .. }
             | ClientMessage::DragAndDrop { .. }
             | ClientMessage::PublishRows { .. }
@@ -1174,6 +1194,7 @@ impl ServerMessage {
                 Some(super::Capability::AgentRequestUpdates)
             }
             ServerMessage::PublishActivation { .. } => Some(super::Capability::SessionPublish),
+            ServerMessage::SendMouseResult { .. } => Some(super::Capability::SendMouse),
             ServerMessage::Unknown => {
                 debug_assert!(false, "ServerMessage::Unknown is never sent");
                 None

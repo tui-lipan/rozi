@@ -432,7 +432,7 @@ pub(crate) fn fail_epoch(state: &mut State, epoch: u64, message: &str) {
 
 /// Answer requests whose attachment is gone without a disconnect to say so, such as one replaced
 /// by a session switch.
-fn forget_orphans(state: &mut State) {
+pub(crate) fn forget_orphans(state: &mut State) {
     let gone = state
         .pending_attached_controls
         .values()
@@ -445,6 +445,44 @@ fn forget_orphans(state: &mut State) {
             epoch,
             "the session attachment ended before answering",
         );
+    }
+    let mut agent_replies = std::mem::take(&mut state.pending_agent_report_replies);
+    reap_orphaned_pending_replies(
+        &mut agent_replies,
+        |epoch| state.attachment_for_epoch(epoch).is_none(),
+        "the session attachment ended before acknowledging agent report",
+    );
+    state.pending_agent_report_replies = agent_replies;
+    let mut mouse_replies = std::mem::take(&mut state.pending_send_mouse_replies);
+    reap_orphaned_pending_replies(
+        &mut mouse_replies,
+        |epoch| state.attachment_for_epoch(epoch).is_none(),
+        "the session attachment ended before answering send-mouse",
+    );
+    state.pending_send_mouse_replies = mouse_replies;
+}
+
+fn reap_orphaned_pending_replies(
+    replies: &mut std::collections::HashMap<u64, crate::state::PendingAgentReportReply>,
+    is_gone: impl Fn(u64) -> bool,
+    message: &str,
+) {
+    let gone: Vec<u64> = replies
+        .iter()
+        .filter_map(|(&id, pending)| {
+            pending
+                .origin_epoch
+                .filter(|&origin| is_gone(origin))
+                .map(|_| id)
+        })
+        .collect();
+    for id in gone {
+        if let Some(pending) = replies.remove(&id) {
+            let _ = pending.reply.send(ControlResponse::error_with(
+                ControlErrorCode::SessionNotConnected,
+                message,
+            ));
+        }
     }
 }
 
@@ -834,6 +872,77 @@ mod tests {
             );
             assert_eq!(code(&unknown), Some(ControlErrorCode::SessionNotAttached));
         });
+    }
+
+    #[test]
+    fn forget_orphans_reaps_replies_for_gone_attachments_and_keeps_live_ones() {
+        let mut state = State::new(
+            crate::config::Config::default(),
+            tui_lipan::Theme::default(),
+        );
+        let live_epoch = state.runtime_epoch;
+        let gone_epoch = live_epoch + 99;
+
+        let (gone_mouse_tx, gone_mouse_rx) = mpsc::channel();
+        let (live_mouse_tx, live_mouse_rx) = mpsc::channel();
+        let (scratch_mouse_tx, scratch_mouse_rx) = mpsc::channel();
+        state.pending_send_mouse_replies.insert(
+            1,
+            crate::state::PendingAgentReportReply {
+                origin_epoch: Some(gone_epoch),
+                reply: gone_mouse_tx,
+            },
+        );
+        state.pending_send_mouse_replies.insert(
+            2,
+            crate::state::PendingAgentReportReply {
+                origin_epoch: Some(live_epoch),
+                reply: live_mouse_tx,
+            },
+        );
+        state.pending_send_mouse_replies.insert(
+            3,
+            crate::state::PendingAgentReportReply {
+                origin_epoch: None,
+                reply: scratch_mouse_tx,
+            },
+        );
+
+        let (gone_agent_tx, gone_agent_rx) = mpsc::channel();
+        let (live_agent_tx, live_agent_rx) = mpsc::channel();
+        state.pending_agent_report_replies.insert(
+            10,
+            crate::state::PendingAgentReportReply {
+                origin_epoch: Some(gone_epoch),
+                reply: gone_agent_tx,
+            },
+        );
+        state.pending_agent_report_replies.insert(
+            11,
+            crate::state::PendingAgentReportReply {
+                origin_epoch: Some(live_epoch),
+                reply: live_agent_tx,
+            },
+        );
+
+        forget_orphans(&mut state);
+
+        assert_eq!(
+            code(&gone_mouse_rx),
+            Some(ControlErrorCode::SessionNotConnected)
+        );
+        assert_eq!(
+            code(&gone_agent_rx),
+            Some(ControlErrorCode::SessionNotConnected)
+        );
+        assert!(live_mouse_rx.try_recv().is_err());
+        assert!(scratch_mouse_rx.try_recv().is_err());
+        assert!(live_agent_rx.try_recv().is_err());
+        assert!(!state.pending_send_mouse_replies.contains_key(&1));
+        assert!(state.pending_send_mouse_replies.contains_key(&2));
+        assert!(state.pending_send_mouse_replies.contains_key(&3));
+        assert!(!state.pending_agent_report_replies.contains_key(&10));
+        assert!(state.pending_agent_report_replies.contains_key(&11));
     }
 
     #[test]

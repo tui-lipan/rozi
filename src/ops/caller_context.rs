@@ -50,7 +50,9 @@ fn validate_targets(
         | ControlCommand::PaneReveal { target }
         | ControlCommand::Focus { target } => vec![*target],
         ControlCommand::PaneSwap { target, with, .. } => vec![*target, *with],
-        ControlCommand::SendText { target, .. } | ControlCommand::SendKeys { target, .. } => {
+        ControlCommand::SendText { target, .. }
+        | ControlCommand::SendKeys { target, .. }
+        | ControlCommand::SendMouse { target, .. } => {
             vec![target.unwrap_or(caller.pane_id)]
         }
         ControlCommand::AgentPrompt {

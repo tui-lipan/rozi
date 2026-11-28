@@ -236,16 +236,25 @@ impl Isolated {
                     .next()
                     .unwrap_or(program)
                     .to_ascii_lowercase();
-                let is_powershell = matches!(
-                    basename.as_str(),
-                    "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe"
-                );
-                let has_no_profile = shell.iter().skip(1).any(|arg| {
-                    let lower = arg.to_ascii_lowercase();
-                    lower.starts_with("-nop") && "-noprofile".starts_with(&lower)
-                });
-                if is_powershell && !has_no_profile {
-                    shell.insert(1, "-NoProfile".to_string());
+                match basename.as_str() {
+                    "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe" => {
+                        let has_no_profile = shell.iter().skip(1).any(|arg| {
+                            let lower = arg.to_ascii_lowercase();
+                            lower.starts_with("-nop") && "-noprofile".starts_with(&lower)
+                        });
+                        if !has_no_profile {
+                            shell.insert(1, "-NoProfile".to_string());
+                        }
+                    }
+                    "cmd" | "cmd.exe"
+                        if !shell
+                            .iter()
+                            .skip(1)
+                            .any(|arg| arg.eq_ignore_ascii_case("/d")) =>
+                    {
+                        shell.insert(1, "/D".to_string());
+                    }
+                    _ => {}
                 }
             }
             let encoded = toml::Value::Array(shell.into_iter().map(toml::Value::String).collect());

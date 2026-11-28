@@ -64,7 +64,10 @@ impl Paths {
         let config_path = test_root.join("config.toml");
         fs::write(
             &config_path,
-            "scrollback = 100\n\n[session]\nresurrect = true\n",
+            format!(
+                "{}scrollback = 100\n\n[session]\nresurrect = true\n",
+                common::isolated_shell_config_prefix()
+            ),
         )
         .expect("write test config");
         Self {
@@ -83,17 +86,17 @@ impl Paths {
     }
 
     fn spawn_server(&self, session: &str) -> std::process::Child {
-        Command::new(env!("CARGO_BIN_EXE_rozi"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
+        command
             .args(["--server", session])
             .env("ROZI_CONFIG", &self.config_path)
-            .env("USERPROFILE", &self.test_root)
             .env("LOCALAPPDATA", &self.local_app_data)
             .env("APPDATA", &self.roaming_app_data)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("launch real session server")
+            .stderr(Stdio::piped());
+        common::isolate_shell_env(&mut command, &self.test_root);
+        command.spawn().expect("launch real session server")
     }
 }
 

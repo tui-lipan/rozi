@@ -2585,6 +2585,44 @@ const INHERITED_ENV_REMOVED: &[&str] = &[
     "SSH_TTY",
 ];
 
+/// Suppress profile/AutoRun scripts for Windows interactive shells under isolated tests:
+/// - PowerShell (`pwsh`/`powershell`) loads `$PROFILE` from the registry-backed Documents folder
+///   even when `USERPROFILE` is redirected, so insert `-NoProfile`.
+/// - `cmd.exe` executes `Command Processor\AutoRun` registry commands unless `/D` is passed.
+fn suppress_windows_shell_profiles(
+    mut shell: crate::platform::command::ShellCommand,
+) -> crate::platform::command::ShellCommand {
+    let basename = shell
+        .program
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(&shell.program)
+        .to_ascii_lowercase();
+    match basename.as_str() {
+        "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe" => {
+            let already_has = shell.args.iter().any(|arg| {
+                let lower = arg.to_ascii_lowercase();
+                lower.starts_with("-nop") && "-noprofile".starts_with(&lower)
+            });
+            if !already_has {
+                let insert_at = usize::from(shell.args.first().is_some_and(|arg| {
+                    let lower = arg.to_ascii_lowercase();
+                    lower.starts_with("-l") && "-login".starts_with(&lower)
+                }));
+                shell.args.insert(insert_at, "-NoProfile".to_string());
+            }
+        }
+        "cmd" | "cmd.exe" => {
+            let already_has = shell.args.iter().any(|arg| arg.eq_ignore_ascii_case("/d"));
+            if !already_has {
+                shell.args.insert(0, "/D".to_string());
+            }
+        }
+        _ => {}
+    }
+    shell
+}
+
 fn pty_config(
     launch: Option<&crate::pane::launch::PaneLaunch>,
     shell: &[String],
@@ -2594,6 +2632,7 @@ fn pty_config(
     use crate::platform::command::ShellCommand;
 
     let env = crate::platform::command::ShellEnv::from_process();
+    let isolated = crate::platform::paths::user_dirs_are_isolated();
 
     let config = match launch {
         Some(crate::pane::launch::PaneLaunch::Shell { command }) if !command.trim().is_empty() => {
@@ -2616,6 +2655,11 @@ fn pty_config(
             let shell = ShellCommand::from_argv(shell).unwrap_or_else(|| {
                 crate::platform::command::resolve_interactive_shell(None, &env, login)
             });
+            let shell = if isolated {
+                suppress_windows_shell_profiles(shell)
+            } else {
+                shell
+            };
             let mut config = TerminalPtyConfig::new(shell.program).term("xterm-256color");
             for arg in shell.args {
                 config = config.arg(arg);
@@ -2626,7 +2670,7 @@ fn pty_config(
     // The server owns the pane's terminal, so it names it, in its own version. Whatever started
     // the server would otherwise show through. A pane's own environment is applied after this, so
     // a per-spawn value still wins, including over a removal.
-    INHERITED_ENV_REMOVED
+    let mut config = INHERITED_ENV_REMOVED
         .iter()
         .chain(crate::platform::environment::DESKTOP_SESSION_VARIABLES)
         .fold(config, |config, key| config.env_remove(*key))
@@ -2636,7 +2680,41 @@ fn pty_config(
         // XON/XOFF would let a stray `Ctrl+S` - or `Ctrl+Shift+S`, which the legacy key encoding
         // sends as the same byte - pause the pane's output until `Ctrl+Q`, leaving it looking
         // frozen. Hand the byte to the child instead, where readline uses it for forward search.
-        .flow_control(false)
+        .flow_control(false);
+
+    // An in-process test overrides `PlatformEnv` without mutating process globals, so a child
+    // shell spawned here would otherwise inherit the developer's real `HOME`, `XDG_*`, shell
+    // startup variables, and `HISTFILE` and execute their dotfiles or append to their history.
+    if isolated {
+        let isolated_env = crate::platform::paths::PlatformEnv::from_process();
+        for (key, value) in [
+            ("HOME", isolated_env.home.as_ref()),
+            ("XDG_CONFIG_HOME", isolated_env.xdg_config_home.as_ref()),
+            ("XDG_STATE_HOME", isolated_env.xdg_state_home.as_ref()),
+            ("XDG_CACHE_HOME", isolated_env.xdg_cache_home.as_ref()),
+            ("XDG_DATA_HOME", isolated_env.xdg_data_home.as_ref()),
+            ("XDG_RUNTIME_DIR", isolated_env.xdg_runtime_dir.as_ref()),
+            ("APPDATA", isolated_env.appdata.as_ref()),
+            ("LOCALAPPDATA", isolated_env.local_appdata.as_ref()),
+        ] {
+            if let Some(path) = value {
+                config = config.env(key, path.display().to_string());
+            }
+        }
+        #[cfg(windows)]
+        if let Some(home) = isolated_env.home.as_ref() {
+            config = config.env("USERPROFILE", home.display().to_string());
+        }
+        config = config
+            .env("HISTFILE", "")
+            .env_remove("ZDOTDIR")
+            .env_remove("ROZI_ORIG_ZDOTDIR")
+            .env_remove("ENV")
+            .env_remove("BASH_ENV")
+            .env_remove("XDG_DATA_DIRS");
+    }
+
+    config
 }
 
 pub fn session_socket_path(name: &str) -> io::Result<PathBuf> {
@@ -2817,3 +2895,340 @@ pub fn delete_snapshot(name: &str) -> io::Result<()> {
 
 #[cfg(all(test, unix))]
 mod tests;
+
+#[cfg(test)]
+mod pty_isolation_tests {
+    use super::suppress_windows_shell_profiles;
+
+    #[test]
+    fn windows_shell_profile_flags_cover_powershell_and_cmd() {
+        use crate::platform::command::ShellCommand;
+
+        assert_eq!(
+            suppress_windows_shell_profiles(ShellCommand::new("pwsh.exe").arg("-NoLogo")).as_argv(),
+            vec!["pwsh.exe", "-NoProfile", "-NoLogo"]
+        );
+        assert_eq!(
+            suppress_windows_shell_profiles(
+                ShellCommand::new(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
+                    .arg("-NoLogo"),
+            )
+            .as_argv(),
+            vec![
+                r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                "-NoProfile",
+                "-NoLogo",
+            ]
+        );
+        assert_eq!(
+            suppress_windows_shell_profiles(ShellCommand::new("pwsh").arg("-Login").arg("-NoLogo"))
+                .as_argv(),
+            vec!["pwsh", "-Login", "-NoProfile", "-NoLogo"]
+        );
+        assert_eq!(
+            suppress_windows_shell_profiles(
+                ShellCommand::new("pwsh.exe").arg("-NoP").arg("-NoLogo")
+            )
+            .as_argv(),
+            vec!["pwsh.exe", "-NoP", "-NoLogo"]
+        );
+        assert_eq!(
+            suppress_windows_shell_profiles(ShellCommand::new("cmd.exe")).as_argv(),
+            vec!["cmd.exe", "/D"]
+        );
+        assert_eq!(
+            suppress_windows_shell_profiles(
+                ShellCommand::new(r"C:\Windows\System32\cmd.exe")
+                    .arg("/K")
+                    .arg("echo hi"),
+            )
+            .as_argv(),
+            vec![r"C:\Windows\System32\cmd.exe", "/D", "/K", "echo hi"]
+        );
+        assert_eq!(
+            suppress_windows_shell_profiles(ShellCommand::new("cmd.exe").arg("/d")).as_argv(),
+            vec!["cmd.exe", "/d"]
+        );
+        assert_eq!(
+            suppress_windows_shell_profiles(ShellCommand::new("/bin/bash").arg("-l")).as_argv(),
+            vec!["/bin/bash", "-l"]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn isolated_test_panes_override_contaminated_windows_user_dirs() {
+        let contaminated = tempfile::tempdir().expect("create contaminated env dir");
+        let root = contaminated.path();
+        let fake_profile = root.join("userprofile");
+        let fake_roaming = root.join("roaming");
+        let fake_local = root.join("local");
+        for dir in [&fake_profile, &fake_roaming, &fake_local] {
+            std::fs::create_dir_all(dir).expect("create contaminated dir");
+        }
+        let script = root.join("probe.cmd");
+        std::fs::write(
+            &script,
+            "@echo off\r\n\
+             echo USER=%USERPROFILE%\r\n\
+             echo APP=%APPDATA%\r\n\
+             echo LOCAL=%LOCALAPPDATA%\r\n\
+             if defined HISTFILE (echo HIST=LEAKED) else (echo HIST=CLEAN)\r\n\
+             echo DONE\r\n",
+        )
+        .expect("write probe script");
+
+        let stdout_path = root.join("child.stdout");
+        let stderr_path = root.join("child.stderr");
+        let stdout_file = std::fs::File::create(&stdout_path).expect("create child stdout");
+        let stderr_file = std::fs::File::create(&stderr_path).expect("create child stderr");
+        let mut child = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "session::server::pty_isolation_tests::isolated_test_panes_override_contaminated_windows_user_dirs_child",
+                "--nocapture",
+            ])
+            .env("ROZI_ISOLATION_WIN_SCRIPT", &script)
+            .env("USERPROFILE", &fake_profile)
+            .env("APPDATA", &fake_roaming)
+            .env("LOCALAPPDATA", &fake_local)
+            .env("HISTFILE", root.join("history"))
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::from(stdout_file))
+            .stderr(std::process::Stdio::from(stderr_file))
+            .spawn()
+            .expect("spawn contaminated windows isolation child");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let status = loop {
+            if let Some(status) = child.try_wait().expect("poll windows isolation child") {
+                break status;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!(
+                    "windows isolation child timed out\nstdout:\n{}\nstderr:\n{}",
+                    std::fs::read_to_string(&stdout_path).unwrap_or_default(),
+                    std::fs::read_to_string(&stderr_path).unwrap_or_default(),
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert!(
+            status.success(),
+            "windows isolation child failed ({status}):\nstdout:\n{}\nstderr:\n{}",
+            std::fs::read_to_string(&stdout_path).unwrap_or_default(),
+            std::fs::read_to_string(&stderr_path).unwrap_or_default(),
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn isolated_test_panes_override_contaminated_windows_user_dirs_child() {
+        use std::io::{self, Read as _, Write as _};
+        use std::time::{Duration, Instant};
+
+        use super::{ServerSettings, SessionServer, bind_session_socket};
+        use crate::control::{CaptureRender, ControlCommand, ControlRequest, PaneSize};
+        use crate::platform::ipc::IpcConnection;
+        use crate::session::headless::run_session_control;
+        use crate::session::protocol::{
+            ClientMessage, Frame, FrameDecoder, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION,
+            ServerMessage, write_control_frame,
+        };
+
+        let Some(script) = std::env::var_os("ROZI_ISOLATION_WIN_SCRIPT") else {
+            return;
+        };
+        let isolated = crate::platform::paths::PlatformEnv::from_process();
+        let expected_home = isolated.home.expect("isolated home").display().to_string();
+        let expected_appdata = isolated
+            .appdata
+            .expect("isolated appdata")
+            .display()
+            .to_string();
+        let expected_local = isolated
+            .local_appdata
+            .expect("isolated local_appdata")
+            .display()
+            .to_string();
+
+        let timeout = Duration::from_secs(30);
+        let session = format!("isolated-win-pty-{}", std::process::id());
+        let (listener, endpoint) =
+            bind_session_socket(&session).expect("bind windows isolation server");
+        let server_session = session.clone();
+        let thread = std::thread::spawn(move || {
+            SessionServer::new_named_with_settings(server_session, ServerSettings::default())
+                .run_listener(listener)
+        });
+
+        let request = |command| ControlRequest {
+            command,
+            source_pane: None,
+            source_session: None,
+            extension: None,
+            caller_context: None,
+            credential: None,
+        };
+        let spawned = run_session_control(
+            &session,
+            request(ControlCommand::NewPane {
+                command: None,
+                argv: Some(vec![
+                    "cmd.exe".to_string(),
+                    "/D".to_string(),
+                    "/C".to_string(),
+                    std::path::PathBuf::from(script).display().to_string(),
+                ]),
+                local_cwd: None,
+                cwd: None,
+                title: None,
+                keep_open: true,
+                focus: false,
+                workspace: None,
+                size: Some(PaneSize {
+                    cols: 240,
+                    rows: 10,
+                }),
+                target: None,
+                split_ratio: None,
+            }),
+        )
+        .expect("spawn windows isolation pane");
+        assert!(spawned.ok, "{spawned:?}");
+        let pane = spawned.data.expect("spawn data")["id"]
+            .as_u64()
+            .expect("pane id") as u32;
+
+        let deadline = Instant::now() + timeout;
+        let mut last_text = String::new();
+        while Instant::now() < deadline {
+            let capture = run_session_control(
+                &session,
+                request(ControlCommand::CapturePane {
+                    target: Some(pane),
+                    scrollback: None,
+                    render: CaptureRender::Text,
+                    scale: None,
+                    wait: None,
+                    image_pixels: false,
+                }),
+            )
+            .expect("capture windows isolation pane");
+            if let Some(text) = capture.data.as_ref().and_then(|data| data["text"].as_str()) {
+                last_text = text.to_string();
+                if last_text.contains("DONE") {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // Mirror `tests/common::ListenerGuard::stop`: retry connect, wait for an authoritative
+        // `Attached` reply, send `Shutdown`, keep draining outbound frames until the listener
+        // exits within the deadline, and propagate any server error.
+        let shutdown_deadline = Instant::now() + timeout;
+        let mut shutdown_stream: Option<IpcConnection> = None;
+        while Instant::now() < shutdown_deadline && shutdown_stream.is_none() {
+            if let Ok(mut stream) = IpcConnection::connect(&endpoint) {
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
+                let _ = stream.set_write_timeout(Some(timeout));
+                if write_control_frame(
+                    &mut stream,
+                    &ClientMessage::Attach {
+                        capabilities: None,
+                        session: session.clone(),
+                        protocol_version: PROTOCOL_VERSION,
+                        min_protocol_version: MIN_SUPPORTED_PROTOCOL,
+                        label: "win-isolation-shutdown".to_string(),
+                        read_only: false,
+                        shares_filesystem: true,
+                        expected_server_nonce: None,
+                        handoff_token: None,
+                    },
+                )
+                .is_ok()
+                    && stream.flush().is_ok()
+                {
+                    let mut decoder = FrameDecoder::default();
+                    let mut owns_control = false;
+                    let mut attached = false;
+                    while Instant::now() < shutdown_deadline && !attached {
+                        while let Ok(Some(frame)) = decoder.next_frame::<ServerMessage>() {
+                            if let Frame::Control(ServerMessage::Attached {
+                                client_id,
+                                controller,
+                                ..
+                            }) = frame
+                            {
+                                owns_control = controller == Some(client_id);
+                                attached = true;
+                                break;
+                            }
+                        }
+                        if attached {
+                            break;
+                        }
+                        match decoder.read_from_status(&mut stream) {
+                            Ok(_) => {}
+                            Err(err)
+                                if matches!(
+                                    err.kind(),
+                                    io::ErrorKind::WouldBlock
+                                        | io::ErrorKind::TimedOut
+                                        | io::ErrorKind::Interrupted
+                                ) => {}
+                            Err(_) => break,
+                        }
+                    }
+                    if owns_control
+                        && write_control_frame(&mut stream, &ClientMessage::Shutdown).is_ok()
+                        && stream.flush().is_ok()
+                    {
+                        shutdown_stream = Some(stream);
+                    }
+                }
+            }
+            if shutdown_stream.is_none() {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let mut shutdown_stream =
+            shutdown_stream.expect("could not acquire control to stop windows isolation server");
+        let _ = shutdown_stream.set_read_timeout(Some(Duration::from_millis(5)));
+        let join_deadline = Instant::now() + timeout;
+        let mut scratch = [0u8; 16 * 1024];
+        while !thread.is_finished() {
+            assert!(
+                Instant::now() < join_deadline,
+                "windows isolation session listener did not exit after shutdown"
+            );
+            for _ in 0..64 {
+                match shutdown_stream.read(&mut scratch) {
+                    Ok(0) => break,
+                    Ok(_) => continue,
+                    Err(_) => break,
+                }
+            }
+        }
+        drop(shutdown_stream);
+        thread
+            .join()
+            .expect("windows isolation listener thread panicked")
+            .expect("windows isolation listener failed");
+        endpoint.remove_stale();
+
+        for expected in [
+            format!("USER={expected_home}"),
+            format!("APP={expected_appdata}"),
+            format!("LOCAL={expected_local}"),
+            "HIST=CLEAN".to_string(),
+        ] {
+            assert!(
+                last_text.contains(&expected),
+                "expected `{expected}` in Windows pane output:\n{last_text}"
+            );
+        }
+    }
+}

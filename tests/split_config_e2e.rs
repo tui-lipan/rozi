@@ -38,7 +38,6 @@ fn split_uses_explicit_config_before_cwd_fallback_and_preserves_cwd_override() {
                 "split",
             ])
             .env("ROZI_CONFIG", root.join("ambient.toml"))
-            .env("HOME", env.home.as_ref().unwrap())
             .env("XDG_CONFIG_HOME", env.xdg_config_home.as_ref().unwrap())
             .env("XDG_STATE_HOME", env.xdg_state_home.as_ref().unwrap())
             .env("XDG_CACHE_HOME", env.xdg_cache_home.as_ref().unwrap())
@@ -51,6 +50,7 @@ fn split_uses_explicit_config_before_cwd_fallback_and_preserves_cwd_override() {
             .env_remove("ROZI_SESSION_INSTANCE")
             .env_remove("ROZI_EXTENSION")
             .env_remove("ROZI_EXTENSION_CREDENTIAL");
+        common::isolate_shell_env(&mut cli, env.home.as_ref().unwrap());
         if override_cwd {
             cli.args(["--cwd", "explicit directory"]);
         }

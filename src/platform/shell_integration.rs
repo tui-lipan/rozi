@@ -117,6 +117,9 @@ pub fn inject(
 /// `platform::command`'s module doc comment) is not surprised by a client-side env it never saw.
 impl InjectionEnv {
     pub fn from_process() -> Self {
+        if crate::platform::paths::user_dirs_are_isolated() {
+            return Self::default();
+        }
         Self {
             zdotdir: non_empty_env("ZDOTDIR"),
             orig_zdotdir: non_empty_env("ROZI_ORIG_ZDOTDIR"),

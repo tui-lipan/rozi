@@ -27,7 +27,6 @@ fn cli() -> Command {
     let env = PlatformEnv::from_process();
     let mut cli = Command::new(env!("CARGO_BIN_EXE_rozi"));
     for (key, value) in [
-        ("HOME", env.home),
         ("XDG_CONFIG_HOME", env.xdg_config_home),
         ("XDG_STATE_HOME", env.xdg_state_home),
         ("XDG_CACHE_HOME", env.xdg_cache_home),
@@ -49,6 +48,7 @@ fn cli() -> Command {
     ] {
         cli.env_remove(key);
     }
+    common::isolate_shell_env(&mut cli, &env.home.unwrap());
     cli
 }
 

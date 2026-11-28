@@ -26,7 +26,16 @@ fn rozi(root: &Path) -> Command {
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("APPDATA", root.join("config"))
         .env("LOCALAPPDATA", root.join("state"));
+    common::isolate_shell_env(&mut command, root);
     command
+}
+
+fn write_config(root: &Path, body: &str) {
+    std::fs::write(
+        root.join("config.toml"),
+        format!("{}{body}", common::isolated_shell_config_prefix()),
+    )
+    .unwrap();
 }
 
 fn spawn(session: &str, root: &Path) -> std::process::Child {
@@ -92,7 +101,7 @@ fn ask_request(
 #[test]
 fn a_chunked_deployment_survives_an_immediate_server_crash() {
     let root = private_temp_dir();
-    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    write_config(&root, "[session]\nresurrect = true\n");
     let session = unique_session_name();
     let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
     let bundle = Bundle::from_files(vec![
@@ -187,7 +196,7 @@ fn end_session(server: &mut ServerGuard, root: &Path, session: &str, ending: Cli
 #[test]
 fn a_restart_keeps_deployments_and_a_deletion_removes_them() {
     let root = private_temp_dir();
-    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    write_config(&root, "[session]\nresurrect = true\n");
     let session = unique_session_name();
     let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
     let bundle = Bundle::from_files(vec![BundleFile {
@@ -238,7 +247,7 @@ fn split_a_pane(root: &Path, session: &str) {
 #[test]
 fn a_stopped_session_restores_its_panes_and_a_restarted_one_does_not() {
     let root = private_temp_dir();
-    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    write_config(&root, "[session]\nresurrect = true\n");
     let session = unique_session_name();
     let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
     connect_when_ready(&subprocess_endpoint(&root, &session), server.child_mut());
@@ -271,7 +280,7 @@ fn a_stopped_session_restores_its_panes_and_a_restarted_one_does_not() {
 #[test]
 fn sessions_restart_starts_fresh_panes_and_keeps_deployments() {
     let root = private_temp_dir();
-    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    write_config(&root, "[session]\nresurrect = true\n");
     let session = unique_session_name();
     let sessions = |args: &[&str]| {
         rozi(&root)
@@ -323,7 +332,7 @@ fn sessions_restart_starts_fresh_panes_and_keeps_deployments() {
 #[test]
 fn sessions_upgrade_restores_panes_from_snapshot_and_keeps_deployments() {
     let root = private_temp_dir();
-    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    write_config(&root, "[session]\nresurrect = true\n");
     let session = unique_session_name();
     let sessions = |args: &[&str]| {
         rozi(&root)
@@ -444,7 +453,7 @@ fn listed_status(root: &Path, session: &str) -> Option<String> {
 #[test]
 fn a_crashed_session_with_a_deployment_stays_listed_until_it_is_deleted() {
     let root = private_temp_dir();
-    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    write_config(&root, "[session]\nresurrect = true\n");
     let session = unique_session_name();
     let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
     let bundle = Bundle::from_files(vec![BundleFile {
@@ -473,7 +482,7 @@ fn a_crashed_session_with_a_deployment_stays_listed_until_it_is_deleted() {
 #[test]
 fn an_undeployed_session_that_crashed_is_not_listed() {
     let root = private_temp_dir();
-    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    write_config(&root, "[session]\nresurrect = true\n");
     let session = unique_session_name();
     let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
     let bundle = Bundle::from_files(vec![BundleFile {
@@ -498,7 +507,7 @@ fn an_undeployed_session_that_crashed_is_not_listed() {
 #[test]
 fn starting_a_session_fresh_keeps_its_deployments_and_killing_it_removes_them() {
     let root = private_temp_dir();
-    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    write_config(&root, "[session]\nresurrect = true\n");
     let session = unique_session_name();
     let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
     let bundle = Bundle::from_files(vec![BundleFile {
@@ -841,7 +850,7 @@ fn deployed_generation(reply: &ControlResponse) -> (u64, bool) {
 #[test]
 fn redeploying_what_is_already_running_changes_nothing() {
     let root = private_temp_dir();
-    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    write_config(&root, "[session]\nresurrect = true\n");
     let session = unique_session_name();
     let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
     let bundle = service_bundle("always", "", RECORDS_ITS_PID);
@@ -924,7 +933,7 @@ fn redeploying_different_files_restarts_the_service() {
 #[test]
 fn renaming_a_session_restarts_its_services_from_the_moved_store() {
     let root = private_temp_dir();
-    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    write_config(&root, "[session]\nresurrect = true\n");
     let session = unique_session_name();
     let renamed = unique_session_name();
     let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
@@ -1057,7 +1066,7 @@ fn a_session_credential_is_gated_and_retiring_it_closes_what_it_holds() {
     use rozi::control::ControlErrorCode;
 
     let root = private_temp_dir();
-    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    write_config(&root, "[session]\nresurrect = true\n");
     let session = unique_session_name();
     let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
     let bundle = recording_bundle("gated");

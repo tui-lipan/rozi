@@ -270,19 +270,25 @@ fn spawn_server(
     config_base: &std::path::Path,
     config_path: &std::path::Path,
 ) -> std::process::Child {
-    Command::new(env!("CARGO_BIN_EXE_rozi"))
+    let test_root = runtime_base.parent().expect("test root");
+    let home_base = test_root.join("home");
+    fs::create_dir_all(&home_base).expect("create home base");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
+    command
         .args(["--server", session])
         .env("ROZI_CONFIG", config_path)
         .env("XDG_RUNTIME_DIR", runtime_base)
         .env("XDG_STATE_HOME", state_base)
         .env("XDG_CONFIG_HOME", config_base)
+        .env("XDG_DATA_HOME", test_root.join("data"))
+        .env("XDG_CACHE_HOME", test_root.join("cache"))
         .env("LOCALAPPDATA", state_base)
         .env("APPDATA", config_base)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("launch real session server")
+        .stderr(Stdio::piped());
+    common::isolate_shell_env(&mut command, &home_base);
+    command.spawn().expect("launch real session server")
 }
 
 fn wait_for_snapshot(snapshot: &std::path::Path) {

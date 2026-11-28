@@ -57,6 +57,7 @@ impl Lab {
     fn rozi(&self, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
         command.args(args).envs(self.env()).current_dir(&self.root);
+        crate::common::isolate_shell_env(&mut command, &self.root);
         for inherited in [
             "ROZI_PANE",
             "ROZI_SESSION",

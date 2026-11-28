@@ -40,6 +40,7 @@ fn environment(command: &mut Command, root: &Path) {
         .env_remove("ROZI_PANE")
         .env_remove("ROZI_SESSION_INSTANCE")
         .env_remove("ROZI_EXTENSION_CREDENTIAL");
+    common::isolate_shell_env(command, root);
 }
 
 impl Lab {

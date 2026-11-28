@@ -144,17 +144,31 @@ fn isolated_rozi_builds_can_start_the_same_name_with_different_first_panes() {
     let left = root.join("left");
     let right = root.join("right");
     let project = root.join("project");
+    let home = root.join("home");
     std::fs::create_dir(&project).unwrap();
+    std::fs::create_dir(&home).unwrap();
+    let shell_config = crate::common::isolated_shell_config_prefix();
+    if !shell_config.is_empty() {
+        for isolated in [&left, &right] {
+            let config_dir = isolated.join("config");
+            std::fs::create_dir_all(&config_dir).unwrap();
+            std::fs::write(config_dir.join("config.toml"), &shell_config).unwrap();
+        }
+    }
     let run = |isolated: &std::path::Path, args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_rozi"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
+        command
             .arg("--runtime-dir")
             .arg(isolated)
             .args(args)
             .current_dir(root)
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("APPDATA", root.join("AppData").join("Roaming"))
+            .env("LOCALAPPDATA", root.join("AppData").join("Local"))
             .env("ROZI_CONFIG", root.join("outside.toml"))
-            .env("ROZI_SOCKET", root.join("outside.sock"))
-            .output()
-            .unwrap()
+            .env("ROZI_SOCKET", root.join("outside.sock"));
+        crate::common::isolate_shell_env(&mut command, &home);
+        command.output().unwrap()
     };
     let left_start = run(
         &left,

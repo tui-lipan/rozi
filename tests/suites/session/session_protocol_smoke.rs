@@ -9,7 +9,6 @@ use rozi::layout::shared::{
     SHARED_LAYOUT_VERSION, SharedLayout, SharedLayoutKind, SharedPane, SharedSplitAxis,
     SharedWorkspace,
 };
-use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::protocol::{
     ClientMessage, Frame, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
 };
@@ -30,16 +29,22 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
     let test_root = private_temp_dir();
     let runtime_base = test_root.join("runtime");
     let config_path = test_root.join("config.toml");
-    std::fs::write(&config_path, "[session]\nresurrect = false\n")
-        .expect("write isolated server config");
+    std::fs::write(
+        &config_path,
+        format!(
+            "{}[session]\nresurrect = false\n",
+            crate::common::isolated_shell_config_prefix()
+        ),
+    )
+    .expect("write isolated server config");
     let endpoint = subprocess_endpoint(&runtime_base, &session);
-    let child = Command::new(env!("CARGO_BIN_EXE_rozi"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
+    command
         .args(["--server", &session])
         // A subprocess does not inherit the integration test's in-process path override. Redirect
         // every persisted-data root explicitly, and disable resurrection because this test does
         // not exercise it. Otherwise an interrupted run can publish this protocol-test session
         // into the developer's real resurrection directory.
-        .env("HOME", &test_root)
         .env("XDG_CONFIG_HOME", test_root.join("config"))
         .env("XDG_STATE_HOME", test_root.join("state"))
         .env("XDG_CACHE_HOME", test_root.join("cache"))
@@ -50,9 +55,9 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
         .env("ROZI_CONFIG", config_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("launch real session server");
+        .stderr(Stdio::piped());
+    crate::common::isolate_shell_env(&mut command, &test_root);
+    let child = command.spawn().expect("launch real session server");
     let mut server = ServerGuard::new(child, test_root.clone());
 
     let mut first = connect_when_ready(&endpoint, server.child_mut());
@@ -84,12 +89,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
     assert_eq!(controller, Some(first_client_id));
     assert!(origin.is_empty());
 
-    let (shell, command_shell) = resolve_launch_argv(
-        None,
-        None,
-        &ShellEnv::from_process(),
-        rozi::platform::command::LoginShell::Never,
-    );
+    let (shell, command_shell) = crate::common::test_launch_argv();
     first.write_control(&ClientMessage::SpawnPane {
         placement: Some(crate::common::spawn_placement(
             0,

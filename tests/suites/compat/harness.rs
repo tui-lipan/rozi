@@ -223,7 +223,50 @@ impl Isolated {
             fs::create_dir_all(root.join(name)).expect("compat lab directory");
         }
         let config_path = root.join("config").join("config.toml");
-        fs::write(&config_path, "[session]\nresurrect = true\n").expect("compat config");
+        let shell_prefix = if cfg!(windows) {
+            let (mut shell, _) = rozi::platform::command::resolve_launch_argv(
+                None,
+                None,
+                &rozi::platform::command::ShellEnv::from_process(),
+                rozi::platform::command::LoginShell::Never,
+            );
+            if let Some(program) = shell.first() {
+                let basename = program
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .unwrap_or(program)
+                    .to_ascii_lowercase();
+                match basename.as_str() {
+                    "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe" => {
+                        let has_no_profile = shell.iter().skip(1).any(|arg| {
+                            let lower = arg.to_ascii_lowercase();
+                            lower.starts_with("-nop") && "-noprofile".starts_with(&lower)
+                        });
+                        if !has_no_profile {
+                            shell.insert(1, "-NoProfile".to_string());
+                        }
+                    }
+                    "cmd" | "cmd.exe"
+                        if !shell
+                            .iter()
+                            .skip(1)
+                            .any(|arg| arg.eq_ignore_ascii_case("/d")) =>
+                    {
+                        shell.insert(1, "/D".to_string());
+                    }
+                    _ => {}
+                }
+            }
+            let encoded = toml::Value::Array(shell.into_iter().map(toml::Value::String).collect());
+            format!("shell = {encoded}\n")
+        } else {
+            String::new()
+        };
+        fs::write(
+            &config_path,
+            format!("{shell_prefix}[session]\nresurrect = true\n"),
+        )
+        .expect("compat config");
         Self {
             runtime: root.join("run"),
             config_path,
@@ -236,6 +279,7 @@ impl Isolated {
         command
             .current_dir(&self.root)
             .env("HOME", self.root.join("home"))
+            .env("USERPROFILE", self.root.join("home"))
             .env("XDG_CONFIG_HOME", self.root.join("config"))
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env("XDG_DATA_HOME", self.root.join("data"))
@@ -244,6 +288,12 @@ impl Isolated {
             .env("APPDATA", self.root.join("AppData").join("Roaming"))
             .env("LOCALAPPDATA", self.root.join("AppData").join("Local"))
             .env("ROZI_CONFIG", &self.config_path)
+            .env("HISTFILE", "")
+            .env_remove("ZDOTDIR")
+            .env_remove("ROZI_ORIG_ZDOTDIR")
+            .env_remove("ENV")
+            .env_remove("BASH_ENV")
+            .env_remove("XDG_DATA_DIRS")
             .env_remove("ROZI_PANE")
             .env_remove("ROZI_SESSION")
             .env_remove("ROZI_SESSION_INSTANCE")
@@ -294,8 +344,11 @@ impl Isolated {
             script.push_str(&format!("export {key}={}\n", posix_single(text)));
         }
         script.push_str(
-            "unset ROZI_PANE ROZI_SESSION ROZI_SESSION_INSTANCE ROZI_SOCKET ROZI_BIN \
-             ROZI_EXTENSION ROZI_EXTENSION_ID ROZI_EXTENSION_GENERATION ROZI_AGENT\n",
+            "export HISTFILE=''\n\
+             unset ZDOTDIR ROZI_ORIG_ZDOTDIR ENV BASH_ENV XDG_DATA_DIRS \
+             ROZI_PANE ROZI_SESSION ROZI_SESSION_INSTANCE \
+             ROZI_SOCKET ROZI_BIN ROZI_EXTENSION ROZI_EXTENSION_ID ROZI_EXTENSION_GENERATION \
+             ROZI_AGENT\n",
         );
         let bin = server.to_str().expect("server path is utf-8");
         script.push_str(&format!("exec {} \"$@\"\n", posix_single(bin)));

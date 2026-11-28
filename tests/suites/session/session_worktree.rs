@@ -3,7 +3,6 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use rozi::platform::command::{ShellEnv, resolve_launch_argv};
 use rozi::session::origin::{SessionOrigin, WorktreeOrigin};
 use rozi::session::protocol::{
     ClientMessage, Frame, ServerMessage, WirePalette, WorktreeRequest, WorktreeResult,
@@ -85,11 +84,18 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
     let session = unique_session_name();
     let runtime_base = root.join("runtime");
     let config_path = root.join("config.toml");
-    std::fs::write(&config_path, "[session]\nresurrect = false\n").unwrap();
+    std::fs::write(
+        &config_path,
+        format!(
+            "{}[session]\nresurrect = false\n",
+            crate::common::isolated_shell_config_prefix()
+        ),
+    )
+    .unwrap();
     let endpoint = subprocess_endpoint(&runtime_base, &session);
-    let child = Command::new(env!("CARGO_BIN_EXE_rozi"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
+    command
         .args(["--server", &session])
-        .env("HOME", &root)
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_CACHE_HOME", root.join("cache"))
@@ -100,9 +106,9 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
         .env("ROZI_CONFIG", config_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("launch isolated session server");
+        .stderr(Stdio::piped());
+    crate::common::isolate_shell_env(&mut command, &root);
+    let child = command.spawn().expect("launch isolated session server");
     let mut guard = ServerGuard::new(child, root.clone());
     let mut writable = connect_when_ready(&endpoint, guard.child_mut());
     writable.write_control(&attach_message(&session, "writer"));
@@ -298,12 +304,7 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
 
     // A session may claim the checkout only after its first pane exists. Once claimed, Git removal
     // remains blocked even when `force` is requested.
-    let (shell, command_shell) = resolve_launch_argv(
-        None,
-        None,
-        &ShellEnv::from_process(),
-        rozi::platform::command::LoginShell::Never,
-    );
+    let (shell, command_shell) = crate::common::test_launch_argv();
     writable.write_control(&ClientMessage::SpawnPane {
         placement: Some(crate::common::spawn_placement(0, &[(41, 1)])),
         pane_id: 41,
